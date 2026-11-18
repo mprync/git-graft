@@ -39,13 +39,26 @@ enum Entry {
     Workspace(api::Operation),
 }
 
+fn run(repo: PathBuf, command: Entry) -> anyhow::Result<Option<serde_json::Value>> {
+    #[cfg(windows)]
+    let repo = {
+        // Windows pins a process's working directory for its lifetime. Release
+        // our handle before starting any MCP threads or retiring the checkout.
+        let path = std::path::absolute(repo)?;
+        if let Some(root) = path.ancestors().last() {
+            std::env::set_current_dir(root)?;
+        }
+        path
+    };
+    match command {
+        Entry::Mcp { allow_exec } => mcp::serve(repo, allow_exec).map(|_| None),
+        Entry::Workspace(op) => engine::run(&repo, op).map(Some),
+    }
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let result = match cli.command {
-        Entry::Mcp { allow_exec } => mcp::serve(cli.repo, allow_exec).map(|_| None),
-        Entry::Workspace(op) => engine::run(&cli.repo, op).map(Some),
-    };
-    match result {
+    match run(cli.repo, cli.command) {
         Ok(Some(value)) => {
             if cli.json {
                 println!("{value}");
