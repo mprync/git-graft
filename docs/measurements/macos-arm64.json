@@ -1,0 +1,645 @@
+{
+  "source_revision": "90fb1b63f1ef25c59e1420c18e1fc1d8603bbfd2",
+  "release_verified_at": "2026-11-18T18:51:21.300Z",
+  "benchmarked_at": "2026-11-18T18:53:17.076Z",
+  "environment": {
+    "macos": "26.5",
+    "os_release": "25.5.0",
+    "arch": "arm64",
+    "filesystem": "APFS",
+    "git": "git version 2.56.0",
+    "node": "v24.5.0",
+    "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+    "git_graft": "git-graft 0.1.0"
+  },
+  "release_e2e": {
+    "fresh_clone": true,
+    "counts": {
+      "passed": 58,
+      "failed": 0,
+      "unavailable": 0,
+      "total": 58
+    },
+    "scenarios": {
+      "lifecycle": [
+        "doctor list status and isolated workspace",
+        "linked source shares registry and primary root",
+        "drop refuses untracked ignored and unmerged work",
+        "landing refusal preserves data and commit lands",
+        "land invoked from retiring worktree",
+        "gc previews and retains stale dirty work",
+        "cache purge requires apply and no live workspace",
+        "exec holds workspace lock on every platform",
+        "changed branch and hidden index flags protect work",
+        "moved worktree is protected until restored",
+        "symlink redirection is refused",
+        "spawn request id survives disconnect and rejects adoption",
+        "drop replay and reused slug reject stale lease",
+        "squash land replay does not create another commit",
+        "drop resumes after interrupted worktree removal",
+        "landing resumes from persisted plan",
+        "landing resumes after applied worktree removal",
+        "expired completion receipts require gc apply"
+      ],
+      "storage": [
+        "source clone checkout isolation and parent reuse",
+        "sparse cones validate before allocating",
+        "conversion filters and gitlinks use native Git",
+        "Git symlink emulation checks out link contents as independent ordinary files"
+      ],
+      "dependencies": [
+        "npm add and offline locked installations are independent",
+        "pnpm add and offline locked installations are independent",
+        "bun add and offline locked installations are independent",
+        "cargo local registry add and locked offline fetch isolate build outputs",
+        "uv local wheel add and locked offline sync isolate environments",
+        "npm cold offline miss then shared integrity cache hit",
+        "scoped exec preserves literal argv and bounds child output",
+        "installed layer verifies safety compatibility integrity and filesystem support"
+      ],
+      "landing": [
+        "landing fast-forward preserves workspace commit",
+        "landing divergence creates two parents",
+        "landing squash creates one parent",
+        "landing protects dirty destination and ignored collision",
+        "landing respects locked linked destination",
+        "unchecked branch ref lock rejects landing and retry replans",
+        "landing reports real conflict paths and preserves unmerged work",
+        "explicit commit runs normal Git hooks",
+        "landing leaves unmerged workspace index and files intact",
+        "offline reconcile joins independent npm dependency additions",
+        "offline reconcile rejects dependency conflicts and unsupported sources",
+        "offline reconcile rejects section conflict",
+        "offline reconcile rejects local conflict"
+      ],
+      "edge-cases": [
+        "Git discovers the subcommand from a project subdirectory and accepts a lease from the environment",
+        "a bare repository can spawn an independent checkout and land into its default branch",
+        "spawn validates portable names and refuses preexisting branches",
+        "pending creation blocks workspace operations until recovered",
+        "layer rejects empty key and tracked dirty source",
+        "layer rejects multiple root lockfiles without touching installed files",
+        "layer rejects local dependencies before capturing cache",
+        "layer rejects duplicate save and corrupt provenance on restore or forget"
+      ],
+      "mcp": [
+        "MCP negotiates stdio, validates requests and gates execution",
+        "MCP negotiates the 2024-11-05 protocol",
+        "MCP ownership, spawn and discard receipts, and stale GC match CLI",
+        "MCP reports merge conflicts and retries land without losing local work",
+        "MCP executes scoped processes, installs from cache and verifies the layer backend"
+      ],
+      "space": [
+        "native and graft disk space comparison",
+        "native and graft dependency disk space comparison"
+      ]
+    },
+    "cli": [
+      "add-dep",
+      "doctor",
+      "drop",
+      "env",
+      "exec",
+      "gc",
+      "heartbeat",
+      "land",
+      "layer",
+      "list",
+      "mcp",
+      "spawn",
+      "status"
+    ],
+    "mcp": [
+      "workspace_add_dependency",
+      "workspace_discard",
+      "workspace_doctor",
+      "workspace_env",
+      "workspace_exec",
+      "workspace_gc",
+      "workspace_heartbeat",
+      "workspace_land_and_wipe",
+      "workspace_layer",
+      "workspace_list",
+      "workspace_spawn",
+      "workspace_status"
+    ]
+  },
+  "rust_coverage": {
+    "build": "instrumented debug coverage",
+    "e2e_passed": 58,
+    "profiles": 279,
+    "llvm": "Homebrew LLVM version 23.1.3",
+    "totals": {
+      "lines": {
+        "count": 2999,
+        "covered": 2717,
+        "percent": 90.59686562187396
+      },
+      "functions": {
+        "count": 251,
+        "covered": 229,
+        "percent": 91.23505976095618
+      },
+      "regions": {
+        "count": 5645,
+        "covered": 4755,
+        "percent": 84.23383525243578
+      }
+    },
+    "source_files_without_mapping": [],
+    "by_source": [
+      {
+        "path": "src/api.rs",
+        "lines_covered": 22,
+        "lines": 22,
+        "functions_covered": 5,
+        "functions": 5,
+        "regions_covered": 33,
+        "regions": 33
+      },
+      {
+        "path": "src/engine.rs",
+        "lines_covered": 323,
+        "lines": 358,
+        "functions_covered": 23,
+        "functions": 26,
+        "regions_covered": 617,
+        "regions": 719
+      },
+      {
+        "path": "src/engine/gc.rs",
+        "lines_covered": 93,
+        "lines": 99,
+        "functions_covered": 6,
+        "functions": 7,
+        "regions_covered": 187,
+        "regions": 213
+      },
+      {
+        "path": "src/engine/retire.rs",
+        "lines_covered": 171,
+        "lines": 194,
+        "functions_covered": 13,
+        "functions": 14,
+        "regions_covered": 277,
+        "regions": 359
+      },
+      {
+        "path": "src/git.rs",
+        "lines_covered": 154,
+        "lines": 160,
+        "functions_covered": 16,
+        "functions": 16,
+        "regions_covered": 199,
+        "regions": 222
+      },
+      {
+        "path": "src/landing.rs",
+        "lines_covered": 314,
+        "lines": 365,
+        "functions_covered": 25,
+        "functions": 30,
+        "regions_covered": 534,
+        "regions": 668
+      },
+      {
+        "path": "src/layer.rs",
+        "lines_covered": 340,
+        "lines": 389,
+        "functions_covered": 16,
+        "functions": 19,
+        "regions_covered": 572,
+        "regions": 703
+      },
+      {
+        "path": "src/main.rs",
+        "lines_covered": 28,
+        "lines": 28,
+        "functions_covered": 3,
+        "functions": 3,
+        "regions_covered": 41,
+        "regions": 41
+      },
+      {
+        "path": "src/mcp.rs",
+        "lines_covered": 130,
+        "lines": 134,
+        "functions_covered": 11,
+        "functions": 12,
+        "regions_covered": 185,
+        "regions": 201
+      },
+      {
+        "path": "src/reconcile.rs",
+        "lines_covered": 309,
+        "lines": 348,
+        "functions_covered": 21,
+        "functions": 23,
+        "regions_covered": 584,
+        "regions": 699
+      },
+      {
+        "path": "src/registry.rs",
+        "lines_covered": 283,
+        "lines": 300,
+        "functions_covered": 36,
+        "functions": 37,
+        "regions_covered": 473,
+        "regions": 559
+      },
+      {
+        "path": "src/runtime.rs",
+        "lines_covered": 168,
+        "lines": 179,
+        "functions_covered": 14,
+        "functions": 17,
+        "regions_covered": 338,
+        "regions": 375
+      },
+      {
+        "path": "src/storage.rs",
+        "lines_covered": 382,
+        "lines": 423,
+        "functions_covered": 40,
+        "functions": 42,
+        "regions_covered": 715,
+        "regions": 853
+      }
+    ]
+  },
+  "release_benchmark": {
+    "unit": "bytes",
+    "method": "Signed differences in statfs volume free bytes; both methods use the same volume.",
+    "rounds": [
+      {
+        "round": 1,
+        "workload": "source",
+        "sample": {
+          "fixtureMiB": 64,
+          "fixtureBytes": "67108864",
+          "trackedFiles": 66,
+          "trackedCheckoutBytes": "67108910",
+          "workspaces": 5
+        },
+        "native": {
+          "disk_bytes": "336498688",
+          "seconds": 0.5859275420000003,
+          "first_seconds": 0.15886362499999995,
+          "later_seconds": 0.42706391700000046
+        },
+        "graft": {
+          "disk_bytes": "67452928",
+          "seconds": 1.8854113330000006,
+          "first_seconds": 0.4866020000000003,
+          "later_seconds": 1.3988093330000002,
+          "workspaces": [
+            {
+              "backend": "clonefile",
+              "reused_snapshot": false,
+              "logical_cloned_bytes": "67108910",
+              "disk_bytes": "67121152"
+            },
+            {
+              "backend": "clonefile",
+              "reused_snapshot": true,
+              "logical_cloned_bytes": "67108910",
+              "disk_bytes": "53248"
+            },
+            {
+              "backend": "clonefile",
+              "reused_snapshot": true,
+              "logical_cloned_bytes": "67108910",
+              "disk_bytes": "57344"
+            },
+            {
+              "backend": "clonefile",
+              "reused_snapshot": true,
+              "logical_cloned_bytes": "67108910",
+              "disk_bytes": "61440"
+            },
+            {
+              "backend": "clonefile",
+              "reused_snapshot": true,
+              "logical_cloned_bytes": "67108910",
+              "disk_bytes": "61440"
+            }
+          ]
+        },
+        "saved_bytes": "269045760",
+        "saved_percent": 79.95447518654218,
+        "write_isolation": {
+          "changedWorkspaceSeesWrite": true,
+          "mainUnchanged": true,
+          "otherGraftWorkspacesUnchanged": true,
+          "nativeWorkspacesUnchanged": true,
+          "gitSeesTrackedEdit": true
+        }
+      },
+      {
+        "round": 1,
+        "workload": "installed_npm",
+        "sample": {
+          "workspaces": 5,
+          "fixtureBytes": "33554432",
+          "packageDigest": "0bbd903046a6e7c5d542c75347ab878d6ceec8f53ecfb1591f181d341f23cc66",
+          "caches": "same integrity-verified archive; warmed before either measurement",
+          "seedLayerIncluded": true
+        },
+        "native": {
+          "disk_bytes": "169193472",
+          "seconds": 1.1864529999999995
+        },
+        "graft": {
+          "disk_bytes": "33898496",
+          "seconds": 2.0357534999999998,
+          "layer_transfers": [
+            {
+              "action": "save",
+              "backend": "copy-on-write",
+              "clonedBytes": 33554869,
+              "copiedBytes": 0,
+              "logicalBytes": 33554869
+            },
+            {
+              "action": "restore",
+              "backend": "copy-on-write",
+              "clonedBytes": 33554869,
+              "copiedBytes": 0,
+              "logicalBytes": 33554869
+            },
+            {
+              "action": "restore",
+              "backend": "copy-on-write",
+              "clonedBytes": 33554869,
+              "copiedBytes": 0,
+              "logicalBytes": 33554869
+            },
+            {
+              "action": "restore",
+              "backend": "copy-on-write",
+              "clonedBytes": 33554869,
+              "copiedBytes": 0,
+              "logicalBytes": 33554869
+            },
+            {
+              "action": "restore",
+              "backend": "copy-on-write",
+              "clonedBytes": 33554869,
+              "copiedBytes": 0,
+              "logicalBytes": 33554869
+            }
+          ]
+        },
+        "saved_bytes": "135294976",
+        "saved_percent": 79.96465490110636,
+        "write_isolation": true
+      },
+      {
+        "round": 2,
+        "workload": "source",
+        "sample": {
+          "fixtureMiB": 64,
+          "fixtureBytes": "67108864",
+          "trackedFiles": 66,
+          "trackedCheckoutBytes": "67108910",
+          "workspaces": 5
+        },
+        "native": {
+          "disk_bytes": "335826944",
+          "seconds": 0.2556504159999986,
+          "first_seconds": 0.04974895800000013,
+          "later_seconds": 0.20590145799999846
+        },
+        "graft": {
+          "disk_bytes": "67469312",
+          "seconds": 2.237286583000001,
+          "first_seconds": 0.4630403750000005,
+          "later_seconds": 1.7742462080000005,
+          "workspaces": [
+            {
+              "backend": "clonefile",
+              "reused_snapshot": false,
+              "logical_cloned_bytes": "67108910",
+              "disk_bytes": "67186688"
+            },
+            {
+              "backend": "clonefile",
+              "reused_snapshot": true,
+              "logical_cloned_bytes": "67108910",
+              "disk_bytes": "-81920"
+            },
+            {
+              "backend": "clonefile",
+              "reused_snapshot": true,
+              "logical_cloned_bytes": "67108910",
+              "disk_bytes": "49152"
+            },
+            {
+              "backend": "clonefile",
+              "reused_snapshot": true,
+              "logical_cloned_bytes": "67108910",
+              "disk_bytes": "118784"
+            },
+            {
+              "backend": "clonefile",
+              "reused_snapshot": true,
+              "logical_cloned_bytes": "67108910",
+              "disk_bytes": "98304"
+            }
+          ]
+        },
+        "saved_bytes": "268357632",
+        "saved_percent": 79.90950005488541,
+        "write_isolation": {
+          "changedWorkspaceSeesWrite": true,
+          "mainUnchanged": true,
+          "otherGraftWorkspacesUnchanged": true,
+          "nativeWorkspacesUnchanged": true,
+          "gitSeesTrackedEdit": true
+        }
+      },
+      {
+        "round": 2,
+        "workload": "installed_npm",
+        "sample": {
+          "workspaces": 5,
+          "fixtureBytes": "33554432",
+          "packageDigest": "e2f724d4ebf2a176925ecb111ad94ae6ae0765f92d8a7805c8ef8cae36daf1af",
+          "caches": "same integrity-verified archive; warmed before either measurement",
+          "seedLayerIncluded": true
+        },
+        "native": {
+          "disk_bytes": "168550400",
+          "seconds": 1.1570175830000007
+        },
+        "graft": {
+          "disk_bytes": "34811904",
+          "seconds": 1.830753417,
+          "layer_transfers": [
+            {
+              "action": "save",
+              "backend": "copy-on-write",
+              "clonedBytes": 33554869,
+              "copiedBytes": 0,
+              "logicalBytes": 33554869
+            },
+            {
+              "action": "restore",
+              "backend": "copy-on-write",
+              "clonedBytes": 33554869,
+              "copiedBytes": 0,
+              "logicalBytes": 33554869
+            },
+            {
+              "action": "restore",
+              "backend": "copy-on-write",
+              "clonedBytes": 33554869,
+              "copiedBytes": 0,
+              "logicalBytes": 33554869
+            },
+            {
+              "action": "restore",
+              "backend": "copy-on-write",
+              "clonedBytes": 33554869,
+              "copiedBytes": 0,
+              "logicalBytes": 33554869
+            },
+            {
+              "action": "restore",
+              "backend": "copy-on-write",
+              "clonedBytes": 33554869,
+              "copiedBytes": 0,
+              "logicalBytes": 33554869
+            }
+          ]
+        },
+        "saved_bytes": "133738496",
+        "saved_percent": 79.34629404617255,
+        "write_isolation": true
+      },
+      {
+        "round": 3,
+        "workload": "source",
+        "sample": {
+          "fixtureMiB": 64,
+          "fixtureBytes": "67108864",
+          "trackedFiles": 66,
+          "trackedCheckoutBytes": "67108910",
+          "workspaces": 5
+        },
+        "native": {
+          "disk_bytes": "337502208",
+          "seconds": 0.2889527909999997,
+          "first_seconds": 0.05406008300000031,
+          "later_seconds": 0.23489270799999942
+        },
+        "graft": {
+          "disk_bytes": "67944448",
+          "seconds": 1.8459844999999986,
+          "first_seconds": 0.44190625,
+          "later_seconds": 1.4040782499999986,
+          "workspaces": [
+            {
+              "backend": "clonefile",
+              "reused_snapshot": false,
+              "logical_cloned_bytes": "67108910",
+              "disk_bytes": "67592192"
+            },
+            {
+              "backend": "clonefile",
+              "reused_snapshot": true,
+              "logical_cloned_bytes": "67108910",
+              "disk_bytes": "53248"
+            },
+            {
+              "backend": "clonefile",
+              "reused_snapshot": true,
+              "logical_cloned_bytes": "67108910",
+              "disk_bytes": "61440"
+            },
+            {
+              "backend": "clonefile",
+              "reused_snapshot": true,
+              "logical_cloned_bytes": "67108910",
+              "disk_bytes": "73728"
+            },
+            {
+              "backend": "clonefile",
+              "reused_snapshot": true,
+              "logical_cloned_bytes": "67108910",
+              "disk_bytes": "57344"
+            }
+          ]
+        },
+        "saved_bytes": "269557760",
+        "saved_percent": 79.8684434088206,
+        "write_isolation": {
+          "changedWorkspaceSeesWrite": true,
+          "mainUnchanged": true,
+          "otherGraftWorkspacesUnchanged": true,
+          "nativeWorkspacesUnchanged": true,
+          "gitSeesTrackedEdit": true
+        }
+      },
+      {
+        "round": 3,
+        "workload": "installed_npm",
+        "sample": {
+          "workspaces": 5,
+          "fixtureBytes": "33554432",
+          "packageDigest": "b996732c04fdfdd326c388f52cf26d60720da0f17491eacdb039218ced7da0d2",
+          "caches": "same integrity-verified archive; warmed before either measurement",
+          "seedLayerIncluded": true
+        },
+        "native": {
+          "disk_bytes": "169074688",
+          "seconds": 1.1916634579999992
+        },
+        "graft": {
+          "disk_bytes": "33554432",
+          "seconds": 1.6644805840000008,
+          "layer_transfers": [
+            {
+              "action": "save",
+              "backend": "copy-on-write",
+              "clonedBytes": 33554869,
+              "copiedBytes": 0,
+              "logicalBytes": 33554869
+            },
+            {
+              "action": "restore",
+              "backend": "copy-on-write",
+              "clonedBytes": 33554869,
+              "copiedBytes": 0,
+              "logicalBytes": 33554869
+            },
+            {
+              "action": "restore",
+              "backend": "copy-on-write",
+              "clonedBytes": 33554869,
+              "copiedBytes": 0,
+              "logicalBytes": 33554869
+            },
+            {
+              "action": "restore",
+              "backend": "copy-on-write",
+              "clonedBytes": 33554869,
+              "copiedBytes": 0,
+              "logicalBytes": 33554869
+            },
+            {
+              "action": "restore",
+              "backend": "copy-on-write",
+              "clonedBytes": 33554869,
+              "copiedBytes": 0,
+              "logicalBytes": 33554869
+            }
+          ]
+        },
+        "saved_bytes": "135520256",
+        "saved_percent": 80.15407723242406,
+        "write_isolation": true
+      }
+    ]
+  }
+}
