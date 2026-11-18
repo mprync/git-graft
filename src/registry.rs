@@ -15,6 +15,7 @@ use crate::{api::fault, git, landing::Plan};
 
 pub const LEASE_SECS: u64 = 24 * 60 * 60;
 pub const RECEIPT_SECS: u64 = 7 * LEASE_SECS;
+pub const CACHE_OWNER: &str = ".git-graft-id";
 pub fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -43,16 +44,186 @@ pub fn validate_name(name: &str) -> Result<()> {
     Ok(())
 }
 pub fn dir(path: &Path) -> Result<()> {
-    match fs::create_dir(path) {
+    match create_private_dir(path) {
         Ok(()) => Ok(()),
-        Err(e)
-            if e.kind() == io::ErrorKind::AlreadyExists && fs::symlink_metadata(path)?.is_dir() =>
-        {
-            Ok(())
-        }
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => owned_directory(path).map(|_| ()),
         Err(e) => Err(e).with_context(|| format!("create directory {}", path.display())),
     }
 }
+
+fn create_private_dir(path: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        fs::DirBuilder::new().mode(0o700).create(path)
+    }
+    #[cfg(not(unix))]
+    fs::create_dir(path)
+}
+
+#[cfg(unix)]
+fn require_private_mode(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    ensure!(
+        owned_directory(path)?.permissions().mode() & 0o077 == 0,
+        "directory is accessible to other users: {}. Restrict this Graft-owned directory to mode 0700 (chmod 700) before making changes",
+        path.display()
+    );
+    Ok(())
+}
+
+pub fn is_reparse_point(metadata: &fs::Metadata) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
+        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    }
+    #[cfg(not(windows))]
+    {
+        metadata.file_type().is_symlink()
+    }
+}
+
+/// Inspect the endpoint without following symlinks or Windows junctions.
+pub fn owned_directory(path: &Path) -> Result<fs::Metadata> {
+    let metadata = fs::symlink_metadata(path)?;
+    ensure!(
+        metadata.is_dir() && !is_reparse_point(&metadata),
+        "expected an ordinary directory at {}",
+        path.display()
+    );
+    Ok(metadata)
+}
+
+/// Check the contents of a tree before recursive removal. Ordinary symlinks
+/// are leaves. Nested repositories and mounted filesystems are retained.
+fn check_unmounted_directory(path: &Path, recursive: bool) -> Result<fs::Metadata> {
+    let root = owned_directory(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let parent = path.parent().context("tree has no parent directory")?;
+        ensure!(
+            root.dev() == fs::metadata(parent)?.dev(),
+            "mounted tree: {}",
+            path.display()
+        );
+    }
+    #[cfg(target_os = "linux")]
+    check_mounts(path, recursive)?;
+    #[cfg(not(target_os = "linux"))]
+    let _ = recursive;
+    Ok(root)
+}
+
+/// Check the contents of a tree before recursive removal. Ordinary symlinks
+/// are leaves. Nested repositories and mounted filesystems are retained.
+pub fn check_owned_tree(path: &Path, allow_root_git: bool) -> Result<()> {
+    let root = check_unmounted_directory(path, true)?;
+    #[cfg(unix)]
+    let device = {
+        use std::os::unix::fs::MetadataExt;
+        root.dev()
+    };
+    #[cfg(not(unix))]
+    let _ = root;
+
+    let mut pending = vec![path.to_path_buf()];
+    while let Some(directory) = pending.pop() {
+        let mut head = false;
+        let mut objects = false;
+        let mut refs = false;
+        for entry in fs::read_dir(&directory)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            head |= name.eq_ignore_ascii_case("HEAD");
+            objects |= name.eq_ignore_ascii_case("objects");
+            refs |= name.eq_ignore_ascii_case("refs") || name.eq_ignore_ascii_case("reftable");
+            let child = entry.path();
+            let metadata = fs::symlink_metadata(&child)?;
+            if name.eq_ignore_ascii_case(".git") {
+                ensure!(
+                    allow_root_git
+                        && directory == path
+                        && metadata.is_file()
+                        && !is_reparse_point(&metadata),
+                    "nested Git metadata in {}",
+                    directory.display()
+                );
+            }
+            if metadata.file_type().is_symlink() {
+                continue;
+            }
+            ensure!(
+                !is_reparse_point(&metadata) && (metadata.is_file() || metadata.is_dir()),
+                "unexpected filesystem entry at {}",
+                child.display()
+            );
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                ensure!(
+                    metadata.dev() == device,
+                    "mounted entry: {}",
+                    child.display()
+                );
+            }
+            if metadata.is_dir() {
+                pending.push(child);
+            }
+        }
+        ensure!(
+            !(head && objects && refs),
+            "nested bare Git repository in {}",
+            directory.display()
+        );
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn check_mounts(path: &Path, recursive: bool) -> Result<()> {
+    use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+    let root = dunce::canonicalize(path)?;
+    let mountinfo = fs::read("/proc/self/mountinfo").context("read Linux mount table")?;
+    for line in mountinfo
+        .split(|&byte| byte == b'\n')
+        .filter(|line| !line.is_empty())
+    {
+        let encoded = line
+            .split(|&byte| byte == b' ')
+            .nth(4)
+            .context("invalid mount table")?;
+        // The kernel escapes whitespace and literal backslashes with three octal digits.
+        let mut decoded = Vec::with_capacity(encoded.len());
+        let mut remaining = encoded;
+        while let [first, rest @ ..] = remaining {
+            if let [
+                b'\\',
+                a @ b'0'..=b'3',
+                b @ b'0'..=b'7',
+                c @ b'0'..=b'7',
+                tail @ ..,
+            ] = remaining
+            {
+                decoded.push((a - b'0') * 64 + (b - b'0') * 8 + (c - b'0'));
+                remaining = tail;
+            } else {
+                decoded.push(*first);
+                remaining = rest;
+            }
+        }
+        let mount = Path::new(OsStr::from_bytes(&decoded));
+        ensure!(
+            mount != root && (!recursive || !mount.starts_with(&root)),
+            "mounted entry: {}",
+            mount.display()
+        );
+    }
+    Ok(())
+}
+
 pub fn exists(path: &Path) -> Result<bool> {
     match fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
@@ -62,8 +233,9 @@ pub fn exists(path: &Path) -> Result<bool> {
 }
 fn open_lock(path: &Path) -> Result<File> {
     if exists(path)? {
+        let metadata = fs::symlink_metadata(path)?;
         ensure!(
-            fs::symlink_metadata(path)?.is_file(),
+            metadata.is_file() && !is_reparse_point(&metadata),
             "lock is not a regular file"
         );
     }
@@ -74,7 +246,7 @@ fn open_lock(path: &Path) -> Result<File> {
         .truncate(false)
         .open(path)?)
 }
-fn atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+pub(crate) fn atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path.parent().context("missing state directory")?;
     let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
     tmp.write_all(bytes)?;
@@ -85,8 +257,9 @@ fn atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 fn regular(path: &Path) -> Result<Vec<u8>> {
+    let metadata = fs::symlink_metadata(path)?;
     ensure!(
-        fs::symlink_metadata(path)?.is_file(),
+        metadata.is_file() && !is_reparse_point(&metadata),
         "expected regular file at {}",
         path.display()
     );
@@ -173,6 +346,8 @@ pub struct Project {
     pub common: PathBuf,
     pub state: PathBuf,
     pub root: PathBuf,
+    /// Git's inventory when this command acquired the project lock.
+    pub registered: Vec<git::Worktree>,
     id: String,
 }
 impl Project {
@@ -186,9 +361,21 @@ impl Project {
         )?)?;
         let state = common.join("graft");
         dir(&state)?;
-        let lock = open_lock(&state.join("project.lock"))?;
-        lock.lock().context("lock workspace registry")?;
+        let lock_path = state.join("project.lock");
         let id_file = state.join("project-id");
+        if !exists(&id_file)? && !exists(&lock_path)? {
+            // Leave a preexisting foreign registry untouched, even before locking.
+            for entry in fs::read_dir(&state)? {
+                let name = entry?.file_name();
+                ensure!(
+                    name == "project.lock" || exists(&lock_path)?,
+                    "unrecognized graft data in {}",
+                    state.display()
+                );
+            }
+        }
+        let lock = open_lock(&lock_path)?;
+        lock.lock().context("lock workspace registry")?;
         let id = if exists(&id_file)? {
             let bytes = regular(&id_file)?;
             Uuid::parse_str(std::str::from_utf8(&bytes)?)?.to_string()
@@ -205,18 +392,11 @@ impl Project {
             atomic(&id_file, id.as_bytes())?;
             id
         };
-        for sub in [
-            "records",
-            "locks",
-            "bases",
-            "runtime",
-            "cache",
-            "layers",
-            "completed",
-        ] {
+        for sub in ["records", "locks", "bases", "runtime", "completed"] {
             dir(&state.join(sub))?;
         }
-        let primary = &git::worktrees(&repo)?[0].path;
+        let registered = git::worktrees(&repo)?;
+        let primary = &registered[0].path;
         let name = primary
             .file_name()
             .context("cannot place workspaces adjacent to filesystem root")?;
@@ -224,36 +404,72 @@ impl Project {
         sibling.push(".graft");
         let root = primary.with_file_name(sibling);
         git::path_str(&root)?;
-        Ok((
-            Self {
-                repo: primary.clone(),
-                invocation: repo,
-                common,
-                state,
-                root,
-                id,
-            },
-            lock,
-        ))
+        let project = Self {
+            repo: primary.clone(),
+            invocation: repo,
+            common,
+            state,
+            root,
+            id,
+            registered,
+        };
+        for name in ["cache", "layers"] {
+            project.init_cache_directory(&project.state.join(name))?;
+        }
+        Ok((project, lock))
+    }
+    /// Mark only directories Graft creates. Legacy unmarked caches remain usable.
+    fn init_cache_directory(&self, path: &Path) -> Result<()> {
+        match create_private_dir(path) {
+            Ok(()) => atomic(&path.join(CACHE_OWNER), self.id.as_bytes()),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                owned_directory(path).map(|_| ())
+            }
+            Err(error) => Err(error).with_context(|| format!("create cache {}", path.display())),
+        }
+    }
+    pub fn check_cache_owner(&self, path: &Path) -> Result<()> {
+        check_unmounted_directory(path, false)?;
+        let marker = path.join(CACHE_OWNER);
+        ensure!(
+            exists(&marker)? && regular(&marker)? == self.id.as_bytes(),
+            "cache ownership is unverified at {}",
+            path.display()
+        );
+        Ok(())
     }
     pub fn workspace(&self, name: &str) -> PathBuf {
         self.root.join(name)
     }
+    pub fn require_private_state(&self) -> Result<()> {
+        #[cfg(unix)]
+        require_private_mode(&self.state)?;
+        Ok(())
+    }
+    pub fn require_private_workspaces(&self) -> Result<()> {
+        #[cfg(unix)]
+        if exists(&self.root)? {
+            self.root(false)?;
+            require_private_mode(&self.root)?;
+        }
+        Ok(())
+    }
     /// Only a directory created for this repository may contain managed trees.
     pub fn root(&self, create: bool) -> Result<()> {
         if create && !exists(&self.root)? {
-            fs::create_dir(&self.root)?;
+            create_private_dir(&self.root)?;
             atomic(&self.root.join(".git-graft-id"), self.id.as_bytes())?;
         }
-        ensure!(
-            fs::symlink_metadata(&self.root)?.is_dir(),
-            "workspace root is not an ordinary directory"
-        );
+        owned_directory(&self.root).context("workspace root is not an ordinary directory")?;
         ensure!(
             regular(&self.root.join(".git-graft-id"))? == self.id.as_bytes(),
             "workspace root belongs to another repository: {}",
             self.root.display()
         );
+        #[cfg(unix)]
+        if create {
+            require_private_mode(&self.root)?;
+        }
         Ok(())
     }
     fn record_path(&self, name: &str) -> PathBuf {
@@ -272,6 +488,31 @@ impl Project {
         let r: Record =
             serde_json::from_slice(&regular(&path)?).context("invalid workspace record")?;
         ensure!(r.name == name, "workspace record name mismatch");
+        ensure!(
+            Uuid::parse_str(&r.lease)?.to_string() == r.lease,
+            "workspace lease must be a canonical UUID"
+        );
+        git::checked_oid(&r.base)?;
+        if let Some(admin) = &r.admin {
+            ensure!(
+                admin.parent() == Some(self.common.join("worktrees").as_path())
+                    && admin.file_name().is_some(),
+                "invalid workspace administrative directory"
+            );
+        }
+        let plan = match &r.state {
+            Phase::Creating | Phase::Ready => None,
+            Phase::Landing { plan, .. } => Some(plan),
+            Phase::Removing { tip, landed, .. } => {
+                git::checked_oid(tip)?;
+                landed.as_ref()
+            }
+        };
+        if let Some(plan) = plan {
+            git::checked_oid(&plan.old)?;
+            git::checked_oid(&plan.new)?;
+            git::checked_oid(&plan.tip)?;
+        }
         Ok(r)
     }
     pub fn records(&self) -> Result<Vec<Record>> {
@@ -292,6 +533,7 @@ impl Project {
         Ok(result)
     }
     pub fn save(&self, r: &Record) -> Result<()> {
+        self.require_private_state()?;
         validate_name(&r.name)?;
         atomic(&self.record_path(&r.name), &serde_json::to_vec(r)?)
     }
@@ -305,6 +547,7 @@ impl Project {
     /// Persist the terminal result before forgetting the live record. A lost
     /// response can then be replayed without repeating a merge or deletion.
     pub fn complete(&self, r: &Record, result: &Value) -> Result<()> {
+        self.require_private_state()?;
         let path = self.receipt_path(Uuid::parse_str(&r.lease)?);
         atomic(
             &path,
@@ -343,33 +586,46 @@ impl Project {
     pub fn identify(&self, r: &Record) -> Result<PathBuf> {
         self.root(false)?;
         let path = self.workspace(&r.name);
+        owned_directory(&path).context("workspace path was replaced")?;
+        let gitfile = path.join(".git");
+        let metadata = fs::symlink_metadata(&gitfile)?;
         ensure!(
-            fs::symlink_metadata(&path)?.is_dir(),
-            "workspace path was replaced"
-        );
-        ensure!(
-            fs::symlink_metadata(path.join(".git"))?.is_file(),
+            metadata.is_file() && !is_reparse_point(&metadata),
             "expected linked worktree .git file"
-        );
-        let common = dunce::canonicalize(git::text(
-            &path,
-            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-        )?)?;
-        ensure!(
-            common == self.common,
-            "workspace belongs to another repository"
         );
         let admin = dunce::canonicalize(git::text(&path, &["rev-parse", "--absolute-git-dir"])?)?;
         ensure!(
             admin.parent() == Some(self.common.join("worktrees").as_path()),
             "unexpected Git administrative directory"
         );
+        // Linked checkouts name their shared store in an admin-relative commondir file.
+        let common = regular(&admin.join("commondir"))?;
+        let common = std::str::from_utf8(&common)?.trim_end_matches(['\n', '\r']);
+        ensure!(
+            dunce::canonicalize(admin.join(common))? == self.common,
+            "workspace belongs to another repository"
+        );
+        let gitdir = regular(&admin.join("gitdir"))?;
+        let backlink = Path::new(std::str::from_utf8(&gitdir)?.trim_end_matches(['\n', '\r']));
+        ensure!(
+            dunce::canonicalize(admin.join(backlink))? == gitfile,
+            "Git administrative directory points to a different checkout"
+        );
+        let branch = r.branch_ref();
+        // Loose HEAD is the normal files-backend representation. Ask Git for
+        // other representations (including the reftable backend).
+        let direct_head = regular(&admin.join("HEAD"))? == format!("ref: {branch}\n").as_bytes()
+            || git::symbolic_ref(&path, "HEAD")?.as_deref() == Some(&branch);
+        ensure!(
+            direct_head && git::symbolic_ref(&path, &branch)?.is_none(),
+            "workspace was detached, switched or uses a symbolic branch"
+        );
         ensure!(
             git::worktrees(&self.repo)?
                 .iter()
                 .any(
                     |w| dunce::canonicalize(&w.path).ok().as_ref() == Some(&path)
-                        && w.branch.as_deref() == Some(&r.branch_ref())
+                        && w.branch.as_deref() == Some(&branch)
                 ),
             "workspace was moved, detached or switched to another branch"
         );

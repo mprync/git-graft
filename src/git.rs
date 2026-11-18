@@ -37,6 +37,10 @@ pub fn clear_location(cmd: &mut Command) {
         "GIT_IMPLICIT_WORK_TREE",
         "GIT_SHALLOW_FILE",
         "GIT_CONFIG",
+        // Git exports command-line configuration to hooks and external commands.
+        // Use the selected repository's normal configuration.
+        "GIT_CONFIG_PARAMETERS",
+        "GIT_CONFIG_COUNT",
         "GIT_GRAFT_FILE",
         "GIT_REPLACE_REF_BASE",
         "GIT_ATTR_SOURCE",
@@ -74,6 +78,30 @@ pub fn path_str(path: &Path) -> Result<&str> {
     path.to_str()
         .context("repository and workspace roots must be UTF-8")
 }
+pub fn checked_oid(oid: &str) -> Result<&str> {
+    ensure!(
+        matches!(oid.len(), 40 | 64) && oid.bytes().all(|b| b.is_ascii_hexdigit()),
+        "expected a full Git object ID"
+    );
+    Ok(oid)
+}
+
+pub fn symbolic_ref(dir: &Path, reference: &str) -> Result<Option<String>> {
+    let out = raw(dir, &["symbolic-ref", "--quiet", "--no-recurse", reference])?;
+    match out.status.code() {
+        Some(0) => Ok(Some(
+            String::from_utf8(out.stdout)?
+                .trim_end_matches(['\n', '\r'])
+                .into(),
+        )),
+        Some(1) => Ok(None),
+        _ => bail!(
+            "read symbolic ref {reference}: {}",
+            String::from_utf8_lossy(&out.stderr).trim_end()
+        ),
+    }
+}
+
 pub fn oid(dir: &Path, revision: &str) -> Result<String> {
     text(
         dir,
@@ -123,6 +151,7 @@ pub fn changes(dir: &Path) -> Result<Vec<Change>> {
     let raw = bytes(
         dir,
         &[
+            "--no-optional-locks",
             "-c",
             "core.fsmonitor=false",
             "-c",
@@ -162,13 +191,18 @@ pub fn check_idle(dir: &Path) -> Result<()> {
         "sequencer",
         "BISECT_START",
         "index.lock",
+        "HEAD.lock",
     ] {
-        if admin.join(mark).try_exists()? {
-            return Err(fault(
-                "git_busy",
-                format!("Finish the Git operation in {} first", dir.display()),
-                json!({"marker":mark}),
-            ));
+        match fs::symlink_metadata(admin.join(mark)) {
+            Ok(_) => {
+                return Err(fault(
+                    "git_busy",
+                    format!("Finish the Git operation in {} first", dir.display()),
+                    json!({"marker":mark}),
+                ));
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => (),
+            Err(error) => return Err(error.into()),
         }
     }
     let raw = bytes(dir, &["ls-files", "-v", "-z"])?;
