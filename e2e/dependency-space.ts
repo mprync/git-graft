@@ -70,7 +70,7 @@ export const dependencySpace: Scenario = {
     assert(typeof doctor.common_dir === 'string');
     const state = join(doctor.common_dir, 'graft');
     const layers = join(state, 'layers');
-    assert.equal(readdirSync(layers).length, 0, 'benchmark requires no preexisting layer');
+    assert.deepEqual(readdirSync(layers).filter(entry => entry !== '.git-graft-id'), [], 'benchmark requires no preexisting layer');
     const nativeCache = join(ctx.root, 'native-cache');
     const graftCache = join(state, 'cache', 'npm');
     mkdirSync(nativeCache, {recursive:true});

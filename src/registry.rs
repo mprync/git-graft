@@ -96,8 +96,6 @@ pub fn owned_directory(path: &Path) -> Result<fs::Metadata> {
     Ok(metadata)
 }
 
-/// Check the contents of a tree before recursive removal. Ordinary symlinks
-/// are leaves. Nested repositories and mounted filesystems are retained.
 fn check_unmounted_directory(path: &Path, recursive: bool) -> Result<fs::Metadata> {
     let root = owned_directory(path)?;
     #[cfg(unix)]

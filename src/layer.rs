@@ -5,8 +5,11 @@
 //! clean, single-package committed source with one root lockfile is eligible.
 //! Native CoW is preferred; unsupported filesystems use independent copies.
 //! Layers live until explicitly forgotten.
+//! Windows copies only the unnamed data stream and read-only attribute; other
+//! source metadata is not represented. Unverifiable Windows layers are retained.
 
-use crate::git;
+use crate::registry::exists as entry_exists;
+use crate::{git, registry};
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 use std::fs::{self, File, OpenOptions};
@@ -35,15 +38,23 @@ fn compatibility(worktree: &Path, key: &str) -> Result<String> {
     {
         bail!("tracked source and index must be clean");
     }
-    if worktree.join("pnpm-workspace.yaml").exists() {
+    // Git's status deliberately hides changes to assume-unchanged and sparse
+    // entries, so those indexes cannot establish a clean source tree.
+    let entries = git::bytes(worktree, &["ls-files", "-v", "-z"])?;
+    if entries
+        .split(|byte| *byte == 0)
+        .filter(|entry| !entry.is_empty())
+        .any(|entry| !entry.starts_with(b"H "))
+    {
+        bail!("layer source cannot contain hidden or sparse index entries");
+    }
+    if entry_exists(&worktree.join("pnpm-workspace.yaml"))? {
         bail!("workspace projects are not eligible for layers");
     }
     let manifest_path = worktree.join("package.json");
-    if !fs::symlink_metadata(&manifest_path)
-        .context("root package.json is required")?
-        .file_type()
-        .is_file()
-    {
+    let manifest_metadata =
+        fs::symlink_metadata(&manifest_path).context("root package.json is required")?;
+    if !manifest_metadata.is_file() || registry::is_reparse_point(&manifest_metadata) {
         bail!("root package.json must be a regular file");
     }
     let manifest = fs::read(&manifest_path).context("root package.json is required")?;
@@ -68,24 +79,24 @@ fn compatibility(worktree: &Path, key: &str) -> Result<String> {
             }
         }
     }
-    let locks: Vec<_> = [
+    let mut locks = Vec::new();
+    for name in [
         "package-lock.json",
         "npm-shrinkwrap.json",
         "pnpm-lock.yaml",
         "yarn.lock",
         "bun.lock",
         "bun.lockb",
-    ]
-    .into_iter()
-    .filter(|name| worktree.join(name).exists())
-    .collect();
+    ] {
+        if entry_exists(&worktree.join(name))? {
+            locks.push(name);
+        }
+    }
     if locks.len() != 1 {
         bail!("exactly one root lockfile is required");
     }
-    if !fs::symlink_metadata(worktree.join(locks[0]))?
-        .file_type()
-        .is_file()
-    {
+    let lock_metadata = fs::symlink_metadata(worktree.join(locks[0]))?;
+    if !lock_metadata.is_file() || registry::is_reparse_point(&lock_metadata) {
         bail!("lockfile must be a regular file");
     }
     git::bytes(
@@ -99,6 +110,12 @@ fn compatibility(worktree: &Path, key: &str) -> Result<String> {
         ],
     )
     .context("manifest and lockfile must be tracked")?;
+    let lock = fs::read(worktree.join(locks[0]))?;
+    if git::bytes(worktree, &["show", "HEAD:package.json"])? != manifest
+        || git::bytes(worktree, &["show", &format!("HEAD:{}", locks[0])])? != lock
+    {
+        bail!("manifest and lockfile must match committed source");
+    }
     let mut hasher = blake3::Hasher::new();
     for value in [
         b"git-graft-node-layer-v1".as_slice(),
@@ -109,7 +126,7 @@ fn compatibility(worktree: &Path, key: &str) -> Result<String> {
         b"package.json",
         manifest.as_slice(),
         locks[0].as_bytes(),
-        fs::read(worktree.join(locks[0]))?.as_slice(),
+        lock.as_slice(),
     ] {
         field(&mut hasher, value);
     }
@@ -143,10 +160,30 @@ fn safe_link(root: &Path, link: &Path) -> Result<std::path::PathBuf> {
     Ok(target)
 }
 
+fn check_metadata(path: &Path, metadata: &fs::Metadata) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if !metadata.file_type().is_symlink() && metadata.permissions().mode() & 0o7000 != 0 {
+            bail!("special permission bits in layer: {}", path.display());
+        }
+        if !crate::recovery::no_extended_metadata(path) {
+            bail!(
+                "unrepresentable extended metadata in layer: {}",
+                path.display()
+            );
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = (path, metadata);
+    Ok(())
+}
+
 // Inspect and fingerprint every entry before publication and again before use.
 // No symlink is followed while walking or copying the installed tree.
 fn inspect(root: &Path, forbidden: Option<&[u8]>) -> Result<String> {
     let root = root.canonicalize()?;
+    check_metadata(&root, &fs::symlink_metadata(&root)?)?;
     let mut hash = blake3::Hasher::new();
     #[cfg(unix)]
     {
@@ -176,6 +213,7 @@ fn inspect_dir(
     for entry in entries {
         let path = entry.path();
         let meta = fs::symlink_metadata(&path)?;
+        check_metadata(&path, &meta)?;
         let relative = path.strip_prefix(root)?;
         field(
             hash,
@@ -240,6 +278,89 @@ fn inspect_dir(
         }
     }
     Ok(())
+}
+
+fn valid_digest(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+// A layer is deletable only when its complete visible inventory and bytes match
+// our narrowly defined provenance record. Unknown files must be retained.
+fn layer_provenance(layer: &Path, digest: &str) -> Result<Value> {
+    registry::owned_directory(layer).context("invalid layer directory")?;
+    check_metadata(layer, &fs::symlink_metadata(layer)?)?;
+    let mut names = fs::read_dir(layer)?
+        .map(|entry| entry.map(|e| e.file_name()))
+        .collect::<io::Result<Vec<_>>>()?;
+    names.sort();
+    if names
+        != [
+            std::ffi::OsString::from("node_modules"),
+            std::ffi::OsString::from("provenance.json"),
+        ]
+    {
+        bail!("unexpected files in layer directory");
+    }
+    let path = layer.join("provenance.json");
+    let metadata = fs::symlink_metadata(&path)?;
+    if !metadata.is_file() || registry::is_reparse_point(&metadata) {
+        bail!("invalid layer provenance file");
+    }
+    check_metadata(&path, &metadata)?;
+    let bytes = fs::read(path)?;
+    let value: Value = serde_json::from_slice(&bytes)?;
+    let object = value.as_object().context("invalid layer provenance")?;
+    let contents = value["contents"]
+        .as_str()
+        .context("invalid layer contents digest")?;
+    if object.len() != 4
+        || value["version"] != 1
+        || value["compatibility"] != digest
+        || !valid_digest(digest)
+        || !valid_digest(contents)
+        || !matches!(
+            value["backend"].as_str(),
+            Some("copy" | "copy-on-write" | "mixed")
+        )
+        || serde_json::to_vec(&value)? != bytes
+    {
+        bail!("invalid layer provenance");
+    }
+    Ok(value)
+}
+
+fn verify_layer_contents(layer: &Path, digest: &str) -> Result<Value> {
+    registry::check_owned_tree(layer, false).context("unsafe layer directory")?;
+    let value = layer_provenance(layer, digest)?;
+    let contents = value["contents"]
+        .as_str()
+        .context("invalid layer contents digest")?;
+    let tree = layer.join("node_modules");
+    registry::owned_directory(&tree).context("invalid layer tree")?;
+    if inspect(&tree, None)? != contents {
+        bail!("layer contents failed integrity verification");
+    }
+    Ok(value)
+}
+
+/// Preflight a digest-named generation before recursively deleting it.
+pub(crate) fn verify_layer(layer: &Path) -> Result<()> {
+    #[cfg(windows)]
+    {
+        let _ = layer;
+        bail!("Windows layer metadata cannot be verified for deletion");
+    }
+    #[cfg(not(windows))]
+    {
+        let digest = layer
+            .file_name()
+            .and_then(|s| s.to_str())
+            .context("invalid layer name")?;
+        verify_layer_contents(layer, digest).map(|_| ())
+    }
 }
 
 #[derive(Default)]
@@ -328,11 +449,13 @@ fn clone_tree(
     force_copy: bool,
     transfer: &mut Transfer,
 ) -> Result<()> {
+    check_metadata(source, &fs::symlink_metadata(source)?)?;
     for entry in fs::read_dir(source)? {
         let entry = entry?;
         let source = entry.path();
         let destination = destination.join(entry.file_name());
         let meta = fs::symlink_metadata(&source)?;
+        check_metadata(&source, &meta)?;
         if meta.is_dir() {
             fs::create_dir(&destination)?;
             clone_tree(&source, &destination, force_copy, transfer)?;
@@ -369,6 +492,43 @@ fn clone_tree(
     Ok(())
 }
 
+// Publication must not replace an entry created after the collision check.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn publish(source: &Path, destination: &Path) -> Result<()> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    let source = CString::new(source.as_os_str().as_bytes())?;
+    let destination = CString::new(destination.as_os_str().as_bytes())?;
+    #[cfg(target_os = "linux")]
+    let result = unsafe {
+        libc::renameat2(
+            libc::AT_FDCWD,
+            source.as_ptr(),
+            libc::AT_FDCWD,
+            destination.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    #[cfg(target_os = "macos")]
+    let result =
+        unsafe { libc::renamex_np(source.as_ptr(), destination.as_ptr(), libc::RENAME_EXCL) };
+    if result != 0 {
+        return Err(io::Error::last_os_error()).context("publish without replacement");
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn publish(source: &Path, destination: &Path) -> Result<()> {
+    // Windows MoveFile (used by std::fs::rename) does not replace a directory.
+    fs::rename(source, destination).context("publish without replacement")
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+fn publish(_source: &Path, _destination: &Path) -> Result<()> {
+    bail!("atomic no-replace publication is unsupported on this platform")
+}
+
 /// Save, restore or forget a caller-attested layer. Caller holds both locks.
 pub fn run(
     worktree: &Path,
@@ -383,19 +543,23 @@ pub fn run(
     let worktree = worktree.canonicalize()?;
     let digest = compatibility(&worktree, key)?;
     let layers = state.join("layers");
+    if entry_exists(&layers)? {
+        registry::owned_directory(&layers).context("layers must be a real directory")?;
+    }
     let layer = layers.join(&digest);
     let modules = worktree.join("node_modules");
     let mut transfer = Transfer::default();
     let mut saved_backend = None;
     match action {
         "save" => {
-            if fs::symlink_metadata(&layer).is_ok() {
+            if entry_exists(&layer)? {
                 bail!("layer already exists; forget it explicitly before replacing it");
             }
             let metadata = fs::symlink_metadata(&modules).context("node_modules is required")?;
-            if !metadata.file_type().is_dir() {
+            if !metadata.file_type().is_dir() || registry::is_reparse_point(&metadata) {
                 bail!("node_modules must be a real directory");
             }
+            registry::check_owned_tree(&modules, false)?;
             let source_digest = inspect(
                 &modules,
                 Some(
@@ -412,9 +576,6 @@ pub fn run(
             let tree = temp.path().join("node_modules");
             fs::create_dir(&tree)?;
             clone_tree(&modules, &tree, force_copy, &mut transfer)?;
-            if inspect(&tree, None)? != source_digest {
-                bail!("installed tree changed while capturing layer");
-            }
             fs::write(
                 temp.path().join("provenance.json"),
                 serde_json::to_vec(
@@ -422,80 +583,72 @@ pub fn run(
                         "backend":transfer.backend(force_copy)}),
                 )?,
             )?;
-            fs::rename(temp.path(), &layer).context("publish layer")?;
+            verify_layer_contents(temp.path(), &digest)
+                .context("installed tree changed while capturing layer")?;
+            if compatibility(&worktree, key)? != digest {
+                bail!("source changed while capturing layer");
+            }
+            publish(temp.path(), &layer).context("publish layer")?;
         }
         "restore" => {
-            if fs::symlink_metadata(&modules).is_ok() {
+            if entry_exists(&modules)? {
                 bail!("node_modules already exists");
             }
-            if !fs::symlink_metadata(&layer)
-                .context("layer not found")?
-                .file_type()
-                .is_dir()
-            {
-                bail!("invalid layer directory");
-            }
-            let provenance_path = layer.join("provenance.json");
-            if !fs::symlink_metadata(&provenance_path)?
-                .file_type()
-                .is_file()
-            {
-                bail!("invalid layer provenance file");
-            }
-            let provenance: Value = serde_json::from_slice(&fs::read(provenance_path)?)?;
-            if provenance["version"] != 1 || provenance["compatibility"] != digest {
-                bail!("invalid layer provenance");
-            }
+            let provenance = layer_provenance(&layer, &digest)?;
             let tree = layer.join("node_modules");
-            if !fs::symlink_metadata(&tree)?.file_type().is_dir() {
-                bail!("invalid layer tree");
-            }
-            let actual = inspect(&tree, None)?;
-            if provenance["contents"].as_str() != Some(actual.as_str()) {
-                bail!("layer contents failed integrity verification");
-            }
+            registry::check_owned_tree(&tree, false).context("invalid layer tree")?;
+            let expected = provenance["contents"]
+                .as_str()
+                .context("invalid layer contents digest")?;
             let temp = tempfile::Builder::new()
                 .prefix(".graft-restore-")
                 .tempdir_in(&worktree)?;
             let copy = temp.path().join("node_modules");
             fs::create_dir(&copy)?;
             clone_tree(&tree, &copy, force_copy, &mut transfer)?;
-            if inspect(&copy, None)? != actual {
-                bail!("layer changed during restore");
+            if inspect(&copy, None)? != expected {
+                bail!("layer contents failed integrity verification or changed during restore");
             }
-            if fs::symlink_metadata(&modules).is_ok() {
+            if entry_exists(&modules)? {
                 bail!("node_modules appeared during restore");
             }
-            fs::rename(copy, modules)?;
+            if compatibility(&worktree, key)? != digest {
+                bail!("source changed during restore");
+            }
+            publish(&copy, &modules)?;
         }
         "forget" => {
-            let metadata = fs::symlink_metadata(&layer).context("layer not found")?;
-            if !metadata.file_type().is_dir() {
-                bail!("invalid layer directory");
-            }
-            let path = layer.join("provenance.json");
-            if !fs::symlink_metadata(&path)?.file_type().is_file() {
-                bail!("invalid layer provenance file");
-            }
-            let provenance: Value = serde_json::from_slice(&fs::read(path)?)?;
-            if provenance["version"] != 1 || provenance["compatibility"] != digest {
-                bail!("invalid layer provenance");
-            }
+            let provenance = verify_layer_contents(&layer, &digest)?;
             saved_backend = Some(
                 provenance["backend"]
                     .as_str()
                     .unwrap_or("copy-on-write")
                     .to_owned(),
             );
+            #[cfg(not(windows))]
             fs::remove_dir_all(&layer)?;
+            #[cfg(windows)]
+            {
+                let retained = state.join("retained-layers");
+                registry::dir(&retained)?;
+                let destination = retained.join(format!("{}-{}", digest, uuid::Uuid::new_v4()));
+                publish(&layer, &destination)?;
+            }
         }
         _ => unreachable!(),
     }
-    Ok(
-        json!({"action":action,"digest":digest,"backend":saved_backend.as_deref().unwrap_or_else(|| transfer.backend(force_copy)),
+    let result = json!({"action":action,"digest":digest,"backend":saved_backend.as_deref().unwrap_or_else(|| transfer.backend(force_copy)),
         "cloned_bytes":transfer.cloned_bytes,"copied_bytes":transfer.copied_bytes,
-        "logical_bytes":transfer.cloned_bytes + transfer.copied_bytes}),
-    )
+        "logical_bytes":transfer.cloned_bytes + transfer.copied_bytes});
+    #[cfg(windows)]
+    let result = {
+        let mut result = result;
+        if action == "forget" {
+            result["retained"] = json!(true);
+        }
+        result
+    };
+    Ok(result)
 }
 
 #[cfg(all(test, unix))]
@@ -569,6 +722,17 @@ mod tests {
         command(
             &a,
             "git",
+            &["update-index", "--assume-unchanged", "package.json"],
+        )?;
+        assert!(compatibility(&a, "node-toolchain").is_err());
+        command(
+            &a,
+            "git",
+            &["update-index", "--no-assume-unchanged", "package.json"],
+        )?;
+        command(
+            &a,
+            "git",
             &["worktree", "add", "--detach", b.to_str().unwrap()],
         )?;
         let install = crate::runtime::dependency(&a, &state, 1234, "npm", &[], true)?;
@@ -582,6 +746,16 @@ mod tests {
         fs::write(&embedded, a.canonicalize()?.to_string_lossy().as_bytes())?;
         assert!(run(&a, &state, "save", "node-toolchain", true).is_err());
         fs::remove_file(embedded)?;
+        let fifo = a.join("node_modules/special");
+        {
+            use std::ffi::CString;
+            use std::os::unix::ffi::OsStrExt;
+            let name = CString::new(fifo.as_os_str().as_bytes())?;
+            assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        }
+        assert!(run(&a, &state, "save", "node-toolchain", true).is_err());
+        assert!(fifo.exists());
+        fs::remove_file(fifo)?;
         symlink(
             "graft-layer-fixture/index.js",
             a.join("node_modules/relative-link"),
@@ -595,6 +769,52 @@ mod tests {
             .join("layers")
             .join(saved["digest"].as_str().unwrap())
             .join("node_modules/graft-layer-fixture/index.js");
+        let generation = cached.parent().unwrap().parent().unwrap().parent().unwrap();
+        verify_layer(generation)?;
+        let private = cached.parent().unwrap().join("private-user-file");
+        fs::write(&private, "do not delete")?;
+        assert!(verify_layer(generation).is_err());
+        assert!(run(&a, &state, "forget", "node-toolchain", false).is_err());
+        assert_eq!(fs::read_to_string(&private)?, "do not delete");
+        fs::remove_file(private)?;
+        let extra = generation.join("private-top-level");
+        fs::write(&extra, "do not delete")?;
+        assert!(verify_layer(generation).is_err());
+        assert!(run(&a, &state, "forget", "node-toolchain", false).is_err());
+        assert_eq!(fs::read_to_string(&extra)?, "do not delete");
+        fs::remove_file(extra)?;
+        #[cfg(target_os = "macos")]
+        {
+            use std::ffi::CString;
+            use std::os::unix::ffi::OsStrExt;
+            let path = CString::new(cached.as_os_str().as_bytes())?;
+            let name = c"com.git-graft.private";
+            assert_eq!(
+                unsafe {
+                    libc::setxattr(
+                        path.as_ptr(),
+                        name.as_ptr(),
+                        b"secret".as_ptr().cast(),
+                        6,
+                        0,
+                        0,
+                    )
+                },
+                0
+            );
+            assert!(verify_layer(generation).is_err());
+            assert!(run(&a, &state, "forget", "node-toolchain", false).is_err());
+            assert_eq!(
+                unsafe {
+                    libc::getxattr(path.as_ptr(), name.as_ptr(), std::ptr::null_mut(), 0, 0, 0)
+                },
+                6
+            );
+            assert_eq!(
+                unsafe { libc::removexattr(path.as_ptr(), name.as_ptr(), 0) },
+                0
+            );
+        }
         fs::write(&cached, "tampered")?;
         assert!(run(&b, &state, "restore", "node-toolchain", true).is_err());
         fs::write(&cached, "module.exports = 42;\n")?;
@@ -614,9 +834,123 @@ mod tests {
         assert!(run(&b, &state, "restore", "node-toolchain", true).is_err());
         fs::write(b.join("package.json"), "{}")?;
         assert!(run(&b, &state, "forget", "node-toolchain", false).is_err());
+        let cached_special = cached.parent().unwrap().join("special");
+        {
+            use std::ffi::CString;
+            use std::os::unix::ffi::OsStrExt;
+            let name = CString::new(cached_special.as_os_str().as_bytes())?;
+            assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        }
+        assert!(run(&a, &state, "forget", "node-toolchain", false).is_err());
+        assert!(cached_special.exists());
+        assert!(cached.exists());
+        fs::remove_file(cached_special)?;
         let forgotten = run(&a, &state, "forget", "node-toolchain", false)?;
         assert_eq!(forgotten["backend"], "copy");
         assert!(run(&a, &state, "forget", "node-toolchain", false).is_err());
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_layer_rejects_metadata_on_source_and_clone() -> Result<()> {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempdir()?;
+        let source = root.path().join("source");
+        let destination = root.path().join("destination");
+        fs::create_dir(&source)?;
+        fs::create_dir(&destination)?;
+        let file = source.join("file");
+        fs::write(&file, "data")?;
+        let path = CString::new(file.as_os_str().as_bytes())?;
+        let name = c"com.git-graft.test";
+        assert_eq!(
+            unsafe {
+                libc::setxattr(
+                    path.as_ptr(),
+                    name.as_ptr(),
+                    b"private".as_ptr().cast(),
+                    7,
+                    0,
+                    0,
+                )
+            },
+            0
+        );
+        assert!(inspect(&source, None).is_err());
+        assert!(clone_tree(&source, &destination, false, &mut Transfer::default()).is_err());
+        assert!(!destination.join("file").exists());
+        assert_eq!(
+            unsafe { libc::removexattr(path.as_ptr(), name.as_ptr(), 0) },
+            0
+        );
+        let fork = c"com.apple.ResourceFork";
+        assert_eq!(
+            unsafe {
+                libc::setxattr(
+                    path.as_ptr(),
+                    fork.as_ptr(),
+                    b"private fork".as_ptr().cast(),
+                    12,
+                    0,
+                    0,
+                )
+            },
+            0
+        );
+        assert!(inspect(&source, None).is_err());
+        assert!(clone_tree(&source, &destination, false, &mut Transfer::default()).is_err());
+        assert!(!destination.join("file").exists());
+        assert_eq!(
+            unsafe { libc::removexattr(path.as_ptr(), fork.as_ptr(), 0) },
+            0
+        );
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o1755))?;
+        if fs::metadata(&file)?.permissions().mode() & 0o7000 != 0 {
+            assert!(inspect(&source, None).is_err());
+        }
+        fs::set_permissions(&file, fs::Permissions::from_mode(0o755))?;
+        clone_tree(&source, &destination, false, &mut Transfer::default())?;
+        assert_eq!(inspect(&source, None)?, inspect(&destination, None)?);
+        let cloned = CString::new(destination.join("file").as_os_str().as_bytes())?;
+        assert_eq!(
+            unsafe {
+                libc::setxattr(
+                    cloned.as_ptr(),
+                    name.as_ptr(),
+                    b"private".as_ptr().cast(),
+                    7,
+                    0,
+                    0,
+                )
+            },
+            0
+        );
+        assert!(inspect(&destination, None).is_err());
+        assert_eq!(
+            unsafe { libc::getxattr(path.as_ptr(), name.as_ptr(), std::ptr::null_mut(), 0, 0, 0) },
+            -1
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn publication_never_replaces_existing_directory_or_symlink() -> Result<()> {
+        let root = tempdir()?;
+        let source = root.path().join("source");
+        let destination = root.path().join("destination");
+        fs::create_dir(&source)?;
+        fs::write(source.join("source"), "source")?;
+        fs::create_dir(&destination)?;
+        assert!(publish(&source, &destination).is_err());
+        assert!(source.join("source").exists());
+        fs::remove_dir(&destination)?;
+        symlink(&source, &destination)?;
+        assert!(publish(&source, &destination).is_err());
+        assert!(source.join("source").exists());
+        assert!(fs::symlink_metadata(destination)?.file_type().is_symlink());
         Ok(())
     }
 
