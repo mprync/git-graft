@@ -2,13 +2,13 @@
 //! project lock, per-workspace lock and lease checks.
 use crate::{
     api::{self, Operation, Spawn, fault},
-    git, landing, layer,
+    git, landing, layer, recovery,
     registry::{self, Phase, Project, Record, exists, now},
     runtime, storage,
 };
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
-use std::{fs, path::Path};
+use std::path::Path;
 use uuid::Uuid;
 
 mod gc;
@@ -85,7 +85,9 @@ fn spawn(p: &Project, args: Spawn) -> Result<Value> {
     }
     if let Some(id) = &request_id {
         ensure!(
-            !records.iter().any(|r| r.lease == *id) && p.receipt(id)?.is_none(),
+            !records.iter().any(|r| r.lease == *id)
+                && p.receipt(id)?.is_none()
+                && !recovery::lease_used(p, id)?,
             "request_id has already been used; generate a fresh UUID for a new workspace"
         );
     }
@@ -95,9 +97,7 @@ fn spawn(p: &Project, args: Spawn) -> Result<Value> {
     p.root(true)?;
     let path = p.workspace(&args.name);
     let branch = format!("graft/{}", args.name);
-    if exists(&path)?
-        || git::worktrees(&p.repo)?.iter().any(|w| w.path == path)
-        || retire::branch_oid(p, &branch)?.is_some()
+    if exists(&path)? || p.registered.iter().any(|w| w.path == path) || branch_occupied(p, &branch)?
     {
         return Err(fault(
             "already_exists",
@@ -174,6 +174,22 @@ fn incomplete(r: &Record, e: anyhow::Error) -> anyhow::Error {
     )
 }
 
+/// Recent Git versions can check exact ref existence without peeling a symbolic
+/// or broken ref. Keep the full check for Git versions predating --exists.
+fn branch_occupied(p: &Project, branch: &str) -> Result<bool> {
+    let reference = format!("refs/heads/{branch}");
+    let out = git::raw(&p.repo, &["show-ref", "--exists", &reference])?;
+    match out.status.code() {
+        Some(0) => Ok(true),
+        Some(2) => Ok(false),
+        Some(129) => Ok(retire::branch_oid(p, branch)?.is_some()),
+        _ => anyhow::bail!(
+            "cannot check {reference}: {}",
+            String::from_utf8_lossy(&out.stderr).trim_end()
+        ),
+    }
+}
+
 fn status(p: &Project, r: &Record) -> Result<Value> {
     let mut response = p.summary(r);
     match p.verify(r) {
@@ -239,11 +255,12 @@ fn doctor(p: &Project) -> Result<Value> {
         json!({"version":env!("CARGO_PKG_VERSION"),"git":git::text(&p.repo,&["--version"])?,
         "common_dir":p.common,"workspace_root":p.root,"source_storage":storage::doctor(&p.state)?,
         "volume_available_bytes":available(&p.state),"lease_seconds":registry::LEASE_SECS,
-        "root_lockfiles":locks,"git_worktrees":git::worktrees(&p.repo)?}),
+        "root_lockfiles":locks,"git_worktrees":p.registered,"recovery_supported":recovery::supported(p)?}),
     )
 }
 
 fn land(p: &Project, r: &mut Record, opt: &api::Land) -> Result<Value> {
+    recovery::ensure_supported(p)?;
     if let Phase::Removing {
         tip,
         discard,
@@ -344,11 +361,21 @@ fn land(p: &Project, r: &mut Record, opt: &api::Land) -> Result<Value> {
 pub fn run(repo: &Path, op: Operation) -> Result<Value> {
     let (project, project_lock) = Project::open(repo)?;
     let p = &project;
+    match &op {
+        Operation::Doctor | Operation::List | Operation::Status(_) | Operation::Env(_) => {}
+        Operation::Gc(args) if !args.apply => {}
+        Operation::SeedLayer(_) => p.require_private_state()?,
+        _ => {
+            p.require_private_state()?;
+            p.require_private_workspaces()?;
+        }
+    }
     let (name, lease) = match &op {
         Operation::Doctor => return doctor(p),
         Operation::List => {
             return Ok(
-                json!({"workspaces":p.records()?.iter().map(|r|p.summary(r)).collect::<Vec<_>>()}),
+                json!({"workspaces":p.records()?.iter().map(|r|p.summary(r)).collect::<Vec<_>>(),
+                    "recoverable":recovery::list(p)?}),
             );
         }
         Operation::Spawn(_) => {
@@ -358,6 +385,33 @@ pub fn run(repo: &Path, op: Operation) -> Result<Value> {
             return spawn(p, args);
         }
         Operation::Gc(args) => return gc::run(p, args.apply, args.purge_cache),
+        Operation::Restore(a) | Operation::UndoLand(a) => {
+            registry::validate_name(&a.name)?;
+            Uuid::parse_str(&a.lease).context("invalid recovery lease")?;
+            let _workspace_lock = p.work_lock(&a.name)?;
+            return if matches!(op, Operation::UndoLand(_)) {
+                crate::undo::run(p, &a.name, &a.lease)
+            } else {
+                recovery::restore(p, &a.name, &a.lease)
+            };
+        }
+        Operation::SeedLayer(a) => {
+            let root = git::text(&p.repo, &["rev-parse", "--show-toplevel"])
+                .context("seeding requires a primary checkout with an installed node_modules")?;
+            ensure!(
+                dunce::canonicalize(root)? == p.repo,
+                "the primary checkout moved"
+            );
+            let common = git::text(
+                &p.repo,
+                &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+            )?;
+            ensure!(
+                dunce::canonicalize(common)? == p.common,
+                "the primary checkout changed repositories"
+            );
+            return layer::run(&p.repo, &p.state, "save", &a.key, a.copy);
+        }
         Operation::Status(a) => return status(p, &p.record(&a.name)?),
         Operation::Env(a) => {
             let r = p.record(&a.name)?;
@@ -432,17 +486,4 @@ pub fn run(repo: &Path, op: Operation) -> Result<Value> {
     drop(workspace_lock);
     gc::forget_lock(p, &r.name)?;
     Ok(retire::receipt(&r, None))
-}
-
-fn clean_private_runtime(p: &Project, name: &str) -> Result<()> {
-    let path = p.state.join("runtime").join(name);
-    if exists(&path)? {
-        ensure!(
-            fs::symlink_metadata(&path)?.is_dir(),
-            "unexpected private runtime path: {}",
-            path.display()
-        );
-        fs::remove_dir_all(&path)?;
-    }
-    Ok(())
 }

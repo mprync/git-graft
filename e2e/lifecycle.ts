@@ -45,8 +45,10 @@ export const cases: Scenario[] = [
     run(ctx) {
       const doctor = ctx.cli(['doctor']);
       assert.ok(doctor.git && doctor.common_dir && doctor.source_storage);
+      assert.equal(typeof doctor.recovery_supported, 'boolean');
       assert.equal(array(ctx.cli(['list']).workspaces).length, 0);
       const w = ctx.spawn('agent');
+      assert.equal(JSON.stringify(ctx.cli(['doctor'])).includes(w.lease), false, 'doctor exposed the active lease');
       assert.equal(ctx.git(['branch', '--show-current'], w.path), 'graft/agent');
       assert.equal(ctx.git(['branch', '--show-current']), 'main');
       assert.ok(names(ctx.cli(['list']).workspaces).includes('agent'));
@@ -68,6 +70,7 @@ export const cases: Scenario[] = [
       assert.equal(readFileSync(join(w.path, 'tracked.txt'), 'utf8'), 'dirty\n');
       drop(ctx, 'agent', w.lease, '--discard');
       assert.equal(existsSync(w.path), false);
+      assert.equal(JSON.stringify(ctx.cli(['doctor'])).includes(w.lease), false, 'doctor exposed the retired lease');
     },
   },
   {
@@ -153,24 +156,58 @@ export const cases: Scenario[] = [
     },
   },
   {
-    name: 'cache purge requires apply and no live workspace',
+    name: 'cache purge requires apply, preserves unknown data and validates layers',
     run(ctx) {
+      writeFileSync(join(ctx.repo, 'package.json'), JSON.stringify({ name: 'fixture', version: '1.0.0' }));
+      writeFileSync(join(ctx.repo, 'package-lock.json'), JSON.stringify({
+        name: 'fixture', version: '1.0.0', lockfileVersion: 3, packages: { '': { name: 'fixture', version: '1.0.0' } },
+      }));
+      commit(ctx, ctx.repo, 'Layer fixture');
       const w = ctx.spawn('agent');
       const cacheDir = join(ctx.repo, '.git', 'graft', 'cache');
       const layerDir = join(ctx.repo, '.git', 'graft', 'layers');
-      writeFileSync(join(cacheDir, 'fixture'), 'cache');
-      writeFileSync(join(layerDir, 'fixture'), 'layer');
+      const npm = join(cacheDir, 'npm');
+      mkdirSync(npm);
+      writeFileSync(join(npm, 'entry'), 'package cache');
+      const foreignCache = join(cacheDir, 'fixture');
+      const foreignLayer = join(layerDir, 'fixture');
+      writeFileSync(foreignCache, 'user cache note');
+      writeFileSync(foreignLayer, 'user layer note');
+      const modules = join(w.path, 'node_modules', 'example');
+      mkdirSync(modules, { recursive: true });
+      writeFileSync(join(modules, 'index.js'), 'module.exports = 1;\n');
+      function save(key: string): string {
+        const layer = ctx.cli(['layer', 'agent', '--lease', w.lease, 'save', '--key', key]);
+        assert.equal(typeof layer.digest, 'string');
+        return join(layerDir, String(layer.digest));
+      }
+      const verified = save('verified');
+      const changed = save('changed');
+      const change = join(changed, 'user-note.txt');
+      writeFileSync(change, 'preserve changed layer');
       assert.equal(object(ctx.cli(['gc', '--purge-cache']).cache).eligible, false);
       assert.equal(object(ctx.cli(['gc', '--purge-cache', '--apply']).cache).purged, false);
-      assert.ok(existsSync(join(cacheDir, 'fixture')));
-      drop(ctx, 'agent', w.lease);
+      assert.ok(existsSync(npm));
+      assert.ok(existsSync(verified));
+      drop(ctx, 'agent', w.lease, '--discard');
+      ctx.cli(['gc', '--apply']);
+      assert.ok(existsSync(npm));
+      assert.ok(existsSync(verified));
       const preview = object(ctx.cli(['gc', '--purge-cache']).cache);
       assert.equal(preview.eligible, true);
       assert.equal(preview.purged, false);
-      assert.ok(existsSync(join(layerDir, 'fixture')));
-      assert.equal(object(ctx.cli(['gc', '--purge-cache', '--apply']).cache).purged, true);
-      assert.equal(existsSync(join(cacheDir, 'fixture')), false);
-      assert.equal(existsSync(join(layerDir, 'fixture')), false);
+      assert.ok(existsSync(verified));
+      const applied = object(ctx.cli(['gc', '--purge-cache', '--apply']).cache);
+      // Layer deletion requires metadata verification unavailable on Windows.
+      const canPurgeLayer = process.platform !== 'win32';
+      assert.equal(applied.purged, true);
+      assert.equal(array(applied.removed).length, canPurgeLayer ? 2 : 1);
+      assert.equal(array(applied.blocked).length, canPurgeLayer ? 3 : 4);
+      assert.equal(existsSync(npm), false);
+      assert.equal(existsSync(verified), !canPurgeLayer);
+      assert.equal(readFileSync(foreignCache, 'utf8'), 'user cache note');
+      assert.equal(readFileSync(foreignLayer, 'utf8'), 'user layer note');
+      assert.equal(readFileSync(change, 'utf8'), 'preserve changed layer');
     },
   },
   {

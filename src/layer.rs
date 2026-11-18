@@ -907,6 +907,14 @@ mod tests {
             unsafe { libc::removexattr(path.as_ptr(), fork.as_ptr(), 0) },
             0
         );
+        let user = command(root.path(), "id", &["-un"])?;
+        let user = std::str::from_utf8(&user.stdout)?.trim();
+        let acl = format!("{user} allow read");
+        command(root.path(), "chmod", &["+a", &acl, file.to_str().unwrap()])?;
+        assert!(inspect(&source, None).is_err());
+        assert!(clone_tree(&source, &destination, false, &mut Transfer::default()).is_err());
+        assert!(!destination.join("file").exists());
+        command(root.path(), "chmod", &["-N", file.to_str().unwrap()])?;
         fs::set_permissions(&file, fs::Permissions::from_mode(0o1755))?;
         if fs::metadata(&file)?.permissions().mode() & 0o7000 != 0 {
             assert!(inspect(&source, None).is_err());

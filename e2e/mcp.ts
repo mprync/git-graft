@@ -17,10 +17,11 @@ type Pending = {
 
 const protocol = '2025-06-18';
 const requestTimeoutMs = 30_000;
-const executionTools = ['workspace_exec', 'workspace_add_dependency', 'workspace_layer'];
+const executionTools = ['workspace_exec', 'workspace_add_dependency', 'workspace_layer', 'workspace_seed_layer'];
 const defaultTools = [
   'workspace_doctor', 'workspace_list', 'workspace_spawn', 'workspace_status',
   'workspace_heartbeat', 'workspace_env', 'workspace_land_and_wipe', 'workspace_discard', 'workspace_gc',
+  'workspace_restore', 'workspace_undo_land',
 ];
 
 function isObject(value: unknown): value is JsonObject {
@@ -334,13 +335,14 @@ export const cases: Scenario[] = [
       assert.deepEqual(doctor.root_lockfiles, []);
       ctx.coverTool('workspace_doctor');
 
-      assert.deepEqual(await call(client, 'workspace_list'), { workspaces: [] });
+      assert.deepEqual(await call(client, 'workspace_list'), { workspaces: [], recoverable: [] });
       const workspace = await spawnWorkspace(client, 'wire');
       const owned = { name: 'wire', lease: workspace.lease };
       const denied: [string, JsonObject][] = [
         ['workspace_exec', { ...owned, argv: [process.execPath, '-e', 'process.exit(7)'] }],
         ['workspace_add_dependency', { ...owned, manager: 'npm', offline: true, packages: [] }],
         ['workspace_layer', { ...owned, action: 'save', key: 'test-toolchain' }],
+        ['workspace_seed_layer', { key: 'test-toolchain' }],
         ['workspace_land_and_wipe', { ...owned, into: 'main', reconcile: true }],
       ];
       for (const [name, args] of denied) {
@@ -358,7 +360,7 @@ export const cases: Scenario[] = [
       await initialize(client, '2024-11-05');
       assert.deepEqual(result(await client.request('ping')), {});
       await discover(client, false);
-      assert.deepEqual(await call(client, 'workspace_list'), { workspaces: [] });
+      assert.deepEqual(await call(client, 'workspace_list'), { workspaces: [], recoverable: [] });
     }),
   },
   {
@@ -402,14 +404,17 @@ export const cases: Scenario[] = [
       ctx.coverTool('workspace_heartbeat');
 
       const discarded = await call(client, 'workspace_discard', owned);
-      assert.deepEqual(discarded, { action: 'drop', name, removed: true });
+      assert.deepEqual(discarded, { action: 'drop', name, removed: true, recovery_lease: first.lease });
       assert(!existsSync(first.path));
       assertRefMissing(ctx, name);
       assert.deepEqual(await call(client, 'workspace_discard', owned), discarded);
       assert.deepEqual(ctx.cli(['drop', name, '--lease', first.lease]), discarded);
       ctx.coverTool('workspace_discard');
 
-      const second = await spawnWorkspace(client, name);
+      const reopened = await call(client, 'workspace_restore', owned);
+      const second = {path: string(reopened.worktree_path, 'restored path'), lease: string(reopened.lease, 'new lease')};
+      assert.deepEqual(await call(client, 'workspace_restore', owned), reopened);
+      ctx.coverTool('workspace_restore');
       assert.notEqual(second.lease, first.lease);
       assert.equal((await call(client, 'workspace_discard', owned, true)).code, 'lease_mismatch');
       assert.equal((await call(client, 'workspace_land_and_wipe', owned, true)).code, 'lease_mismatch');
@@ -440,6 +445,16 @@ export const cases: Scenario[] = [
       assert(existsSync(second.path));
       assert.equal(readFileSync(join(dirty.path, 'local.txt'), 'utf8'), 'untracked\n');
       ctx.coverTool('workspace_gc');
+      const parked = await call(client, 'workspace_discard', { name: 'dirty', lease: dirty.lease, discard: true });
+      assert.equal(parked.recovery_lease, dirty.lease);
+      for (const tool of ['workspace_doctor', 'workspace_list', 'workspace_gc']) {
+        const published = await call(client, tool);
+        assert(!JSON.stringify(published).includes(dirty.lease), tool + ' disclosed a retired workspace lease');
+      }
+      assert(!ctx.git(['for-each-ref', '--format=%(refname)']).includes(dirty.lease));
+      const returned = await call(client, 'workspace_restore', { name: 'dirty', lease: dirty.lease });
+      assert.notEqual(returned.lease, dirty.lease);
+      assert.equal(readFileSync(join(dirty.path, 'local.txt'), 'utf8'), 'untracked\n');
     }),
   },
   {
@@ -484,7 +499,7 @@ export const cases: Scenario[] = [
       const landed = await call(client, 'workspace_land_and_wipe', landArgs);
       const commit = string(landed.commit, 'landed commit');
       assert.deepEqual(landed, {
-        action: 'land', name, target: 'retry-target', previous, commit, workspace_tip: tip, removed: true,
+        action: 'land', name, target: 'retry-target', previous, commit, workspace_tip: tip, removed: true, recovery_lease: workspace.lease,
       });
       assert.equal(ctx.git(['rev-parse', 'HEAD'], target), commit);
       assert.equal(ctx.git(['show', '-s', '--format=%P', commit]), previous);
@@ -497,6 +512,12 @@ export const cases: Scenario[] = [
       assert.deepEqual(await call(client, 'workspace_land_and_wipe', landArgs), landed);
       assert.deepEqual(ctx.cli(['land', name, '--lease', workspace.lease, '--into', 'retry-target', '--squash']), landed);
       ctx.coverTool('workspace_land_and_wipe');
+      const undone = await call(client, 'workspace_undo_land', owned);
+      assert.equal(undone.target, 'retry-target');
+      assert.equal(ctx.git(['rev-parse', 'HEAD^'], target), commit);
+      assert.equal(ctx.git(['rev-parse', 'HEAD^{tree}'], target), ctx.git(['rev-parse', previous + '^{tree}']));
+      assert.deepEqual(await call(client, 'workspace_undo_land', owned), undone);
+      ctx.coverTool('workspace_undo_land');
     }),
   },
   {
@@ -621,8 +642,9 @@ export const cases: Scenario[] = [
         const forgotten = await call(client, 'workspace_layer', { name, lease: consumer.lease, action: 'forget', key });
         assert.deepEqual(forgotten, {
           action: 'forget', digest, backend: mode.backend, logical_bytes: 0, cloned_bytes: 0, copied_bytes: 0,
+          ...(process.platform === 'win32' ? { retained: true } : {}),
         });
-        assert.deepEqual(readdirSync(layers), []);
+        assert.deepEqual(readdirSync(layers).filter(entry => entry !== '.git-graft-id'), []);
         assert.equal(readFileSync(restoredModule, 'utf8'), consumerEdit);
         transfers[mode.name] = { saved, restored, forgotten };
       }
@@ -631,6 +653,17 @@ export const cases: Scenario[] = [
         nativeClone: storage.native_clone, transfers,
       });
       ctx.coverTool('workspace_layer');
+      npm(ctx, ['ci', '--offline', '--ignore-scripts', '--cache', join(cache, 'npm')], ctx.repo);
+      const key = keyPrefix + '-primary';
+      const primarySeed = await call(client, 'workspace_seed_layer', { key });
+      const clean = await spawnWorkspace(client, 'primary-consumer');
+      const transfer = await call(client, 'workspace_layer', { name: 'primary-consumer', lease: clean.lease, action: 'restore', key });
+      assert.equal(transfer.digest, primarySeed.digest);
+      const file = join(clean.path, moduleFile);
+      assert.equal(readFileSync(file, 'utf8'), fixtureContents);
+      writeFileSync(file, 'private edit');
+      assert.equal(readFileSync(join(ctx.repo, moduleFile), 'utf8'), fixtureContents);
+      ctx.coverTool('workspace_seed_layer');
     }),
   },
 ];

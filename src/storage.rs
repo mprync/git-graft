@@ -263,8 +263,11 @@ struct Checkout<'a> {
     worktree: &'a Path,
     oid: &'a str,
     entries: &'a [Entry],
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     settings: String,
     symlinks: bool,
+    inspect_attributes: bool,
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     may_convert_eol: bool,
 }
 
@@ -278,12 +281,16 @@ impl<'a> Checkout<'a> {
             matches!(out.status.code(), Some(0 | 1)),
             "cannot read Git checkout settings"
         );
-        let git_version = git(worktree, &["version"])?;
-        let mut identity = blake3::Hasher::new();
-        identity.update(b"git-graft-checkout-v3\0");
-        identity.update(std::env::consts::OS.as_bytes());
-        identity.update(&git_version.stdout);
-        identity.update(&out.stdout);
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        let settings = {
+            let git_version = git(worktree, &["version"])?;
+            let mut identity = blake3::Hasher::new();
+            identity.update(b"git-graft-checkout-v3\0");
+            identity.update(std::env::consts::OS.as_bytes());
+            identity.update(&git_version.stdout);
+            identity.update(&out.stdout);
+            identity.finalize().to_hex().to_string()
+        };
         let value = |key: &[u8]| {
             out.stdout
                 .split(|b| *b == 0)
@@ -302,17 +309,26 @@ impl<'a> Checkout<'a> {
                 .iter()
                 .any(|valid| value.eq_ignore_ascii_case(valid))
         });
-        let may_convert_eol = value(b"core.autocrlf").is_some_and(|value| {
-            ![b"false".as_slice(), b"no", b"off", b"0", b"", b"input"]
-                .iter()
-                .any(|raw| value.eq_ignore_ascii_case(raw))
-        });
+        // Non-ASCII names can have filesystem-specific aliases on checkout.
+        let inspect_attributes = entries
+            .iter()
+            .any(|entry| entry.attributes() || !entry.name.is_ascii());
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        let may_convert_eol = inspect_attributes
+            || value(b"core.autocrlf").is_some_and(|value| {
+                ![b"false".as_slice(), b"no", b"off", b"0", b"", b"input"]
+                    .iter()
+                    .any(|raw| value.eq_ignore_ascii_case(raw))
+            });
         Ok(Self {
             worktree,
             oid,
             entries,
-            settings: identity.finalize().to_hex().to_string(),
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            settings,
             symlinks,
+            inspect_attributes,
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             may_convert_eol,
         })
     }
@@ -320,10 +336,7 @@ impl<'a> Checkout<'a> {
 
 // External attributes, replacement blobs and arbitrary filters can change
 // bytes without changing commit or blob IDs. They always use Git.
-fn conversion_reason(
-    checkout: &Checkout<'_>,
-    inspect_attributes: bool,
-) -> Result<Option<&'static str>> {
+fn conversion_reason(checkout: &Checkout<'_>) -> Result<Option<&'static str>> {
     let (worktree, oid, entries) = (checkout.worktree, checkout.oid, checkout.entries);
     for variable in ["GIT_ATTR_SYSTEM", "GIT_ATTR_GLOBAL"] {
         if variable == "GIT_ATTR_SYSTEM"
@@ -372,7 +385,7 @@ fn conversion_reason(
     {
         return Ok(Some("Git replacement objects"));
     }
-    if !inspect_attributes {
+    if !checkout.inspect_attributes {
         return Ok(None);
     }
     let mut input = tempfile::tempfile()?;
@@ -450,15 +463,10 @@ pub fn materialize_from(
     if !sparse.is_empty() {
         return native_checkout(&worktree, &oid, sparse, &entries, "sparse checkout");
     }
-    let mut checkout = Checkout::read(&worktree, &oid, &entries)?;
-    // Non-ASCII names can have filesystem-specific aliases on checkout.
-    let inspect_attributes = entries
-        .iter()
-        .any(|entry| entry.attributes() || !entry.name.is_ascii());
-    if let Some(reason) = conversion_reason(&checkout, inspect_attributes)? {
+    let checkout = Checkout::read(&worktree, &oid, &entries)?;
+    if let Some(reason) = conversion_reason(&checkout)? {
         return native_checkout(&worktree, &oid, sparse, &entries, reason);
     }
-    checkout.may_convert_eol |= inspect_attributes;
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
         fs::create_dir_all(state)?;
@@ -475,7 +483,7 @@ pub fn materialize_from(
         }
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    let _ = (state, primary, checkout);
+    let _ = (state, primary);
     native_checkout(
         &worktree,
         &oid,

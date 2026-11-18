@@ -14,7 +14,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 
 use crate::api::{
-    self, AddDep, DropWorkspace, Exec, Gc, Land, Layer, Name, Operation, Owned, Spawn,
+    self, AddDep, DropWorkspace, Exec, Gc, Land, Layer, Name, Operation, Owned, SeedLayer, Spawn,
 };
 
 #[derive(Clone)]
@@ -77,7 +77,24 @@ impl ServerHandler for Server {
                 true,
                 false,
             ),
-            tool::<Empty>("workspace_list", "List managed workspaces.", true, false),
+            tool::<Empty>(
+                "workspace_list",
+                "List active and recoverable workspaces.",
+                true,
+                false,
+            ),
+            tool::<Owned>(
+                "workspace_restore",
+                "Reopen a retired workspace using its recovery lease.",
+                false,
+                false,
+            ),
+            tool::<Owned>(
+                "workspace_undo_land",
+                "Append a reversal commit if the landed destination is still at the recorded commit.",
+                false,
+                true,
+            ),
             tool::<Spawn>(
                 "workspace_spawn",
                 "Create a managed workspace.",
@@ -135,6 +152,7 @@ impl ServerHandler for Server {
                 true,
             ));
             tools.push(tool::<Layer>("workspace_layer", "Save, restore or forget an installed dependency layer (enabled by host --allow-exec).", false, true));
+            tools.push(tool::<SeedLayer>("workspace_seed_layer", "Seed a relocatable dependency layer from the primary checkout's installed node_modules (enabled by host --allow-exec).", false, false));
         }
         Ok(ListToolsResult::with_all_items(tools))
     }
@@ -148,7 +166,10 @@ impl ServerHandler for Server {
         if !self.allow_exec
             && matches!(
                 name,
-                "workspace_exec" | "workspace_add_dependency" | "workspace_layer"
+                "workspace_exec"
+                    | "workspace_add_dependency"
+                    | "workspace_layer"
+                    | "workspace_seed_layer"
             )
         {
             let error = anyhow::anyhow!("Tool {name} requires the host to start with --allow-exec");
@@ -171,6 +192,9 @@ impl ServerHandler for Server {
             "workspace_exec" => Operation::Exec(parse(args)?),
             "workspace_add_dependency" => Operation::AddDep(parse(args)?),
             "workspace_layer" => Operation::Layer(parse(args)?),
+            "workspace_seed_layer" => Operation::SeedLayer(parse(args)?),
+            "workspace_restore" => Operation::Restore(parse(args)?),
+            "workspace_undo_land" => Operation::UndoLand(parse(args)?),
             "workspace_land_and_wipe" => {
                 let land: Land = parse(args)?;
                 if land.reconcile && !self.allow_exec {

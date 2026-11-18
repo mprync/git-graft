@@ -6,9 +6,11 @@ mod landing;
 mod layer;
 mod mcp;
 mod reconcile;
+mod recovery;
 mod registry;
 mod runtime;
 mod storage;
+mod undo;
 
 use std::{path::PathBuf, process::ExitCode};
 

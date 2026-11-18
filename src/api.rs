@@ -25,10 +25,16 @@ pub enum Operation {
     AddDep(AddDep),
     /// Save, restore or forget a reusable installed node_modules snapshot.
     Layer(Layer),
+    /// Seed a dependency layer from the primary checkout's installed node_modules.
+    SeedLayer(SeedLayer),
     /// Integrate a workspace into a local branch and retire the workspace.
     Land(Land),
-    /// Remove a managed workspace after checking for unmerged or local work.
+    /// Retire a managed workspace and return its recovery lease.
     Drop(DropWorkspace),
+    /// Reopen a retired workspace using its recovery lease.
+    Restore(Owned),
+    /// Reverse a completed land by appending a commit to its unchanged destination.
+    UndoLand(Owned),
     /// Preview stale workspaces and unused source snapshots eligible for cleanup.
     Gc(Gc),
 }
@@ -120,6 +126,18 @@ pub struct Layer {
 
 #[derive(Debug, Args, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct SeedLayer {
+    /// Attest that this relocatable install matches the lock, toolchain, flags and environment named by the key and contains no private data.
+    #[arg(long)]
+    pub key: String,
+    /// Request independent byte copies even on a copy-on-write volume.
+    #[arg(long)]
+    #[serde(default)]
+    pub copy: bool,
+}
+
+#[derive(Debug, Args, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct Land {
     pub name: String,
     #[arg(long, env = "GIT_GRAFT_LEASE", hide_env_values = true)]
@@ -135,7 +153,7 @@ pub struct Land {
     /// Stage all nonignored changes and commit them on the workspace branch first.
     #[arg(long, value_name = "MESSAGE")]
     pub commit: Option<String>,
-    /// Allow cleanup to remove ignored workspace files after integration.
+    /// Allow retirement with ignored files. Use the recovery lease to reopen them.
     #[arg(long)]
     #[serde(default)]
     pub discard_ignored: bool,
@@ -151,7 +169,7 @@ pub struct DropWorkspace {
     pub name: String,
     #[arg(long, env = "GIT_GRAFT_LEASE", hide_env_values = true)]
     pub lease: String,
-    /// Intentionally discard uncommitted and ignored files and unlanded commits.
+    /// Allow retirement with local work and unlanded commits. Keep the recovery lease.
     #[arg(long)]
     #[serde(default)]
     pub discard: bool,

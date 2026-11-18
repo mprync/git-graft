@@ -12,7 +12,8 @@ use serde_json::json;
 
 use crate::{
     api::{Land, fault},
-    git, reconcile,
+    git::{self, checked_oid, symbolic_ref},
+    reconcile, recovery, registry,
 };
 
 /// The caller records this before applying it so a retry uses the same commit.
@@ -50,28 +51,31 @@ fn branch_ref(repo: &Path, branch: &str) -> Result<String> {
     Ok(reference)
 }
 
-fn symbolic_ref(repo: &Path, reference: &str) -> Result<Option<String>> {
-    let output = git::raw(
-        repo,
-        &["symbolic-ref", "--quiet", "--no-recurse", reference],
-    )?;
-    match output.status.code() {
-        Some(0) => Ok(Some(
-            String::from_utf8(output.stdout)?
-                .trim_end_matches(['\n', '\r'])
-                .into(),
-        )),
-        Some(1) => Ok(None),
-        _ => Err(git_failure("read symbolic ref", &output)),
-    }
-}
-
 fn branch_tip(repo: &Path, reference: &str) -> Result<String> {
-    if symbolic_ref(repo, reference)?.is_some() {
-        bail!("destination must be a direct local branch: {reference}");
+    // Matching the actual ref name avoids bypassing worktree occupancy on
+    // case-insensitive filesystems where a differently cased name may resolve.
+    let refs = git::text(
+        repo,
+        &[
+            "for-each-ref",
+            "--format=%(refname)%00%(objectname)%00%(symref)",
+            reference,
+        ],
+    )?;
+    for row in refs.lines() {
+        if let Some((name, values)) = row.split_once('\0')
+            && name == reference
+        {
+            let (oid, symbolic) = values
+                .split_once('\0')
+                .context("missing destination ref fields")?;
+            if !symbolic.is_empty() {
+                bail!("destination must be a direct local branch: {reference}");
+            }
+            return Ok(checked_oid(oid)?.to_owned());
+        }
     }
-    git::text(repo, &["show-ref", "--verify", "--hash", reference])
-        .with_context(|| format!("destination local branch does not exist: {reference}"))
+    bail!("destination local branch does not exist: {reference}");
 }
 
 fn is_ancestor(repo: &Path, older: &str, newer: &str) -> Result<bool> {
@@ -96,13 +100,6 @@ fn dirty(path: &Path) -> Result<bool> {
     Ok(git::changes(path)?
         .iter()
         .any(|change| change.status != "!!"))
-}
-
-fn checked_oid(oid: &str) -> Result<&str> {
-    if !matches!(oid.len(), 40 | 64) || !oid.bytes().all(|b| b.is_ascii_hexdigit()) {
-        bail!("expected a full Git object ID");
-    }
-    Ok(oid)
 }
 
 fn merged_tree(repo: &Path, state: &Path, old: &str, tip: &str, options: &Land) -> Result<String> {
@@ -315,6 +312,7 @@ fn check_branch_operations(repo: &Path, reference: &str) -> Result<()> {
 }
 
 fn check_destination(repo: &Path, path: &Path) -> Result<()> {
+    registry::owned_directory(path).context("registered destination was replaced")?;
     let root = git::text(path, &["rev-parse", "--show-toplevel"])?;
     if Path::new(&root).canonicalize()? != path.canonicalize()?
         || common_dir(path)? != common_dir(repo)?
@@ -345,6 +343,11 @@ fn check_destination(repo: &Path, path: &Path) -> Result<()> {
 
 fn apply_in_worktree(repo: &Path, path: &Path, reference: &str, plan: &Plan) -> Result<()> {
     check_destination(repo, path)?;
+    let mut ref_lock = common_dir(repo)?.join(reference).into_os_string();
+    ref_lock.push(".lock");
+    if registry::exists(Path::new(&ref_lock))? {
+        bail!("destination branch is locked: {}", plan.target);
+    }
     let key = format!("branch.{}.mergeOptions", plan.target);
     let override_options = format!("{key}=");
     let mut args = vec![
@@ -437,20 +440,21 @@ pub fn apply(repo: &Path, plan: &Plan) -> Result<()> {
         }
         apply_in_worktree(repo, &destination.path, &reference, plan)?;
     } else {
-        // Git's ref transaction checks the expected tip under lock. Worktree discovery
-        // and checkout by an external Git process do not share that lock.
-        git::bytes(
-            repo,
-            &[
-                "update-ref",
-                "--no-deref",
-                "-m",
-                "git graft land",
-                &reference,
-                &plan.new,
-                &plan.old,
-            ],
-        )?;
+        // A no-deref CAS can accept a symbolic ref whose referent has the
+        // expected OID. Check the exact branch again under Git's prepared lock.
+        let edits = format!(
+            "option no-deref\nupdate {reference} {} {}\n",
+            plan.new, plan.old
+        );
+        recovery::transaction(repo, &edits, Some("git graft land"), || {
+            if branch_tip(repo, &reference)? != plan.old {
+                bail!(
+                    "destination tip changed after landing was planned: {}",
+                    plan.target
+                );
+            }
+            Ok(())
+        })?;
     }
     let current = branch_tip(repo, &reference)?;
     if !is_ancestor(repo, &plan.new, &current)? {

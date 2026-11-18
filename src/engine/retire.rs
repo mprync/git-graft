@@ -2,35 +2,15 @@
 use crate::landing::Plan;
 use crate::{
     api::fault,
-    git,
+    git, recovery,
     registry::{Phase, Project, Record, exists},
 };
-use anyhow::{Context, Result, ensure};
+use anyhow::{Result, ensure};
 use serde_json::{Value, json};
 use std::{fs, path::Path};
 
 pub(super) fn branch_oid(p: &Project, branch: &str) -> Result<Option<String>> {
-    let reference = format!("refs/heads/{branch}");
-    let output = git::raw(
-        &p.repo,
-        &[
-            "rev-parse",
-            "--verify",
-            "--quiet",
-            "--end-of-options",
-            &reference,
-        ],
-    )?;
-    match output.status.code() {
-        Some(0) => Ok(Some(
-            String::from_utf8(output.stdout)?.trim_end().to_owned(),
-        )),
-        Some(1) => Ok(None),
-        _ => Err(anyhow::anyhow!(
-            "read branch {reference}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        )),
-    }
+    recovery::direct_ref(&p.repo, &format!("refs/heads/{branch}"))
 }
 pub(super) fn require_clean(path: &Path, allow_ignored: bool) -> Result<()> {
     git::check_idle(path)?;
@@ -145,13 +125,17 @@ pub(super) fn drop_workspace(p: &Project, r: &mut Record, discard: bool) -> Resu
 }
 
 pub(super) fn receipt(r: &Record, landed: Option<&Plan>) -> Value {
-    match landed {
+    let mut result = match landed {
         Some(plan) => {
             json!({"action":"land","name":r.name,"target":plan.target,"previous":plan.old,
             "commit":plan.new,"workspace_tip":plan.tip,"removed":true})
         }
         None => json!({"action":"drop","name":r.name,"removed":true}),
+    };
+    if r.admin.is_some() {
+        result["recovery_lease"] = json!(r.lease);
     }
+    result
 }
 pub(super) fn remove(
     p: &Project,
@@ -161,6 +145,7 @@ pub(super) fn remove(
     discard_ignored: bool,
     landed: Option<Plan>,
 ) -> Result<()> {
+    recovery::ensure_supported(p)?;
     p.verify(r)?;
     check_lock(p, r)?;
     let result = receipt(r, landed.as_ref());
@@ -171,7 +156,7 @@ pub(super) fn remove(
         landed,
     };
     p.save(r)?;
-    finish(p, r, tip, discard, discard_ignored, &result)
+    finish_supported(p, r, tip, discard, discard_ignored, &result)
 }
 
 pub(super) fn finish(
@@ -182,54 +167,51 @@ pub(super) fn finish(
     discard_ignored: bool,
     result: &Value,
 ) -> Result<()> {
-    p.root(false)?;
-    let path = p.workspace(&r.name);
-    let registration = git::worktrees(&p.repo)?;
-    let branch = r.branch_ref();
-    if exists(&path)? {
-        p.verify(r)?;
+    recovery::ensure_supported(p)?;
+    finish_supported(p, r, tip, discard, discard_ignored, result)
+}
+
+fn finish_supported(
+    p: &Project,
+    r: &Record,
+    tip: &str,
+    discard: bool,
+    discard_ignored: bool,
+    result: &Value,
+) -> Result<()> {
+    if let Phase::Removing {
+        landed: Some(plan), ..
+    } = &r.state
+    {
+        let target = branch_oid(p, &plan.target)?.ok_or_else(|| {
+            anyhow::anyhow!("the destination branch disappeared; the workspace has been kept")
+        })?;
+        let output = git::raw(
+            &p.repo,
+            &[
+                "--no-replace-objects",
+                "merge-base",
+                "--is-ancestor",
+                &plan.new,
+                &target,
+            ],
+        )?;
+        ensure!(
+            output.status.success(),
+            "the destination no longer contains the integration commit; the workspace has been kept"
+        );
+    }
+    if !recovery::lease_used(p, &r.lease)? && exists(&p.workspace(&r.name))? {
+        let path = p.verify(r)?;
         check_lock(p, r)?;
         ensure!(
-            git::oid(&path, "HEAD")? == tip,
-            "workspace branch advanced during cleanup; keeping worktree"
+            git::oid(&path, "HEAD")? == tip && branch_oid(p, &r.branch())?.as_deref() == Some(tip),
+            "workspace branch changed during retirement; keeping worktree"
         );
         if !discard {
             require_clean(&path, discard_ignored)?;
         }
-        let mut args = vec!["worktree", "remove"];
-        if discard {
-            args.push("--force");
-        }
-        args.extend(["--", git::path_str(&path)?]);
-        git::bytes(&p.repo, &args)?;
-    } else {
-        ensure!(
-            !registration
-                .iter()
-                .any(|w| w.path == path || w.branch.as_deref() == Some(&branch)),
-            "registration survived or moved; inspect git worktree list before retrying"
-        );
-        if let Some(admin) = &r.admin {
-            ensure!(
-                !exists(admin)?,
-                "administrative directory still exists after removal"
-            );
-        }
     }
-    if let Some(current) = branch_oid(p, &r.branch())? {
-        ensure!(
-            current == tip,
-            "workspace branch changed during cleanup; keeping its ref"
-        );
-        ensure!(
-            !git::worktrees(&p.repo)?
-                .iter()
-                .any(|w| w.branch.as_deref() == Some(&branch)),
-            "workspace branch is checked out elsewhere"
-        );
-        git::bytes(&p.repo, &["update-ref", "--no-deref", "-d", &branch, tip])?;
-    }
-    super::clean_private_runtime(p, &r.name).context("clean private build outputs")?;
-    p.complete(r, result)?;
-    Ok(())
+    recovery::retire(p, r, tip, discard)?;
+    p.complete(r, result)
 }
