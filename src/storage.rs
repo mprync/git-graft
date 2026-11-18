@@ -268,8 +268,8 @@ pub(crate) fn clone_file(src: &Path, dst: &Path) -> io::Result<()> {
     }
     let source = File::open(src)?;
     let dest = OpenOptions::new().write(true).create_new(true).open(dst)?;
-    const FICLONE: libc::c_ulong = 0x4004_9409;
-    if unsafe { libc::ioctl(dest.as_raw_fd(), FICLONE, source.as_raw_fd()) } == 0 {
+    // libc supplies the ioctl encoding and request type for this Linux target.
+    if unsafe { libc::ioctl(dest.as_raw_fd(), libc::FICLONE, source.as_raw_fd()) } == 0 {
         let result = source
             .metadata()
             .and_then(|metadata| dest.set_permissions(metadata.permissions()));

@@ -270,6 +270,7 @@ fn clone_unsupported(error: &io::Error) -> bool {
     #[cfg(unix)]
     if let Some(code) = error.raw_os_error() {
         return code == libc::EXDEV
+            || code == libc::ENOTTY
             || code == libc::EOPNOTSUPP
             || code == libc::ENOTSUP
             || code == libc::ENOSYS
@@ -630,6 +631,9 @@ mod tests {
         )));
         assert!(clone_unsupported(&io::Error::from_raw_os_error(
             libc::EOPNOTSUPP
+        )));
+        assert!(clone_unsupported(&io::Error::from_raw_os_error(
+            libc::ENOTTY
         )));
         assert!(!clone_unsupported(&io::Error::from_raw_os_error(
             libc::EACCES
