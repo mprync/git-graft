@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { constants, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, rmSync, writeFileSync, chmodSync } from 'node:fs';
+import { constants, copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Scenario } from './harness.ts';
 
@@ -52,6 +52,8 @@ export const cases: Scenario[] = [
       writeFileSync(join(ctx.repo, 'removed.txt'), 'deleted\n');
       writeFileSync(join(ctx.repo, 'rename-before.txt'), 'renamed\n');
       writeFileSync(join(ctx.repo, 'executable.sh'), '#!/bin/sh\nexit 0\n');
+      writeFileSync(join(ctx.repo, 'converted.bat'), 'one\r\ntwo\0\r\n');
+      writeFileSync(join(ctx.repo, 'different.bat'), 'Git equivalent\r\n');
       // Common committed attributes must be supported by the CoW path.
       writeFileSync(join(ctx.repo, '.gitattributes'), '* text=auto eol=lf\n*.bat text eol=crlf\n*.bin binary\n');
       if (process.platform !== 'win32') chmodSync(join(ctx.repo, 'executable.sh'), 0o755);
@@ -66,6 +68,7 @@ export const cases: Scenario[] = [
       ctx.git(['checkout-index', '--', 'tracked-link']);
       const parent = ctx.git(['rev-parse', 'HEAD']).trim();
       writeFileSync(join(ctx.repo, 'tracked.txt'), 'dirty main\n');
+      writeFileSync(join(ctx.repo, 'different.bat'), 'Git equivalent\n');
       mkdirSync(join(ctx.repo, 'ignored'), { recursive: true });
       writeFileSync(join(ctx.repo, 'ignored', 'secret'), 'private');
       writeFileSync(join(ctx.repo, 'untracked-secret'), 'private');
@@ -99,7 +102,12 @@ export const cases: Scenario[] = [
       if (probe) {
         assert.ok(typeof cold.cloned_files === 'number' && cold.cloned_files > 0);
         assert.ok(typeof cold.cloned_bytes === 'number' && cold.cloned_bytes >= large.length);
+        assert.ok(Number(cold.primary_reused_bytes) >= large.length + Buffer.byteLength('one\r\ntwo\0\r\n'));
+        assert.equal(cold.private_files, 2);
+        assert.equal(cold.private_bytes, Buffer.byteLength('initial\nGit equivalent\r\n'));
       }
+      assert.deepEqual(file(join(first.path, 'converted.bat')), Buffer.from('one\r\ntwo\0\r\n'));
+      assert.equal(readFileSync(join(first.path, 'different.bat'), 'utf8'), 'Git equivalent\r\n');
       const reference = join(ctx.root, 'native-reference');
       ctx.git(['worktree', 'add', '--detach', reference, parent]);
       const actualLink = join(first.path, 'tracked-link');
@@ -117,6 +125,8 @@ export const cases: Scenario[] = [
       const warmReceipt = receipt(warm.result);
       if (probe) assert.equal(warmReceipt.snapshot_reused, true);
       else { assert.equal(warmReceipt.backend, 'git'); assert.equal(warmReceipt.snapshot_reused, false); }
+      assert.equal(warmReceipt.primary_reused_bytes, 0);
+      if (probe) assert.equal(warmReceipt.private_bytes, 0);
       assert.equal(ctx.git(['status', '--porcelain'], warm.path), '');
       writeFileSync(join(first.path, 'large.bin'), 'workspace change');
       assert.deepEqual(file(join(warm.path, 'large.bin')), large);
@@ -170,6 +180,111 @@ export const cases: Scenario[] = [
       assert.deepEqual(file(join(attr.path, 'nested', 'changed.txt')), file(join(attrReference, 'nested', 'changed.txt')));
       assert.equal(file(join(attr.path, 'nested', 'changed.txt')).toString(), 'new\r\n');
       assert.equal(ctx.git(['status', '--porcelain'], attr.path), '');
+    },
+  },
+  {
+    name: 'cold source reuse excludes tracked donor substitutions and private metadata',
+    run(ctx) {
+      ctx.git(['config', 'core.symlinks', 'true']);
+      const original = 'same bytes\n';
+      const tests = ['assumed.txt', 'staged.txt', 'missing.txt', 'hardlinked.txt', 'route/tracked.txt'];
+      if (process.platform === 'darwin') tests.push('xattr.txt', 'flags.txt', 'resource.txt');
+      mkdirSync(join(ctx.repo, 'route'));
+      for (const path of tests) writeFileSync(join(ctx.repo, path), original);
+      writeFileSync(join(ctx.repo, 'clean.bin'), Buffer.from([0, 1, 2, 13, 10, 255]));
+      ctx.git(['add', '.']);
+      ctx.git(['commit', '-qm', 'tracked source files']);
+      ctx.git(['update-index', '--assume-unchanged', 'assumed.txt']);
+      writeFileSync(join(ctx.repo, 'assumed.txt'), 'private!!!\n');
+      writeFileSync(join(ctx.repo, 'staged.txt'), 'private!!!\n');
+      ctx.git(['add', 'staged.txt']);
+      rmSync(join(ctx.repo, 'missing.txt'));
+      const outside = join(ctx.root, 'outside');
+      mkdirSync(outside);
+      writeFileSync(join(outside, 'tracked.txt'), original);
+      writeFileSync(join(outside, 'private.txt'), 'outside content');
+      if (process.platform !== 'win32') {
+        rmSync(join(ctx.repo, 'hardlinked.txt'));
+        linkSync(join(outside, 'tracked.txt'), join(ctx.repo, 'hardlinked.txt'));
+        rmSync(join(ctx.repo, 'route'), { recursive: true });
+        symlinkSync(outside, join(ctx.repo, 'route'), 'dir');
+      }
+      if (process.platform === 'darwin') {
+        const xattr = ctx.command('xattr', ['-w', 'user.graft-test', 'private attribute', 'xattr.txt']);
+        assert.equal(xattr.status, 0, xattr.stderr);
+        const flags = ctx.command('chflags', ['hidden', 'flags.txt']);
+        assert.equal(flags.status, 0, flags.stderr);
+        writeFileSync(join(ctx.repo, 'resource.txt', '..namedfork', 'rsrc'), 'private resource fork');
+      }
+      const workspace = ctx.spawn('donor-substitutions');
+      const result = receipt(workspace.result);
+      const probe = object(ctx.cli(['doctor']).source_storage).native_clone;
+      for (const path of tests) assert.equal(readFileSync(join(workspace.path, path), 'utf8'), original, path);
+      assert.equal(lstatSync(join(workspace.path, 'route')).isDirectory(), true);
+      assert.equal(existsSync(join(workspace.path, 'route/private.txt')), false);
+      if (probe) {
+        assert.equal(result.private_files, tests.length, JSON.stringify(result));
+        assert.equal(result.private_bytes, tests.length * Buffer.byteLength(original));
+        assert.equal(result.primary_reused_files, 3);
+        assert.notEqual(lstatSync(join(ctx.repo, 'clean.bin')).ino, lstatSync(join(workspace.path, 'clean.bin')).ino);
+      }
+      assert.equal(ctx.git(['status', '--porcelain'], workspace.path), '');
+      writeFileSync(join(workspace.path, 'route/tracked.txt'), 'workspace edit');
+      writeFileSync(join(workspace.path, 'hardlinked.txt'), 'workspace edit');
+      assert.equal(readFileSync(join(outside, 'tracked.txt'), 'utf8'), original);
+      if (process.platform === 'darwin') {
+        assert.equal(ctx.command('xattr', ['-p', 'user.graft-test', 'xattr.txt'], workspace.path).status, 1);
+        assert.equal(ctx.command('xattr', ['-p', 'user.graft-test', 'xattr.txt']).stdout.trim(), 'private attribute');
+        assert.equal(ctx.command('xattr', ['-p', 'com.apple.ResourceFork', 'resource.txt'], workspace.path).status, 1);
+        assert.equal(readFileSync(join(ctx.repo, 'resource.txt', '..namedfork', 'rsrc'), 'utf8'), 'private resource fork');
+      }
+    },
+  },
+  {
+    name: 'polluted and foreign base generations are preserved without being reused',
+    run(ctx) {
+      const oid = ctx.git(['rev-parse', 'HEAD']);
+      const first = ctx.spawn('cache-prime');
+      const bases = join(ctx.repo, '.git', 'graft', 'bases');
+      const foreign = join(bases, '0'.repeat(oid.length));
+      mkdirSync(foreign);
+      writeFileSync(join(foreign, 'foreign.txt'), 'foreign directory');
+      const base = join(bases, oid);
+      if (receipt(first.result).backend !== 'git') {
+        const [generation] = readdirSync(base);
+        const tree = join(base, generation, 'tree');
+        const privatePath = join(tree, 'untracked.txt');
+        writeFileSync(privatePath, 'private cache file');
+        const warm = ctx.spawn('polluted-warm');
+        assert.equal(receipt(warm.result).snapshot_reused, false);
+        assert.equal(existsSync(join(warm.path, 'untracked.txt')), false);
+        assert.equal(readFileSync(privatePath, 'utf8'), 'private cache file');
+        rmSync(privatePath);
+        // A changed cached tracked file of exactly the same size also invalidates
+        // the generation, even though the recorded Git blob ID still matches.
+        const trackedPath = join(tree, 'tracked.txt');
+        writeFileSync(trackedPath, 'private\n');
+        const changed = ctx.spawn('invalidated-warm');
+        assert.equal(receipt(changed.result).snapshot_reused, false);
+        assert.equal(readFileSync(join(changed.path, 'tracked.txt'), 'utf8'), 'initial\n');
+        writeFileSync(join(ctx.repo, 'added.txt'), 'new file\n');
+        ctx.git(['add', 'added.txt']);
+        ctx.git(['commit', '-qm', 'advance past polluted base']);
+        const child = ctx.spawn('invalidated-parent');
+        assert.equal(receipt(child.result).parent_reused_files, 0);
+        assert.equal(readFileSync(join(child.path, 'tracked.txt'), 'utf8'), 'initial\n');
+        assert.equal(readFileSync(trackedPath, 'utf8'), 'private\n');
+        for (const [name, lease] of [
+          ['polluted-warm', warm.lease], ['invalidated-warm', changed.lease], ['invalidated-parent', child.lease],
+        ]) ctx.cli(['drop', name, '--lease', lease]);
+        ctx.cli(['drop', 'cache-prime', '--lease', first.lease]);
+        const gc = ctx.cli(['gc', '--apply']);
+        assert.equal(readFileSync(trackedPath, 'utf8'), 'private\n');
+        assert.ok((gc.unused_source_snapshots as string[]).includes(ctx.git(['rev-parse', 'HEAD'])));
+      } else {
+        ctx.cli(['gc', '--apply']);
+      }
+      assert.equal(readFileSync(join(foreign, 'foreign.txt'), 'utf8'), 'foreign directory');
     },
   },
   {

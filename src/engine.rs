@@ -152,7 +152,7 @@ fn spawn(p: &Project, args: Spawn) -> Result<Value> {
     }
     let result = (|| -> Result<()> {
         p.mark(&mut r)?;
-        r.storage = storage::materialize(&path, &p.state, &oid, &args.sparse)?;
+        r.storage = storage::materialize_from(&path, &p.state, &oid, &args.sparse, &p.repo)?;
         r.storage["volume_available_before"] = json!(before);
         r.storage["volume_available_after"] = json!(available(&p.root));
         r.heartbeat = now();

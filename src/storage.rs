@@ -1,83 +1,72 @@
-//! Safe worktree population from committed Git data.
-//!
-//! The caller must hold the project lock across this operation and snapshot GC,
-//! and provide a newly registered, otherwise empty worktree.
-use anyhow::{Context, Result, bail};
+//! Git-authoritative source materialization with optional native CoW reuse.
+//! The caller holds the project lock shared by snapshot publication and GC.
+use anyhow::{Context, Result, bail, ensure};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::ffi::OsStr;
-use std::fs::{self};
 #[cfg(target_os = "linux")]
 use std::fs::{File, OpenOptions};
-use std::io::{self, Write};
-use std::path::{Component, Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+#[cfg(test)]
+use std::path::PathBuf;
+use std::{
+    ffi::OsStr,
+    fs,
+    io::{self, Seek, Write},
+    path::{Component, Path},
+    process::{Command, Output, Stdio},
+};
 
-// A hook or parent Git process may have selected a different repository or
-// index through its environment. Only explicitly requested overrides survive.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod cache;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod native;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod verify;
+
 fn git_command(worktree: &Path) -> Command {
-    let mut command = crate::git::command(worktree);
-    // Resolve snapshot attributes from its own index, not an inherited tree.
-    command.env_remove("GIT_ATTR_SOURCE");
-    command
+    crate::git::command(worktree)
 }
 
-fn git<I, S>(worktree: &Path, args: I) -> Result<Output>
-where
-    I: IntoIterator<Item = S>,
-    S: AsRef<OsStr>,
-{
+fn git(worktree: &Path, args: &[&str]) -> Result<Output> {
     let output = git_command(worktree)
         .args(args)
         .output()
-        .context("run git")?;
-    if !output.status.success() {
-        bail!(
-            "git failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
+        .context("run Git")?;
+    ensure!(
+        output.status.success(),
+        "Git checkout: {}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
     Ok(output)
 }
-fn config(worktree: &Path, key: &str) -> Result<Option<String>> {
-    let out = git_command(worktree)
-        .args(["config", "--get", key])
-        .output()?;
-    match out.status.code() {
-        Some(0) => Ok(Some(String::from_utf8_lossy(&out.stdout).trim().to_owned())),
-        Some(1) => Ok(None),
-        _ => bail!("git config {key}: {}", String::from_utf8_lossy(&out.stderr)),
-    }
-}
+
 fn checked_oid(worktree: &Path, oid: &str) -> Result<String> {
-    if !matches!(oid.len(), 40 | 64) || !oid.bytes().all(|c| c.is_ascii_hexdigit()) {
-        bail!("expected full commit object ID");
-    }
-    let out = git(
-        worktree,
-        ["rev-parse", "--verify", &format!("{oid}^{{commit}}")],
-    )?;
-    let resolved = String::from_utf8(out.stdout)?.trim().to_owned();
-    if !resolved.eq_ignore_ascii_case(oid) {
-        bail!("object ID must name a commit");
-    }
-    let head = git(worktree, ["rev-parse", "--verify", "HEAD"])?;
-    if String::from_utf8(head.stdout)?.trim() != resolved {
-        bail!("worktree HEAD does not match requested commit");
-    }
-    Ok(resolved)
+    crate::git::checked_oid(oid)?;
+    let head = git(worktree, &["rev-parse", "--verify", "HEAD^{commit}"])?;
+    let head = String::from_utf8(head.stdout)?.trim().to_owned();
+    ensure!(
+        head.eq_ignore_ascii_case(oid),
+        "worktree HEAD does not match requested commit"
+    );
+    Ok(head)
 }
+
 fn ensure_empty(worktree: &Path) -> Result<()> {
     for entry in fs::read_dir(worktree)? {
         let entry = entry?;
-        if entry.file_name() != OsStr::new(".git") {
-            bail!("worktree is not empty: {}", entry.path().display());
-        }
-        if !entry.file_type()?.is_file() {
-            bail!("expected a registered worktree .git file");
-        }
+        ensure!(
+            entry.file_name() == ".git",
+            "worktree is not empty: {}",
+            entry.path().display()
+        );
+        let metadata = fs::symlink_metadata(entry.path())?;
+        ensure!(
+            metadata.is_file() && !crate::registry::is_reparse_point(&metadata),
+            "expected a registered worktree .git file"
+        );
     }
     Ok(())
 }
+
 /// Validate cone paths against a commit before creating a branch or worktree.
 pub(crate) fn validate_sparse(worktree: &Path, oid: &str, sparse: &[String]) -> Result<()> {
     if !matches!(oid.len(), 40 | 64) || !oid.bytes().all(|c| c.is_ascii_hexdigit()) {
@@ -97,7 +86,7 @@ pub(crate) fn validate_sparse(worktree: &Path, oid: &str, sparse: &[String]) -> 
             bail!("invalid sparse cone directory: {path:?}");
         }
         let spec = format!("{oid}:{path}");
-        let kind = git(worktree, ["cat-file", "-t", &spec])
+        let kind = git(worktree, &["cat-file", "-t", &spec])
             .with_context(|| format!("invalid sparse cone directory: {path}"))?;
         if kind.stdout != b"tree\n" {
             bail!("sparse cone path is not a directory: {path}");
@@ -105,145 +94,686 @@ pub(crate) fn validate_sparse(worktree: &Path, oid: &str, sparse: &[String]) -> 
     }
     Ok(())
 }
-fn native_checkout(worktree: &Path, oid: &str, sparse: &[String], reason: &str) -> Result<Value> {
-    if sparse.is_empty() {
-        git(worktree, ["read-tree", "-m", "-u", oid])?;
-    } else {
-        let mut args = vec!["sparse-checkout", "set", "--cone", "--"];
-        args.extend(sparse.iter().map(String::as_str));
-        git(worktree, args)?;
-        git(worktree, ["read-tree", "-m", "-u", oid])?;
-    }
-    Ok(
-        json!({"backend":"git", "reason":reason, "cloned_files":0, "cloned_bytes":0, "snapshot_reused":false, "parent_reused_files":0, "parent_reused_bytes":0}),
-    )
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct Entry {
+    name: Vec<u8>,
+    blob: String,
+    mode: u32,
 }
 
-// Cache only when checkout semantics are determined by the commit and the
-// fingerprinted settings. Unknown external attributes and filters use Git.
-fn conversion_reason(worktree: &Path, oid: &str) -> Result<Option<&'static str>> {
+impl Entry {
+    fn path(&self) -> Result<&Path> {
+        #[cfg(unix)]
+        let name = {
+            use std::os::unix::ffi::OsStrExt;
+            OsStr::from_bytes(&self.name)
+        };
+        #[cfg(not(unix))]
+        let name = OsStr::new(std::str::from_utf8(&self.name)?);
+        let path = Path::new(name);
+        ensure!(
+            path.components().all(|c| matches!(c, Component::Normal(_))),
+            "unsafe Git tree path"
+        );
+        Ok(path)
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn regular(&self) -> bool {
+        matches!(self.mode, 0o100644 | 0o100755)
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn creation_mode(&self, permissions: u32) -> u32 {
+        match self.mode {
+            0o100755 => permissions,
+            _ => permissions & 0o666,
+        }
+    }
+
+    fn attributes(&self) -> bool {
+        self.name
+            .split(|b| *b == b'/')
+            .next_back()
+            .is_some_and(|name| name.eq_ignore_ascii_case(b".gitattributes"))
+    }
+}
+
+fn entries(worktree: &Path, oid: &str) -> Result<Vec<Entry>> {
+    let tree = git(worktree, &["ls-tree", "-r", "-z", oid])?;
+    tree.stdout
+        .split(|b| *b == 0)
+        .filter(|record| !record.is_empty())
+        .map(|record| {
+            let tab = record
+                .iter()
+                .position(|b| *b == b'\t')
+                .context("invalid Git tree entry")?;
+            let name = &record[tab + 1..];
+            ensure!(
+                name.split(|b| *b == b'/').all(|p| !p.is_empty()
+                    && p != b"."
+                    && p != b".."
+                    && !p.eq_ignore_ascii_case(b".git")),
+                "unsafe path in Git tree"
+            );
+            let mut header = std::str::from_utf8(&record[..tab])?.split_whitespace();
+            let mode = u32::from_str_radix(header.next().context("missing Git tree mode")?, 8)?;
+            let kind = header.next().context("missing Git tree kind")?;
+            let blob = crate::git::checked_oid(header.next().context("missing Git object ID")?)?
+                .to_owned();
+            ensure!(
+                matches!(
+                    (mode, kind),
+                    (0o100644 | 0o100755 | 0o120000, "blob") | (0o160000, "commit")
+                ),
+                "unexpected Git checkout entry"
+            );
+            Ok(Entry {
+                name: name.to_vec(),
+                blob,
+                mode,
+            })
+        })
+        .collect()
+}
+
+#[derive(Default)]
+struct Counts {
+    files: u64,
+    bytes: u64,
+}
+
+impl Counts {
+    fn add(&mut self, size: u64) {
+        self.files += 1;
+        self.bytes += size;
+    }
+}
+
+#[derive(Default)]
+struct Receipt {
+    cloned: Counts,
+    primary: Counts,
+    parent: Counts,
+    private: Counts,
+    warm: bool,
+}
+
+impl Receipt {
+    fn json(&self, backend: &str, reason: Option<&str>) -> Value {
+        let mut result = json!({
+            "backend":backend,
+            "cloned_files":self.cloned.files, "cloned_bytes":self.cloned.bytes,
+            "snapshot_reused":self.warm,
+            "primary_reused_files":self.primary.files, "primary_reused_bytes":self.primary.bytes,
+            "parent_reused_files":self.parent.files, "parent_reused_bytes":self.parent.bytes,
+            "private_files":self.private.files, "private_bytes":self.private.bytes,
+        });
+        if let Some(reason) = reason {
+            result["reason"] = reason.into();
+        }
+        result
+    }
+}
+
+fn count_private(root: &Path, entry: &Entry, counts: &mut Counts) {
+    let Ok(path) = entry.path() else { return };
+    let mut path_at = root.to_path_buf();
+    let mut parts = path.components().peekable();
+    while let Some(part) = parts.next() {
+        path_at.push(part);
+        let Ok(metadata) = fs::symlink_metadata(&path_at) else {
+            return;
+        };
+        if crate::registry::is_reparse_point(&metadata) {
+            return;
+        }
+        if parts.peek().is_none() && metadata.is_file() {
+            counts.add(metadata.len());
+        }
+        if !metadata.is_dir() {
+            return;
+        }
+    }
+}
+
+fn native_checkout(
+    worktree: &Path,
+    oid: &str,
+    sparse: &[String],
+    entries: &[Entry],
+    reason: &str,
+) -> Result<Value> {
+    if !sparse.is_empty() {
+        let mut args = vec!["sparse-checkout", "set", "--cone", "--"];
+        args.extend(sparse.iter().map(String::as_str));
+        git(worktree, &args)?;
+    }
+    git(worktree, &["read-tree", "-m", "-u", oid])?;
+    let mut result = Receipt::default();
+    for entry in entries {
+        count_private(worktree, entry, &mut result.private);
+    }
+    Ok(result.json("git", Some(reason)))
+}
+
+struct Checkout<'a> {
+    worktree: &'a Path,
+    oid: &'a str,
+    entries: &'a [Entry],
+    settings: String,
+    symlinks: bool,
+    may_convert_eol: bool,
+}
+
+impl<'a> Checkout<'a> {
+    fn read(worktree: &'a Path, oid: &'a str, entries: &'a [Entry]) -> Result<Self> {
+        let out = git_command(worktree).args([
+            "config", "--null", "--get-regexp",
+            r"^core\.(autocrlf|eol|safecrlf|symlinks|ignorecase|precomposeunicode|protecthfs|protectntfs|bigfilethreshold)$",
+        ]).output()?;
+        ensure!(
+            matches!(out.status.code(), Some(0 | 1)),
+            "cannot read Git checkout settings"
+        );
+        let git_version = git(worktree, &["version"])?;
+        let mut identity = blake3::Hasher::new();
+        identity.update(b"git-graft-checkout-v3\0");
+        identity.update(std::env::consts::OS.as_bytes());
+        identity.update(&git_version.stdout);
+        identity.update(&out.stdout);
+        let value = |key: &[u8]| {
+            out.stdout
+                .split(|b| *b == 0)
+                .filter_map(|entry| {
+                    let rest = entry.strip_prefix(key)?;
+                    if rest.is_empty() {
+                        Some(b"true".as_slice()) // a bare boolean key
+                    } else {
+                        rest.strip_prefix(b"\n")
+                    }
+                })
+                .next_back()
+        };
+        let symlinks = value(b"core.symlinks").is_none_or(|value| {
+            [b"true".as_slice(), b"yes", b"on", b"1"]
+                .iter()
+                .any(|valid| value.eq_ignore_ascii_case(valid))
+        });
+        let may_convert_eol = value(b"core.autocrlf").is_some_and(|value| {
+            ![b"false".as_slice(), b"no", b"off", b"0", b"", b"input"]
+                .iter()
+                .any(|raw| value.eq_ignore_ascii_case(raw))
+        });
+        Ok(Self {
+            worktree,
+            oid,
+            entries,
+            settings: identity.finalize().to_hex().to_string(),
+            symlinks,
+            may_convert_eol,
+        })
+    }
+}
+
+// External attributes, replacement blobs and arbitrary filters can change
+// bytes without changing commit or blob IDs. They always use Git.
+fn conversion_reason(
+    checkout: &Checkout<'_>,
+    inspect_attributes: bool,
+) -> Result<Option<&'static str>> {
+    let (worktree, oid, entries) = (checkout.worktree, checkout.oid, checkout.entries);
     for variable in ["GIT_ATTR_SYSTEM", "GIT_ATTR_GLOBAL"] {
-        // Git omits GIT_ATTR_SYSTEM from "git var" when system attributes
-        // are explicitly disabled. There is then no system file to inspect.
         if variable == "GIT_ATTR_SYSTEM"
             && std::env::var_os("GIT_ATTR_NOSYSTEM").as_deref() == Some(OsStr::new("1"))
         {
             continue;
         }
-        let output = match git(worktree, ["var", variable]) {
-            Ok(output) => output,
-            Err(_) => return Ok(Some("cannot determine external attributes")),
-        };
-        let value = match std::str::from_utf8(&output.stdout) {
-            Ok(value) => value.trim_end_matches(['\r', '\n']),
-            Err(_) => return Ok(Some("cannot determine external attributes")),
-        };
-        if value.is_empty() || !Path::new(value).is_absolute() {
+        let Ok(output) = git(worktree, &["var", variable]) else {
             return Ok(Some("cannot determine external attributes"));
-        }
-        match fs::symlink_metadata(value) {
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            _ => return Ok(Some("external checkout attributes")),
+        };
+        if let Some(reason) = external_attributes(&output.stdout) {
+            return Ok(Some(reason));
         }
     }
-    let attr = match git(
+    let Ok(attr) = git(
         worktree,
-        [
+        &[
             "rev-parse",
             "--path-format=absolute",
             "--git-path",
             "info/attributes",
         ],
-    ) {
-        Ok(output) => output,
-        Err(_) => return Ok(Some("cannot determine external attributes")),
-    };
-    let attr = match std::str::from_utf8(&attr.stdout) {
-        Ok(value) => value.trim_end_matches(['\r', '\n']),
-        Err(_) => return Ok(Some("cannot determine external attributes")),
-    };
-    if !Path::new(attr).is_absolute() {
+    ) else {
         return Ok(Some("cannot determine external attributes"));
+    };
+    if let Some(reason) = external_attributes(&attr.stdout) {
+        return Ok(Some(reason));
     }
-    match fs::symlink_metadata(attr) {
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        _ => return Ok(Some("external checkout attributes")),
-    }
-    if let Some(value) = config(worktree, "core.symlinks")?
-        && !["true", "yes", "on", "1"]
-            .iter()
-            .any(|v| value.eq_ignore_ascii_case(v))
-    {
+    if !checkout.symlinks {
         return Ok(Some("Git symlink emulation"));
     }
-    // Gitlinks require Git's own empty-directory behavior and index handling.
-    let tree = git(worktree, ["ls-tree", "-r", "-z", oid])?;
-    if tree
-        .stdout
-        .split(|b| *b == 0)
-        .any(|record| record.starts_with(b"160000 "))
-    {
+    if entries.iter().any(|entry| entry.mode == 0o160000) {
         return Ok(Some("submodules"));
     }
-    let paths = git(worktree, ["ls-tree", "-r", "--name-only", "-z", oid])?;
+    if !git(
+        worktree,
+        &[
+            "for-each-ref",
+            "--count=1",
+            "--format=%(refname)",
+            "refs/replace",
+        ],
+    )?
+    .stdout
+    .is_empty()
+    {
+        return Ok(Some("Git replacement objects"));
+    }
+    if !inspect_attributes {
+        return Ok(None);
+    }
     let mut input = tempfile::tempfile()?;
-    input.write_all(&paths.stdout)?;
-    use std::io::{Seek, SeekFrom};
-    input.seek(SeekFrom::Start(0))?;
-    // --source makes attribute lookup independent of both the dirty main tree
-    // and the destination worktree. Old Git versions safely use native checkout.
+    for entry in entries {
+        input.write_all(&entry.name)?;
+        input.write_all(b"\0")?;
+    }
+    input.rewind()?;
     let source = format!("--source={oid}");
+    let attrs = ["filter", "ident", "working-tree-encoding"];
     let output = git_command(worktree)
-        .args([
-            "check-attr",
-            &source,
-            "-z",
-            "--stdin",
-            "filter",
-            "ident",
-            "working-tree-encoding",
-        ])
+        .args(["check-attr", &source, "-z", "--stdin"])
+        .args(attrs)
         .stdin(Stdio::from(input))
         .output()?;
     if !output.status.success() {
         return Ok(Some("cannot inspect committed attributes"));
     }
-    let fields: Vec<_> = output.stdout.split(|b| *b == 0).collect();
-    if !fields.last().is_some_and(|field| field.is_empty()) || !(fields.len() - 1).is_multiple_of(3)
-    {
-        return Ok(Some("cannot inspect committed attributes"));
-    }
-    for fields in fields[..fields.len() - 1].as_chunks::<3>().0 {
-        if fields[2] != b"unspecified" && fields[2] != b"unset" {
-            return Ok(Some("path-dependent checkout conversion"));
+    let mut fields = output.stdout.split(|b| *b == 0);
+    for entry in entries {
+        for attr in attrs {
+            if fields.next() != Some(entry.name.as_slice())
+                || fields.next() != Some(attr.as_bytes())
+            {
+                return Ok(Some("cannot inspect committed attributes"));
+            }
+            if !matches!(fields.next(), Some(b"unspecified" | b"unset")) {
+                return Ok(Some("path-dependent checkout conversion"));
+            }
         }
+    }
+    if fields.next() != Some(b"") || fields.next().is_some() {
+        return Ok(Some("cannot inspect committed attributes"));
     }
     Ok(None)
 }
 
-// A commit can check out to different bytes under different effective Git
-// settings. Keep separate snapshots for each set of conversion settings.
-fn snapshot_key(worktree: &Path) -> Result<String> {
-    let mut input = tempfile::tempfile()?;
-    writeln!(input, "git-graft-checkout-v2:{}", std::env::consts::OS)?;
-    for key in [
-        "core.autocrlf",
-        "core.eol",
-        "core.safecrlf",
-        "core.symlinks",
-    ] {
-        writeln!(input, "{key}={:?}", config(worktree, key)?)?;
+fn external_attributes(output: &[u8]) -> Option<&'static str> {
+    let Ok(path) = std::str::from_utf8(output) else {
+        return Some("cannot determine external attributes");
+    };
+    #[cfg(windows)]
+    let path = path
+        .strip_suffix("\r\n")
+        .or_else(|| path.strip_suffix('\n'));
+    #[cfg(not(windows))]
+    let path = path.strip_suffix('\n');
+    let Some(path) = path else {
+        return Some("cannot determine external attributes");
+    };
+    let path = Path::new(path);
+    if !path.is_absolute() {
+        return Some("cannot determine external attributes");
     }
-    use std::io::{Seek, SeekFrom};
-    input.seek(SeekFrom::Start(0))?;
-    let output = git_command(worktree)
-        .args(["hash-object", "--stdin"])
-        .stdin(Stdio::from(input))
-        .output()?;
-    if !output.status.success() {
-        bail!("git could not fingerprint checkout settings");
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+        _ => Some("external checkout attributes"),
     }
-    Ok(String::from_utf8(output.stdout)?.trim().to_owned())
+}
+
+/// Populate a registered worktree, using the existing primary checkout as a
+/// donor when a private CoW copy can be verified against committed Git bytes.
+pub fn materialize_from(
+    worktree: &Path,
+    state: &Path,
+    oid: &str,
+    sparse: &[String],
+    primary: &Path,
+) -> Result<Value> {
+    let worktree = dunce::canonicalize(worktree)?;
+    ensure_empty(&worktree)?;
+    let oid = checked_oid(&worktree, oid)?;
+    validate_sparse(&worktree, &oid, sparse)?;
+    let entries = entries(&worktree, &oid)?;
+    if !sparse.is_empty() {
+        return native_checkout(&worktree, &oid, sparse, &entries, "sparse checkout");
+    }
+    let mut checkout = Checkout::read(&worktree, &oid, &entries)?;
+    // Non-ASCII names can have filesystem-specific aliases on checkout.
+    let inspect_attributes = entries
+        .iter()
+        .any(|entry| entry.attributes() || !entry.name.is_ascii());
+    if let Some(reason) = conversion_reason(&checkout, inspect_attributes)? {
+        return native_checkout(&worktree, &oid, sparse, &entries, reason);
+    }
+    checkout.may_convert_eol |= inspect_attributes;
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        fs::create_dir_all(state)?;
+        let state = dunce::canonicalize(state)?;
+        ensure!(
+            !state.starts_with(&worktree),
+            "storage state must be outside the worktree"
+        );
+        if probe(&state, &worktree)? {
+            if let Ok(prepared) = prepare(&checkout, &state, primary) {
+                return prepared.install(&worktree, &oid);
+            }
+            return native_checkout(&worktree, &oid, sparse, &entries, "snapshot unavailable");
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    let _ = (state, primary, checkout);
+    native_checkout(
+        &worktree,
+        &oid,
+        sparse,
+        &entries,
+        "native clone unavailable",
+    )
+}
+
+/// Report ownership only for a complete, authenticated commit snapshot directory.
+pub fn owned_base(path: &Path) -> Result<bool> {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        Ok(cache::owned_base(path).is_ok())
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        let _ = path;
+        Ok(false)
+    }
+}
+
+#[cfg(test)]
+fn materialize(worktree: &Path, state: &Path, oid: &str, sparse: &[String]) -> Result<Value> {
+    let primary = crate::git::worktrees(worktree)?.remove(0).path;
+    materialize_from(worktree, state, oid, sparse, &primary)
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+struct Prepared {
+    staging: tempfile::TempDir,
+    receipt: Receipt,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl Prepared {
+    fn install(self, worktree: &Path, oid: &str) -> Result<Value> {
+        git(
+            worktree,
+            &[
+                "-c",
+                "core.protectHFS=true",
+                "-c",
+                "core.protectNTFS=true",
+                "read-tree",
+                oid,
+            ],
+        )?;
+        for entry in fs::read_dir(self.staging.path())? {
+            let entry = entry?;
+            native::rename_new(&entry.path(), &worktree.join(entry.file_name()))?;
+        }
+        git(worktree, &["update-index", "--refresh"])?;
+        let backend = if cfg!(target_os = "macos") {
+            "clonefile"
+        } else {
+            "reflink"
+        };
+        Ok(self.receipt.json(backend, None))
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn prepare(checkout: &Checkout<'_>, state: &Path, primary: &Path) -> Result<Prepared> {
+    let (worktree, oid, entries) = (checkout.worktree, checkout.oid, checkout.entries);
+    let bases = state.join("bases");
+    crate::registry::dir(&bases)?;
+    let commit = bases.join(oid);
+    crate::registry::dir(&commit)?;
+    let settings = checkout.settings.as_str();
+    let base = commit.join(settings);
+    let secret = cache::key(state, true)?;
+    let mut receipt = Receipt::default();
+    let mode = native::creation_mode(worktree)?;
+    let snapshot = match fs::symlink_metadata(&base) {
+        Ok(_) => {
+            receipt.warm = true;
+            cache::Snapshot::load(&base, &secret, oid, settings)?
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            let parent = parent_candidate(worktree, &bases, oid, entries, settings, &secret);
+            build_snapshot(
+                checkout,
+                &secret,
+                &base,
+                parent.as_ref(),
+                primary,
+                mode,
+                &mut receipt,
+            )?
+        }
+        Err(error) => return Err(error.into()),
+    };
+    ensure!(
+        snapshot
+            .records()
+            .iter()
+            .map(|record| &record.entry)
+            .eq(entries),
+        "source snapshot differs from the Git tree"
+    );
+    let staging = tempfile::Builder::new()
+        .prefix(".graft-source-")
+        .tempdir_in(worktree)?;
+    let destination = native::Root::open(staging.path())?;
+    let mut directory = std::path::PathBuf::new();
+    for record in snapshot.records() {
+        let target = staging.path().join(record.entry.path()?);
+        stage_parent(&target, &mut directory)?;
+        if let Some(size) = snapshot.clone_record(record, &destination, &target, mode)? {
+            receipt.cloned.add(size);
+        }
+    }
+    Ok(Prepared { staging, receipt })
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn stage_parent(target: &Path, previous: &mut std::path::PathBuf) -> Result<()> {
+    let parent = target.parent().context("missing source directory")?;
+    if *previous != parent {
+        fs::create_dir_all(parent)?;
+        parent.clone_into(previous);
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn parent_candidate(
+    worktree: &Path,
+    bases: &Path,
+    oid: &str,
+    entries: &[Entry],
+    settings: &str,
+    secret: &cache::Key,
+) -> Option<cache::Snapshot> {
+    // An empty cache is the common first spawn and has no parent to discover.
+    if fs::read_dir(bases).ok()?.filter_map(Result::ok).count() <= 1 {
+        return None;
+    }
+    let parents = git(worktree, &["show", "-s", "--format=%P", oid]).ok()?;
+    let parent = std::str::from_utf8(&parents.stdout)
+        .ok()?
+        .split_whitespace()
+        .next()?;
+    crate::git::checked_oid(parent).ok()?;
+    let snapshot =
+        cache::Snapshot::load(&bases.join(parent).join(settings), secret, parent, settings).ok()?;
+    let old_attrs = snapshot
+        .records()
+        .iter()
+        .map(|record| &record.entry)
+        .filter(|entry| entry.attributes());
+    if !old_attrs.eq(entries.iter().filter(|entry| entry.attributes())) {
+        return None;
+    }
+    snapshot.verify().ok()?;
+    Some(snapshot)
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn build_snapshot(
+    checkout_settings: &Checkout<'_>,
+    secret: &cache::Key,
+    base: &Path,
+    parent: Option<&cache::Snapshot>,
+    primary: &Path,
+    mode: u32,
+    receipt: &mut Receipt,
+) -> Result<cache::Snapshot> {
+    use std::collections::{BTreeMap, BTreeSet};
+    let (worktree, oid, entries) = (
+        checkout_settings.worktree,
+        checkout_settings.oid,
+        checkout_settings.entries,
+    );
+    let base_parent = base.parent().context("missing snapshot directory")?;
+    let staging = tempfile::Builder::new()
+        .prefix(".building-")
+        .tempdir_in(base_parent)?;
+    let generation = staging.path().join("generation");
+    let tree = cache::tree(&generation);
+    fs::create_dir(&generation)?;
+    fs::create_dir(&tree)?;
+    let index = staging.path().join("index");
+    let checkout = |args: &[&str], input: Option<fs::File>| -> Result<()> {
+        let mut command = git_command(worktree);
+        command
+            .env("GIT_INDEX_FILE", &index)
+            .env("GIT_WORK_TREE", &tree)
+            .env("GIT_ATTR_SOURCE", oid)
+            .args([
+                "-c",
+                "core.sparseCheckout=false",
+                "-c",
+                "core.protectHFS=true",
+                "-c",
+                "core.protectNTFS=true",
+            ])
+            .args(args);
+        if let Some(input) = input {
+            command.stdin(Stdio::from(input));
+        }
+        let output = command.output()?;
+        ensure!(
+            output.status.success(),
+            "Git snapshot checkout: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    };
+    checkout(&["read-tree", oid], None)?;
+
+    let previous: BTreeMap<_, _> = parent
+        .into_iter()
+        .flat_map(|p| p.records())
+        .map(|record| (record.entry.name.as_slice(), record))
+        .collect();
+    let donor = native::Root::open(primary).ok();
+    let private = native::Root::open(&tree)?;
+    let mut reused = BTreeSet::new();
+    let mut primary_clones = Vec::new();
+    let mut directory = std::path::PathBuf::new();
+    for entry in entries.iter().filter(|entry| entry.regular()) {
+        let path = entry.path()?;
+        let target = tree.join(path);
+        if let Some(snapshot) = parent
+            && let Some(record) = previous.get(entry.name.as_slice())
+            && record.entry == *entry
+        {
+            stage_parent(&target, &mut directory)?;
+            if let Ok(Some(size)) = snapshot.clone_record(record, &private, &target, mode) {
+                receipt.parent.add(size);
+                reused.insert(entry.name.as_slice());
+                continue;
+            }
+        }
+        // Git's filtered batch format separates the object and path by
+        // whitespace. Let checkout-index handle names it cannot encode.
+        if checkout_settings.may_convert_eol && entry.name[0].is_ascii_whitespace() {
+            continue;
+        }
+        if let Some(donor) = &donor
+            && let Ok((source, metadata)) = donor.regular_metadata(path)
+        {
+            stage_parent(&target, &mut directory)?;
+            if private
+                .clone_regular(path, &source, &metadata, entry.creation_mode(mode), false)
+                .is_ok()
+            {
+                primary_clones.push(entry);
+            }
+        }
+    }
+    let digests = verify::checkout_digests(
+        worktree,
+        oid,
+        &primary_clones,
+        checkout_settings.may_convert_eol,
+    )?;
+    for (entry, expected) in primary_clones.into_iter().zip(digests) {
+        let path = entry.path()?;
+        let (file, metadata) = private.regular_metadata(path)?;
+        if verify::digest(file)? == expected {
+            receipt.primary.add(metadata.len());
+            reused.insert(entry.name.as_slice());
+        } else {
+            private.discard(path)?;
+        }
+    }
+
+    if reused.len() < entries.len() {
+        let mut missing = tempfile::tempfile()?;
+        for entry in entries
+            .iter()
+            .filter(|entry| !reused.contains(entry.name.as_slice()))
+        {
+            missing.write_all(&entry.name)?;
+            missing.write_all(b"\0")?;
+        }
+        missing.rewind()?;
+        checkout(&["checkout-index", "--stdin", "-z"], Some(missing))?;
+        for entry in entries
+            .iter()
+            .filter(|entry| entry.regular() && !reused.contains(entry.name.as_slice()))
+        {
+            receipt
+                .private
+                .add(private.regular_metadata(entry.path()?)?.1.len());
+        }
+    }
+    cache::Snapshot::publish(
+        &generation,
+        base,
+        entries,
+        secret,
+        oid,
+        &checkout_settings.settings,
+    )
 }
 
 #[cfg(target_os = "macos")]
@@ -313,226 +843,6 @@ fn probe(src_dir: &Path, dst_dir: &Path) -> Result<bool> {
     }
     fs::write(&cloned, b"changed")?;
     Ok(fs::read(source.path())? == b"git-graft clone probe")
-}
-fn create_cache_dir(path: &Path) -> Result<()> {
-    match fs::create_dir(path) {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            if fs::symlink_metadata(path)?.file_type().is_dir() {
-                Ok(())
-            } else {
-                bail!("snapshot directory is not a directory: {}", path.display())
-            }
-        }
-        Err(error) => Err(error.into()),
-    }
-}
-// Only reuse an immediate parent with identical checkout settings and unchanged
-// committed attribute files. Git itself applies the tree transition in private.
-fn parent_candidate(
-    worktree: &Path,
-    state: &Path,
-    oid: &str,
-    key: &str,
-) -> Result<Option<(String, PathBuf, Counts)>> {
-    let parents = git(worktree, ["rev-list", "--parents", "-n", "1", oid])?;
-    let parents = std::str::from_utf8(&parents.stdout)?;
-    let Some(parent) = parents.split_whitespace().nth(1) else {
-        return Ok(None);
-    };
-    if !matches!(parent.len(), 40 | 64) || !parent.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Ok(None);
-    }
-    let parent_dir = state.join("bases").join(parent);
-    if !fs::symlink_metadata(&parent_dir).is_ok_and(|m| m.file_type().is_dir()) {
-        return Ok(None);
-    }
-    let parent_base = parent_dir.join(key);
-    if !fs::symlink_metadata(&parent_base).is_ok_and(|m| m.file_type().is_dir()) {
-        return Ok(None);
-    }
-    let changed = git(
-        worktree,
-        [
-            "diff-tree",
-            "--no-commit-id",
-            "--no-renames",
-            "--name-only",
-            "-r",
-            "-z",
-            parent,
-            oid,
-        ],
-    )?;
-    if changed.stdout.split(|b| *b == 0).any(|path| {
-        path.split(|b| *b == b'/')
-            .any(|part| part.eq_ignore_ascii_case(b".gitattributes"))
-    }) {
-        return Ok(None);
-    }
-    let old = git(worktree, ["ls-tree", "-r", "-z", parent])?;
-    let new = git(worktree, ["ls-tree", "-r", "-z", oid])?;
-    let old: std::collections::HashSet<&[u8]> = old
-        .stdout
-        .split(|b| *b == 0)
-        .filter(|r| !r.is_empty())
-        .collect();
-    let mut counts = Counts::default();
-    for record in new.stdout.split(|b| *b == 0).filter(|r| !r.is_empty()) {
-        // Count only identical regular-file mode, blob and path. Renames and
-        // mode changes can still share blocks, but are deliberately excluded.
-        if !(record.starts_with(b"100644 blob ") || record.starts_with(b"100755 blob "))
-            || !old.contains(record)
-        {
-            continue;
-        }
-        let Some(tab) = record.iter().position(|b| *b == b'\t') else {
-            return Ok(None);
-        };
-        #[cfg(unix)]
-        let path = {
-            use std::os::unix::ffi::OsStrExt;
-            parent_base.join(OsStr::from_bytes(&record[tab + 1..]))
-        };
-        #[cfg(not(unix))]
-        let path = match std::str::from_utf8(&record[tab + 1..]) {
-            Ok(path) => parent_base.join(path),
-            Err(_) => return Ok(None),
-        };
-        let metadata = match fs::symlink_metadata(path) {
-            Ok(value) if value.file_type().is_file() => value,
-            _ => return Ok(None),
-        };
-        counts.files += 1;
-        counts.bytes += metadata.len();
-    }
-    Ok(Some((parent.to_owned(), parent_base, counts)))
-}
-
-fn snapshot(
-    worktree: &Path,
-    state: &Path,
-    oid: &str,
-    key: &str,
-) -> Result<(PathBuf, bool, Counts)> {
-    let bases = state.join("bases");
-    create_cache_dir(&bases)?;
-    let commit_bases = bases.join(oid);
-    create_cache_dir(&commit_bases)?;
-    let base = commit_bases.join(key);
-    if let Ok(metadata) = fs::symlink_metadata(&base) {
-        if metadata.file_type().is_dir() {
-            return Ok((base, true, Counts::default()));
-        }
-        bail!("snapshot path is not a directory: {}", base.display());
-    }
-    let build = |parent: Option<(&str, &Path)>| -> Result<(tempfile::TempDir, PathBuf)> {
-        let temp = tempfile::Builder::new()
-            .prefix(".building-")
-            .tempdir_in(&commit_bases)?;
-        let tree = temp.path().join("tree");
-        fs::create_dir(&tree)?;
-        let index = temp.path().join("index");
-        let run = |args: &[&str]| -> Result<()> {
-            let output = git_command(worktree)
-                .env("GIT_INDEX_FILE", &index)
-                .env("GIT_WORK_TREE", &tree)
-                .args(args)
-                .output()?;
-            if !output.status.success() {
-                bail!("git snapshot: {}", String::from_utf8_lossy(&output.stderr));
-            }
-            Ok(())
-        };
-        if let Some((parent_oid, parent_tree)) = parent {
-            run(&["read-tree", parent_oid])?;
-            clone_tree(parent_tree, &tree, &mut Counts::default())?;
-            run(&["update-index", "--refresh"])?;
-            run(&["read-tree", "-m", "-u", parent_oid, oid])?;
-        } else {
-            run(&["read-tree", oid])?;
-            run(&["checkout-index", "--all"])?;
-        }
-        Ok((temp, tree))
-    };
-    let parent = parent_candidate(worktree, state, oid, key).ok().flatten();
-    let (temp, tree, counts) = if let Some((parent_oid, parent_tree, counts)) = parent {
-        match build(Some((&parent_oid, &parent_tree))) {
-            Ok((temp, tree)) => (temp, tree, counts),
-            Err(_) => {
-                let (temp, tree) = build(None)?;
-                (temp, tree, Counts::default())
-            }
-        }
-    } else {
-        let (temp, tree) = build(None)?;
-        (temp, tree, Counts::default())
-    };
-    fs::rename(&tree, &base).context("publish base snapshot")?;
-    drop(temp);
-    Ok((base, false, counts))
-}
-
-#[derive(Default)]
-struct Counts {
-    files: u64,
-    bytes: u64,
-}
-fn clone_tree(src: &Path, dst: &Path, counts: &mut Counts) -> Result<()> {
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
-        let target = dst.join(entry.file_name());
-        let meta = fs::symlink_metadata(entry.path())?;
-        if meta.file_type().is_dir() {
-            fs::create_dir(&target)?;
-            clone_tree(&entry.path(), &target, counts)?;
-        } else if meta.file_type().is_symlink() {
-            #[cfg(unix)]
-            std::os::unix::fs::symlink(fs::read_link(entry.path())?, &target)?;
-            #[cfg(not(unix))]
-            bail!("symlink cloning is unsupported");
-        } else if meta.is_file() {
-            clone_file(&entry.path(), &target)
-                .with_context(|| format!("clone {}", entry.path().display()))?;
-            counts.files += 1;
-            counts.bytes += meta.len();
-        } else {
-            bail!("unsupported snapshot entry: {}", entry.path().display());
-        }
-    }
-    Ok(())
-}
-
-/// Populate an empty registered worktree at its current commit. The project lock
-/// must also guard garbage collection of `state/bases`.
-pub fn materialize(worktree: &Path, state: &Path, oid: &str, sparse: &[String]) -> Result<Value> {
-    let worktree = fs::canonicalize(worktree)?;
-    ensure_empty(&worktree)?;
-    let oid = checked_oid(&worktree, oid)?;
-    validate_sparse(&worktree, &oid, sparse)?;
-    if !sparse.is_empty() {
-        return native_checkout(&worktree, &oid, sparse, "sparse checkout");
-    }
-    if let Some(reason) = conversion_reason(&worktree, &oid)? {
-        return native_checkout(&worktree, &oid, sparse, reason);
-    }
-    fs::create_dir_all(state)?;
-    let state = fs::canonicalize(state)?;
-    if state.starts_with(&worktree) {
-        bail!("storage state must be outside the worktree");
-    }
-    if !probe(&state, &worktree)? {
-        return native_checkout(&worktree, &oid, sparse, "native clone unavailable");
-    }
-    let key = snapshot_key(&worktree)?;
-    let (base, reused, parent_counts) = snapshot(&worktree, &state, &oid, &key)?;
-    git(&worktree, ["read-tree", &oid])?;
-    let mut counts = Counts::default();
-    clone_tree(&base, &worktree, &mut counts)?;
-    git(&worktree, ["update-index", "--refresh"])?;
-    Ok(
-        json!({"backend": if cfg!(target_os="macos") { "clonefile" } else { "reflink" }, "cloned_files":counts.files, "cloned_bytes":counts.bytes, "snapshot_reused":reused, "parent_reused_files":parent_counts.files, "parent_reused_bytes":parent_counts.bytes}),
-    )
 }
 
 /// Probe native cloning on the state filesystem. A worktree on another volume
