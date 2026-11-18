@@ -1,0 +1,816 @@
+{
+  "binary_revision": "9df7ba2d8c4d09bb77e187cafe36bc9bd5c0edc4",
+  "earlier_revision": "fcbc0b08c71e20820b84142ef4ab43b032609a6e",
+  "measured_at": "2026-11-18T19:33:35.650Z",
+  "host": {
+    "os": "macOS 26.5",
+    "kernel": "25.5.0",
+    "arch": "arm64",
+    "filesystem": "APFS, shared system volume",
+    "git": "git version 2.56.0",
+    "node": "v24.5.0",
+    "rust": "1.99.1"
+  },
+  "binaries": {
+    "release": {
+      "sha256": "6374dee90a4dfdfa57993c4fff0f97b2efedf6ad01b22b6314d7bb347dfc2108",
+      "bytes": 2894928
+    },
+    "earlier_release": {
+      "sha256": "8bb329c839cd607a0cb1bcaa5d6ce31eb902e8c83e96045babb76c99dd8d35d7",
+      "bytes": 2627280
+    }
+  },
+  "fixture": {
+    "smallFiles": 400,
+    "largeFiles": 3,
+    "largeMiB": 8,
+    "dependencyMiB": 8,
+    "workspaces": 2
+  },
+  "method": "Independent bootstrapped repositories and npm caches, same source and archive; large files contain independent incompressible data. Baseline follows installation in one checkout and cache warmup. Seeded mode directly charges primary seed; cold mode separately charges initialization and project cache priming, then installs in first workspace and charges layer save. The original warmed cache is preserved. Native installs both workspaces from its warmed cache offline. Source snapshot is cold in both modes. Both land into an unchecked integration branch; native fast-forwards the ref with an expected-old-value check. Dirty primary data remains in place. Readiness includes spawn and dependency preparation; first readiness excludes separately charged setup and seed, while firstReadyIncludingSeedSeconds includes both. Land-drop cumulative bytes show retained storage after retirement, cleanup cumulative bytes show retained storage after cache purge. Volume deltas are signed and include unrelated activity, metadata and delayed allocation. CPU/RSS unavailable portably; command wall time is measured. No savings threshold.",
+  "scenarios": {
+    "earlier_cold": {
+      "mode": "cold",
+      "median_two_active_saved_percent": 37.11601636793269,
+      "rounds": [
+        {
+          "graft": {
+            "cumulative_bytes": {
+              "cache-setup": 8146944,
+              "seed": 8175616,
+              "first": 43823104,
+              "additional": 45133824,
+              "edit-build-test": 45150208,
+              "land-drop": 44785664,
+              "cleanup": 958464
+            },
+            "spawn_seconds": [
+              0.39493233299999997,
+              0.31633020799999984
+            ],
+            "first_ready_including_setup_seconds": 0.9363371680000002,
+            "second_ready_seconds": 0.39091662499999985,
+            "whole_workflow_seconds": 2.224665917,
+            "test_output": "WORKFLOW_TEST_PASSED",
+            "first_workspace_transfers": [
+              {
+                "cloned_bytes": 25173511,
+                "cloned_files": 410,
+                "parent_reused_bytes": 0,
+                "parent_reused_files": 0,
+                "snapshot_reused": false,
+                "backend": "clonefile"
+              },
+              {
+                "exit_code": 0,
+                "success": true
+              },
+              {
+                "cloned_bytes": 8389053,
+                "copied_bytes": 0,
+                "logical_bytes": 8389053,
+                "backend": "copy-on-write",
+                "action": "save"
+              }
+            ]
+          },
+          "native": {
+            "cumulative_bytes": {
+              "cache-setup": 0,
+              "seed": 8192,
+              "first": 35561472,
+              "additional": 71155712,
+              "edit-build-test": 71200768,
+              "land-drop": 139264,
+              "cleanup": 139264
+            },
+            "spawn_seconds": [
+              0.07250591600000007,
+              0.0721684580000001
+            ],
+            "first_ready_including_setup_seconds": 0.2531241669999999,
+            "second_ready_seconds": 0.23579987499999971,
+            "whole_workflow_seconds": 0.8724140400000004,
+            "test_output": "WORKFLOW_TEST_PASSED"
+          },
+          "two_active_saved_percent": 36.57034308081971
+        },
+        {
+          "graft": {
+            "cumulative_bytes": {
+              "cache-setup": 8359936,
+              "seed": 8376320,
+              "first": 43991040,
+              "additional": 44146688,
+              "edit-build-test": 44171264,
+              "land-drop": 43687936,
+              "cleanup": -237568
+            },
+            "spawn_seconds": [
+              0.4586622499999994,
+              0.3331415419999994
+            ],
+            "first_ready_including_setup_seconds": 1.0625755830000017,
+            "second_ready_seconds": 0.41632920899999953,
+            "whole_workflow_seconds": 2.3866767070000057,
+            "test_output": "WORKFLOW_TEST_PASSED",
+            "first_workspace_transfers": [
+              {
+                "cloned_bytes": 25173511,
+                "cloned_files": 410,
+                "parent_reused_bytes": 0,
+                "parent_reused_files": 0,
+                "snapshot_reused": false,
+                "backend": "clonefile"
+              },
+              {
+                "exit_code": 0,
+                "success": true
+              },
+              {
+                "cloned_bytes": 8389053,
+                "copied_bytes": 0,
+                "logical_bytes": 8389053,
+                "backend": "copy-on-write",
+                "action": "save"
+              }
+            ]
+          },
+          "native": {
+            "cumulative_bytes": {
+              "cache-setup": 0,
+              "seed": 20480,
+              "first": 38703104,
+              "additional": 74403840,
+              "edit-build-test": 77639680,
+              "land-drop": 6799360,
+              "cleanup": 6803456
+            },
+            "spawn_seconds": [
+              0.08379187499999989,
+              0.08648683400000028
+            ],
+            "first_ready_including_setup_seconds": 0.262326208999999,
+            "second_ready_seconds": 0.25594495800000006,
+            "whole_workflow_seconds": 0.899205958999999,
+            "test_output": "WORKFLOW_TEST_PASSED"
+          },
+          "two_active_saved_percent": 40.666116157445636
+        },
+        {
+          "graft": {
+            "cumulative_bytes": {
+              "cache-setup": 8491008,
+              "seed": 8507392,
+              "first": 44404736,
+              "additional": 44691456,
+              "edit-build-test": 44679168,
+              "land-drop": 45350912,
+              "cleanup": 1531904
+            },
+            "spawn_seconds": [
+              0.39504650000000036,
+              0.3278754170000011
+            ],
+            "first_ready_including_setup_seconds": 0.9785114579999991,
+            "second_ready_seconds": 0.4473330829999995,
+            "whole_workflow_seconds": 2.394055957000002,
+            "test_output": "WORKFLOW_TEST_PASSED",
+            "first_workspace_transfers": [
+              {
+                "cloned_bytes": 25173511,
+                "cloned_files": 410,
+                "parent_reused_bytes": 0,
+                "parent_reused_files": 0,
+                "snapshot_reused": false,
+                "backend": "clonefile"
+              },
+              {
+                "exit_code": 0,
+                "success": true
+              },
+              {
+                "cloned_bytes": 8389053,
+                "copied_bytes": 0,
+                "logical_bytes": 8389053,
+                "backend": "copy-on-write",
+                "action": "save"
+              }
+            ]
+          },
+          "native": {
+            "cumulative_bytes": {
+              "cache-setup": 0,
+              "seed": 8192,
+              "first": 35561472,
+              "additional": 71069696,
+              "edit-build-test": 71086080,
+              "land-drop": 106496,
+              "cleanup": 106496
+            },
+            "spawn_seconds": [
+              0.07090283400000044,
+              0.06502312499999971
+            ],
+            "first_ready_including_setup_seconds": 0.2493589580000007,
+            "second_ready_seconds": 0.2284794579999998,
+            "whole_workflow_seconds": 0.8997304569999979,
+            "test_output": "WORKFLOW_TEST_PASSED"
+          },
+          "two_active_saved_percent": 37.11601636793269
+        }
+      ]
+    },
+    "current_cold": {
+      "mode": "cold",
+      "median_two_active_saved_percent": 75.43061236246328,
+      "rounds": [
+        {
+          "graft": {
+            "cumulative_bytes": {
+              "cache-setup": 8220672,
+              "seed": 8245248,
+              "first": 17211392,
+              "additional": 17444864,
+              "edit-build-test": 17436672,
+              "land-drop": 17514496,
+              "cleanup": 9011200
+            },
+            "spawn_seconds": [
+              0.44216779199999995,
+              0.270806916
+            ],
+            "first_ready_including_setup_seconds": 1.0557335410000002,
+            "second_ready_seconds": 0.3877936249999998,
+            "whole_workflow_seconds": 2.829642292,
+            "test_output": "WORKFLOW_TEST_PASSED",
+            "first_workspace_transfers": [
+              {
+                "cloned_bytes": 25173511,
+                "cloned_files": 410,
+                "parent_reused_bytes": 0,
+                "parent_reused_files": 0,
+                "primary_reused_files": 409,
+                "primary_reused_bytes": 25173503,
+                "private_files": 1,
+                "private_bytes": 8,
+                "snapshot_reused": false,
+                "backend": "clonefile"
+              },
+              {
+                "exit_code": 0,
+                "success": true
+              },
+              {
+                "cloned_bytes": 8389053,
+                "copied_bytes": 0,
+                "logical_bytes": 8389053,
+                "backend": "copy-on-write",
+                "action": "save"
+              }
+            ]
+          },
+          "native": {
+            "cumulative_bytes": {
+              "cache-setup": 0,
+              "seed": 8192,
+              "first": 35504128,
+              "additional": 71008256,
+              "edit-build-test": 71020544,
+              "land-drop": 69632,
+              "cleanup": 69632
+            },
+            "spawn_seconds": [
+              0.06794716700000027,
+              0.0644957089999998
+            ],
+            "first_ready_including_setup_seconds": 0.23123616700000094,
+            "second_ready_seconds": 0.22648304199999983,
+            "whole_workflow_seconds": 0.8275375820000036,
+            "test_output": "WORKFLOW_TEST_PASSED"
+          },
+          "two_active_saved_percent": 75.43262574988464
+        },
+        {
+          "graft": {
+            "cumulative_bytes": {
+              "cache-setup": 8269824,
+              "seed": 8294400,
+              "first": 17227776,
+              "additional": 17469440,
+              "edit-build-test": 29675520,
+              "land-drop": 17514496,
+              "cleanup": 8998912
+            },
+            "spawn_seconds": [
+              0.4537908329999991,
+              0.27905049999999937
+            ],
+            "first_ready_including_setup_seconds": 1.0750891260000008,
+            "second_ready_seconds": 0.3969605419999989,
+            "whole_workflow_seconds": 2.877459583999998,
+            "test_output": "WORKFLOW_TEST_PASSED",
+            "first_workspace_transfers": [
+              {
+                "cloned_bytes": 25173511,
+                "cloned_files": 410,
+                "parent_reused_bytes": 0,
+                "parent_reused_files": 0,
+                "primary_reused_files": 409,
+                "primary_reused_bytes": 25173503,
+                "private_files": 1,
+                "private_bytes": 8,
+                "snapshot_reused": false,
+                "backend": "clonefile"
+              },
+              {
+                "exit_code": 0,
+                "success": true
+              },
+              {
+                "cloned_bytes": 8389053,
+                "copied_bytes": 0,
+                "logical_bytes": 8389053,
+                "backend": "copy-on-write",
+                "action": "save"
+              }
+            ]
+          },
+          "native": {
+            "cumulative_bytes": {
+              "cache-setup": 0,
+              "seed": 8192,
+              "first": 35590144,
+              "additional": 71102464,
+              "edit-build-test": 71127040,
+              "land-drop": 151552,
+              "cleanup": 151552
+            },
+            "spawn_seconds": [
+              0.06990779199999997,
+              0.06613975000000027
+            ],
+            "first_ready_including_setup_seconds": 0.23545333400000074,
+            "second_ready_seconds": 0.22709595799999988,
+            "whole_workflow_seconds": 0.8224073330000001,
+            "test_output": "WORKFLOW_TEST_PASSED"
+          },
+          "two_active_saved_percent": 75.43061236246328
+        },
+        {
+          "graft": {
+            "cumulative_bytes": {
+              "cache-setup": 8462336,
+              "seed": 8491008,
+              "first": 17367040,
+              "additional": 18034688,
+              "edit-build-test": 17952768,
+              "land-drop": 18030592,
+              "cleanup": 9510912
+            },
+            "spawn_seconds": [
+              0.4652404580000002,
+              0.28502225
+            ],
+            "first_ready_including_setup_seconds": 1.0646225840000008,
+            "second_ready_seconds": 0.4099891660000012,
+            "whole_workflow_seconds": 2.8807846669999995,
+            "test_output": "WORKFLOW_TEST_PASSED",
+            "first_workspace_transfers": [
+              {
+                "cloned_bytes": 25173511,
+                "cloned_files": 410,
+                "parent_reused_bytes": 0,
+                "parent_reused_files": 0,
+                "primary_reused_files": 409,
+                "primary_reused_bytes": 25173503,
+                "private_files": 1,
+                "private_bytes": 8,
+                "snapshot_reused": false,
+                "backend": "clonefile"
+              },
+              {
+                "exit_code": 0,
+                "success": true
+              },
+              {
+                "cloned_bytes": 8389053,
+                "copied_bytes": 0,
+                "logical_bytes": 8389053,
+                "backend": "copy-on-write",
+                "action": "save"
+              }
+            ]
+          },
+          "native": {
+            "cumulative_bytes": {
+              "cache-setup": 0,
+              "seed": 16384,
+              "first": 35532800,
+              "additional": 71057408,
+              "edit-build-test": 71073792,
+              "land-drop": 110592,
+              "cleanup": 110592
+            },
+            "spawn_seconds": [
+              0.06852991699999984,
+              0.0646237080000028
+            ],
+            "first_ready_including_setup_seconds": 0.23482912499999656,
+            "second_ready_seconds": 0.22666895899999873,
+            "whole_workflow_seconds": 0.8217521669999915,
+            "test_output": "WORKFLOW_TEST_PASSED"
+          },
+          "two_active_saved_percent": 74.61955268618861
+        }
+      ]
+    },
+    "current_seeded": {
+      "mode": "seeded",
+      "median_two_active_saved_percent": 98.9850057670127,
+      "rounds": [
+        {
+          "graft": {
+            "cumulative_bytes": {
+              "cache-setup": 0,
+              "seed": -98304,
+              "first": 442368,
+              "additional": 720896,
+              "edit-build-test": 688128,
+              "land-drop": 782336,
+              "cleanup": 663552
+            },
+            "spawn_seconds": [
+              0.461266875,
+              0.27890133300000025
+            ],
+            "first_ready_including_setup_seconds": 0.741523834,
+            "second_ready_seconds": 0.4140423330000001,
+            "whole_workflow_seconds": 2.543414833000001,
+            "test_output": "WORKFLOW_TEST_PASSED",
+            "first_workspace_transfers": [
+              {
+                "cloned_bytes": 25173511,
+                "cloned_files": 410,
+                "parent_reused_bytes": 0,
+                "parent_reused_files": 0,
+                "primary_reused_files": 409,
+                "primary_reused_bytes": 25173503,
+                "private_files": 1,
+                "private_bytes": 8,
+                "snapshot_reused": false,
+                "backend": "clonefile"
+              },
+              {
+                "cloned_bytes": 8389053,
+                "copied_bytes": 0,
+                "logical_bytes": 8389053,
+                "backend": "copy-on-write",
+                "action": "restore"
+              }
+            ]
+          },
+          "native": {
+            "cumulative_bytes": {
+              "cache-setup": 0,
+              "seed": 8192,
+              "first": 35512320,
+              "additional": 71024640,
+              "edit-build-test": 71073792,
+              "land-drop": 86016,
+              "cleanup": 86016
+            },
+            "spawn_seconds": [
+              0.0690960839999998,
+              0.06511741600000005
+            ],
+            "first_ready_including_setup_seconds": 0.23334450000000015,
+            "second_ready_seconds": 0.23109916699999938,
+            "whole_workflow_seconds": 0.8302032909999998,
+            "test_output": "WORKFLOW_TEST_PASSED"
+          },
+          "two_active_saved_percent": 98.9850057670127
+        },
+        {
+          "graft": {
+            "cumulative_bytes": {
+              "cache-setup": 0,
+              "seed": 36864,
+              "first": 761856,
+              "additional": 913408,
+              "edit-build-test": 937984,
+              "land-drop": -2285568,
+              "cleanup": -2424832
+            },
+            "spawn_seconds": [
+              0.4413054169999996,
+              0.28293054200000006
+            ],
+            "first_ready_including_setup_seconds": 0.7101728749999985,
+            "second_ready_seconds": 0.4175343749999993,
+            "whole_workflow_seconds": 2.569687125999997,
+            "test_output": "WORKFLOW_TEST_PASSED",
+            "first_workspace_transfers": [
+              {
+                "cloned_bytes": 25173511,
+                "cloned_files": 410,
+                "parent_reused_bytes": 0,
+                "parent_reused_files": 0,
+                "primary_reused_files": 409,
+                "primary_reused_bytes": 25173503,
+                "private_files": 1,
+                "private_bytes": 8,
+                "snapshot_reused": false,
+                "backend": "clonefile"
+              },
+              {
+                "cloned_bytes": 8389053,
+                "copied_bytes": 0,
+                "logical_bytes": 8389053,
+                "backend": "copy-on-write",
+                "action": "restore"
+              }
+            ]
+          },
+          "native": {
+            "cumulative_bytes": {
+              "cache-setup": 0,
+              "seed": 8192,
+              "first": 35684352,
+              "additional": 71184384,
+              "edit-build-test": 71233536,
+              "land-drop": 344064,
+              "cleanup": 344064
+            },
+            "spawn_seconds": [
+              0.06893604200000027,
+              0.06753708300000016
+            ],
+            "first_ready_including_setup_seconds": 0.2325939580000013,
+            "second_ready_seconds": 0.22899266699999954,
+            "whole_workflow_seconds": 0.8385055010000007,
+            "test_output": "WORKFLOW_TEST_PASSED"
+          },
+          "two_active_saved_percent": 98.71684216583233
+        },
+        {
+          "graft": {
+            "cumulative_bytes": {
+              "cache-setup": 0,
+              "seed": -77824,
+              "first": 438272,
+              "additional": 700416,
+              "edit-build-test": 688128,
+              "land-drop": 778240,
+              "cleanup": 675840
+            },
+            "spawn_seconds": [
+              0.46263445800000047,
+              0.278830750000001
+            ],
+            "first_ready_including_setup_seconds": 0.7875153750000009,
+            "second_ready_seconds": 0.3963112089999995,
+            "whole_workflow_seconds": 2.587237709000003,
+            "test_output": "WORKFLOW_TEST_PASSED",
+            "first_workspace_transfers": [
+              {
+                "cloned_bytes": 25173511,
+                "cloned_files": 410,
+                "parent_reused_bytes": 0,
+                "parent_reused_files": 0,
+                "primary_reused_files": 409,
+                "primary_reused_bytes": 25173503,
+                "private_files": 1,
+                "private_bytes": 8,
+                "snapshot_reused": false,
+                "backend": "clonefile"
+              },
+              {
+                "cloned_bytes": 8389053,
+                "copied_bytes": 0,
+                "logical_bytes": 8389053,
+                "backend": "copy-on-write",
+                "action": "restore"
+              }
+            ]
+          },
+          "native": {
+            "cumulative_bytes": {
+              "cache-setup": 0,
+              "seed": 8192,
+              "first": 35557376,
+              "additional": 71061504,
+              "edit-build-test": 71073792,
+              "land-drop": -12288,
+              "cleanup": -12288
+            },
+            "spawn_seconds": [
+              0.07008133400000224,
+              0.06688591599999927
+            ],
+            "first_ready_including_setup_seconds": 0.2388972079999985,
+            "second_ready_seconds": 0.23175691599999845,
+            "whole_workflow_seconds": 0.8392122489999965,
+            "test_output": "WORKFLOW_TEST_PASSED"
+          },
+          "two_active_saved_percent": 99.01435241224279
+        }
+      ]
+    }
+  },
+  "five_workspaces": {
+    "space": [
+      {
+        "native_bytes": 335814656,
+        "graft_bytes": 466944,
+        "saved_percent": 99.86095186983144,
+        "native_seconds": 0.268549583,
+        "graft_seconds": 1.950162418,
+        "write_isolation": {
+          "changedWorkspaceSeesWrite": true,
+          "mainUnchanged": true,
+          "otherGraftWorkspacesUnchanged": true,
+          "nativeWorkspacesUnchanged": true,
+          "gitSeesTrackedEdit": true
+        }
+      },
+      {
+        "native_bytes": 335974400,
+        "graft_bytes": 397312,
+        "saved_percent": 99.8817433709235,
+        "native_seconds": 0.2594010010000002,
+        "graft_seconds": 1.9525520430000016,
+        "write_isolation": {
+          "changedWorkspaceSeesWrite": true,
+          "mainUnchanged": true,
+          "otherGraftWorkspacesUnchanged": true,
+          "nativeWorkspacesUnchanged": true,
+          "gitSeesTrackedEdit": true
+        }
+      },
+      {
+        "native_bytes": 335888384,
+        "graft_bytes": 1724416,
+        "saved_percent": 99.48661040924833,
+        "native_seconds": 0.2661412080000009,
+        "graft_seconds": 1.930183624000005,
+        "write_isolation": {
+          "changedWorkspaceSeesWrite": true,
+          "mainUnchanged": true,
+          "otherGraftWorkspacesUnchanged": true,
+          "nativeWorkspacesUnchanged": true,
+          "gitSeesTrackedEdit": true
+        }
+      }
+    ],
+    "dependency_space": [
+      {
+        "native_bytes": 168546304,
+        "graft_bytes": 29564928,
+        "saved_percent": 82.45886898831077,
+        "native_seconds": 1.1506347079999997,
+        "graft_seconds": 1.777810958,
+        "write_isolation": true
+      },
+      {
+        "native_bytes": 168271872,
+        "graft_bytes": 33804288,
+        "saved_percent": 79.91090988754199,
+        "native_seconds": 1.132671875,
+        "graft_seconds": 1.795802834,
+        "write_isolation": true
+      },
+      {
+        "native_bytes": 168222720,
+        "graft_bytes": 33800192,
+        "saved_percent": 79.90747504261017,
+        "native_seconds": 1.1423045839999977,
+        "graft_seconds": 1.7722309999999997,
+        "write_isolation": true
+      }
+    ]
+  },
+  "fresh_clone_release": {
+    "tested_at": "2026-11-18T19:36:00.234Z",
+    "scenarios": {
+      "passed": 88,
+      "failed": 0,
+      "unavailable": 0,
+      "total": 88
+    },
+    "groups": {
+      "lifecycle": 18,
+      "storage": 6,
+      "dependencies": 8,
+      "dependency-reuse": 2,
+      "landing": 13,
+      "recovery": 6,
+      "undo": 7,
+      "safety": 13,
+      "edge-cases": 8,
+      "mcp": 5,
+      "space": 2
+    },
+    "cli": {
+      "advertised": [
+        "add-dep",
+        "doctor",
+        "drop",
+        "env",
+        "exec",
+        "gc",
+        "heartbeat",
+        "land",
+        "layer",
+        "list",
+        "mcp",
+        "restore",
+        "seed-layer",
+        "spawn",
+        "status",
+        "undo-land"
+      ],
+      "exercised": [
+        "add-dep",
+        "doctor",
+        "drop",
+        "env",
+        "exec",
+        "gc",
+        "heartbeat",
+        "land",
+        "layer",
+        "list",
+        "mcp",
+        "restore",
+        "seed-layer",
+        "spawn",
+        "status",
+        "undo-land"
+      ],
+      "missing": [],
+      "passed": 16,
+      "total": 16
+    },
+    "mcp": {
+      "advertised": [
+        "workspace_add_dependency",
+        "workspace_discard",
+        "workspace_doctor",
+        "workspace_env",
+        "workspace_exec",
+        "workspace_gc",
+        "workspace_heartbeat",
+        "workspace_land_and_wipe",
+        "workspace_layer",
+        "workspace_list",
+        "workspace_restore",
+        "workspace_seed_layer",
+        "workspace_spawn",
+        "workspace_status",
+        "workspace_undo_land"
+      ],
+      "exercised": [
+        "workspace_add_dependency",
+        "workspace_discard",
+        "workspace_doctor",
+        "workspace_env",
+        "workspace_exec",
+        "workspace_gc",
+        "workspace_heartbeat",
+        "workspace_land_and_wipe",
+        "workspace_layer",
+        "workspace_list",
+        "workspace_restore",
+        "workspace_seed_layer",
+        "workspace_spawn",
+        "workspace_status",
+        "workspace_undo_land"
+      ],
+      "missing": [],
+      "passed": 15,
+      "total": 15
+    }
+  },
+  "component_tests": 33,
+  "rust_coverage_from_typescript_e2e": {
+    "platform": "darwin-arm64",
+    "scope": "non-test binary, instrumented debug, production Rust source mappings",
+    "scenarios_passed": 88,
+    "profiles": 409,
+    "mapped_source_files": 18,
+    "lines": { "covered": 4826, "total": 5260 },
+    "functions": { "covered": 414, "total": 445 },
+    "regions": { "covered": 8647, "total": 10231 }
+  },
+  "dependency_audit": {
+    "database": "RustSec advisory-db",
+    "revision": "999ec89d",
+    "database_date": "2026-10-17",
+    "advisories": 1338,
+    "reported_vulnerabilities": 0,
+    "warnings": 0,
+    "database_refresh": "unavailable"
+  }
+}

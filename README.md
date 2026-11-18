@@ -4,7 +4,7 @@ Give each coding agent its own Git branch, checkout and build outputs, with a su
 
 ## Try it
 
-From a fresh clone of this project, install the Git subcommand with Rust 1.89 or newer.
+From a fresh clone of this project, install the Git subcommand with Rust 1.89 or newer. Use Git 2.46 or newer for retirement and recovery. `git graft doctor` checks the installed Git's transaction support.
 
 ```sh
 cargo install --locked --path .
@@ -26,20 +26,20 @@ git graft status fix-parser
 git graft land fix-parser --into main --commit "Fix parser handling of empty input"
 ```
 
-The optional `--commit` stages all nonignored changes in the agent's workspace. Without it, land expects the agent's changes to be committed. A successful land returns the integrated commit and releases the checkout, private runtime and task branch. A conflict returns the affected paths and preserves the workspace.
+The optional `--commit` stages all nonignored changes in the agent's workspace. Without it, land expects the agent's changes to be committed. A successful land returns the integrated commit and a recovery lease, then releases the workspace name. A conflict returns the affected paths and preserves the workspace.
 
 ## What is shared
 
 | Resource | Behavior |
 | --- | --- |
-| Source files | A cold spawn builds a snapshot from a Git commit. Eligible macOS and Linux volumes clone files from it. A warm spawn at the same revision reuses the snapshot. A cached first parent can supply unchanged files for a newer revision. |
+| Source files | On eligible volumes, even the first workspace can share the primary checkout's existing data blocks. Graft checks candidate bytes against the requested Git revision and checkout settings. A verified snapshot can supply later workspaces at the same commit or its child. |
 | Other filesystems and sparse checkouts | Git populates an ordinary private worktree. Use repeated `--sparse DIR` arguments to request cone-mode sparse checkout. The receipt records the selected backend and fallback reason. |
 | Package downloads | npm, pnpm, Bun, Cargo and uv have project-scoped caches. Installs run on request. An empty package list requests a locked install, sync or fetch, depending on the manager. |
-| Installed Node packages | Explicitly save and restore a relocatable `node_modules` layer between compatible workspaces. Regular files use independent CoW clones or byte copies. The compatibility key covers source, lockfile, platform and caller-specified toolchain or install settings. |
+| Installed Node packages | Seed a relocatable install from the primary checkout with `git graft seed-layer --key KEY`, or save one from a managed workspace. Restore it with `git graft layer NAME restore --key KEY`. Each workspace can edit its own files. |
 | Build and runtime state | Scoped commands receive a private Cargo target/build directory, a private uv environment and a project-unique suggested `PORT`. Cargo can use a shared sccache when available. |
 | Local developer data | Source snapshots come from committed content. Untracked and ignored files from the developer's checkout stay there. Committed secrets and symlinks retain normal Git behavior. |
 
-On APFS, five workspaces at the same 64 MiB commit used **64.33 MiB with Graft versus 320.91 MiB with Git** in the median of three runs. Five workspaces with an identical 32 MiB npm dependency saved **129.03 MiB**. Native Git finished both workloads faster. A full checkout on NTFS or Linux without reflinks can use as much source storage as plain Git. [Platform status, timings and disk measurements](docs/verification.md)
+On macOS APFS, two agents starting from one populated checkout and reusing its npm install needed **0.69 MiB of additional disk**, compared with **67.77 MiB** for native Git worktrees and npm. Median paired savings were **98.99%** over three runs. The second spawn took 0.279 s with Graft and 0.067 s with native Git. On NTFS and Linux volumes without reflinks, a full source checkout can cost as much storage as plain Git. [Workload, timings and platform verification](docs/verification.md)
 
 ## Connect an agent
 
@@ -69,7 +69,7 @@ git graft gc
 git graft gc --apply
 ```
 
-Garbage collection previews stale, clean workspaces and unused source snapshots. A dirty, locked, busy or unmerged workspace is retained. To intentionally discard an owned workspace, use `drop NAME --lease TOKEN --discard`. Shared package caches and installed layers can be reclaimed with `gc --purge-cache --apply` once all workspaces have retired.
+Garbage collection previews stale, clean workspaces and verified unused source snapshots. A dirty, locked, busy or unmerged workspace is retained. After a land or drop, `git graft restore NAME --lease RECOVERY_LEASE` reopens the workspace. To reverse a land while its destination still points to the landed commit, `git graft undo-land NAME --lease RECOVERY_LEASE` appends a reversal commit. Recovery data has no automatic expiry. [File safety, permissions and recovery](docs/safety.md)
 
 ## Develop and verify
 
@@ -77,6 +77,7 @@ Garbage collection previews stale, clean workspaces and unused source snapshots.
 cargo test --locked
 npm test
 npm run bench
+npm run bench:workflow
 npm run coverage
 ```
 

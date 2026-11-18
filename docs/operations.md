@@ -30,6 +30,16 @@ Supplying packages uses the manager's add/install operation. `--offline` request
 
 ## Reuse an installed Node tree
 
+If the primary checkout already has the install you want to reuse, run the following while its tracked source is clean. The supplied key attests that the installed files match the committed lockfile, are relocatable, contain no private data, and were built with the toolchain and options represented by the key.
+
+```sh
+git graft seed-layer --key node24-npm11-production
+git graft spawn task
+git graft layer task restore --key node24-npm11-production --lease "<task lease>"
+```
+
+To publish an install prepared in a managed workspace instead, use its lease.
+
 ```sh
 git graft layer task save --key node24-npm11-production
 git graft layer other restore --key node24-npm11-production --lease "<other lease>"
@@ -46,7 +56,7 @@ Land computes a merge from commit IDs. It fast-forwards when possible, creates a
 
 A `merge_conflict` includes paths and Git conflict records. Resolve the conflict in the task branch and retry. With `land --reconcile` a supported root npm lockfile-v3 conflict can be reconciled offline for independent, additive changes. It uses a private index and a temporary resolver directory, disables npm scripts, and checks the generated resolution. Incompatible versions, unsupported project layouts, unrelated conflicts and incomplete cache data remain conflicts. Other ecosystems use their normal resolver and review process.
 
-Ignored files also receive protection. Move valuable local files first. Use `land --discard-ignored` when every ignored file in that workspace may be removed. Graft's private target/build/venv directories are disposable workspace outputs.
+Ignored files block a normal land. `land --discard-ignored` permits parking them with the retired workspace. A private runtime directory is retained for restoration. These files may continue to occupy disk after retirement.
 
 On Windows, move terminals out of the workspace and close programs holding its files before cleanup. Windows can keep a directory open for as long as another process uses it as its working directory. Retry with the same lease after releasing the handle. [Windows current-directory behavior](https://learn.microsoft.com/windows/win32/api/winbase/nf-winbase-setcurrentdirectory)
 
@@ -55,5 +65,6 @@ On Windows, move terminals out of the workspace and close programs holding its f
 - Use a client-generated UUID with `spawn --request-id` or MCP `request_id`. Retry with the same name, UUID, base spelling and sparse paths to recover that instance.
 - `status` reports the phase and registration health. `heartbeat` renews the 24-hour lease. Scoped commands hold a per-workspace OS lock, refresh the heartbeat and allow other workspaces to run concurrently.
 - Retry a partially completed land with the same lease and target. An already integrated plan can finish cleanup. A terminal receipt lets a client replay a completed land or drop while the name is vacant. Receipts become eligible for GC after seven days.
+- Keep the `recovery_lease` from land or drop. Run `git graft list` to see recoverable workspaces and `git graft restore NAME --lease TOKEN` to reopen one. The restored workspace gets a fresh active lease. To reverse the integration itself, run `git graft undo-land NAME --lease TOKEN` while the destination is still at the landed commit. [Recovery guarantees and boundaries](safety.md)
 - If a tree was moved or detached with native Git, restore its recorded path and branch before retrying. If creation stopped before registration could be authenticated, inspect the path and branch with `git worktree list --porcelain`. Verify ownership before manually retiring either. A repository owner who lost a lease can inspect the corresponding private record in `graft/records`.
 - `gc` previews. `gc --apply` can retire a stale workspace only after checking its Git state, merge reachability, locks and ownership. External editors and programs started outside Graft do not hold its locks. Renew the lease or use `git worktree lock` for a workspace that needs to outlive an unattended task.
