@@ -7,6 +7,7 @@
     "test": "node e2e/run.ts",
     "typecheck": "tsc --noEmit",
     "bench": "node e2e/run.ts --group space",
+    "bench:workflow": "node e2e/workflow-bench.ts",
     "coverage": "node e2e/coverage.ts"
   },
   "devDependencies": {

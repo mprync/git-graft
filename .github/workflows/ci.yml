@@ -214,6 +214,10 @@ jobs:
         shell: bash
         run: npm run bench
 
+      - name: Benchmark two agents starting from one populated checkout
+        shell: bash
+        run: npm run bench:workflow
+
       - name: Rust source coverage through the full E2E suite
         shell: bash
         run: npm run coverage
