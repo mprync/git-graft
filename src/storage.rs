@@ -123,6 +123,13 @@ fn native_checkout(worktree: &Path, oid: &str, sparse: &[String], reason: &str) 
 // fingerprinted settings. Unknown external attributes and filters use Git.
 fn conversion_reason(worktree: &Path, oid: &str) -> Result<Option<&'static str>> {
     for variable in ["GIT_ATTR_SYSTEM", "GIT_ATTR_GLOBAL"] {
+        // Git omits GIT_ATTR_SYSTEM from "git var" when system attributes
+        // are explicitly disabled. There is then no system file to inspect.
+        if variable == "GIT_ATTR_SYSTEM"
+            && std::env::var_os("GIT_ATTR_NOSYSTEM").as_deref() == Some(OsStr::new("1"))
+        {
+            continue;
+        }
         let output = match git(worktree, ["var", variable]) {
             Ok(output) => output,
             Err(_) => return Ok(Some("cannot determine external attributes")),
@@ -559,6 +566,7 @@ mod tests {
         command(&repo, &["config", "user.email", "test@example.invalid"]);
         command(&repo, &["config", "user.name", "Test"]);
         command(&repo, &["config", "core.autocrlf", "false"]);
+        command(&repo, &["config", "core.symlinks", "true"]);
         fs::create_dir(repo.join("sub")).unwrap();
         fs::write(repo.join("sub/file"), b"committed\n").unwrap();
         fs::write(repo.join("script"), b"#!/bin/sh\n").unwrap();

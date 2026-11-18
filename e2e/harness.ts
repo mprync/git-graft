@@ -44,7 +44,7 @@ export class Context {
       COREPACK_HOME: process.env.COREPACK_HOME ?? join(process.env.XDG_CACHE_HOME ?? process.env.LOCALAPPDATA ?? join(homedir(),'.cache'),'node','corepack'),
       COREPACK_ENABLE_NETWORK: '0', COREPACK_DEFAULT_TO_LATEST: '0',
       RUSTUP_HOME: process.env.RUSTUP_HOME ?? join(homedir(), '.rustup'),
-      GIT_CONFIG_GLOBAL: join(home, 'gitconfig'), GIT_CONFIG_NOSYSTEM: '1',
+      GIT_CONFIG_GLOBAL: join(home, 'gitconfig'), GIT_CONFIG_NOSYSTEM: '1', GIT_ATTR_NOSYSTEM: '1',
       GIT_TEMPLATE_DIR: join(this.root, 'template'), GIT_TERMINAL_PROMPT: '0',
       GIT_AUTHOR_NAME: 'Graft Fixture', GIT_COMMITTER_NAME: 'Graft Fixture',
       GIT_AUTHOR_EMAIL: 'test@example.invalid', GIT_COMMITTER_EMAIL: 'test@example.invalid',

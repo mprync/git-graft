@@ -205,6 +205,9 @@ export const cases: Scenario[] = [
   {
     name: 'conversion filters and gitlinks use native Git',
     run(ctx) {
+      // Exercise the conversion decision even on Git installations that
+      // default to symlink emulation. This fixture contains no symlinks.
+      ctx.git(['config', 'core.symlinks', 'true']);
       writeFileSync(join(ctx.repo, '.gitattributes'), '*.dat filter=example\n');
       writeFileSync(join(ctx.repo, 'data.dat'), 'contents\n');
       ctx.git(['add', '.']);
@@ -234,6 +237,27 @@ export const cases: Scenario[] = [
       assert.equal(ctx.git(['ls-files', '-s'], linked.path), ctx.git(['ls-files', '-s'], gitlinkReference));
       ctx.measure('filter_fallback', filterStorage.reason);
       ctx.measure('gitlink_fallback', linkStorage.reason);
+    },
+  },
+  {
+    name: 'Git symlink emulation checks out link contents as independent ordinary files',
+    run(ctx) {
+      ctx.git(['config', 'core.symlinks', 'false']);
+      const link = join(ctx.repo, 'tracked-link');
+      writeFileSync(link, 'tracked.txt');
+      const blob = ctx.git(['hash-object', '-w', 'tracked-link']);
+      ctx.git(['update-index', '--add', '--cacheinfo', `120000,${blob},tracked-link`]);
+      ctx.git(['commit', '-qm', 'emulated link']);
+      const workspace = ctx.spawn('emulated-link');
+      const storage = receipt(workspace.result);
+      assert.equal(storage.backend, 'git');
+      assert.equal(storage.reason, 'Git symlink emulation');
+      const privateLink = join(workspace.path, 'tracked-link');
+      assert(lstatSync(privateLink).isFile());
+      assert.equal(readFileSync(privateLink, 'utf8'), 'tracked.txt');
+      writeFileSync(privateLink, 'changed');
+      assert.equal(readFileSync(link, 'utf8'), 'tracked.txt');
+      assert.equal(readFileSync(join(workspace.path, 'tracked.txt'), 'utf8'), 'initial\n');
     },
   },
 ];
