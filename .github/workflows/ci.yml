@@ -1,0 +1,246 @@
+name: Native filesystem verification
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: ${{ matrix.id }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: macOS 15 APFS clonefile
+            runner: macos-15
+            filesystem: apfs
+            expected-backend: clonefile
+            test-volume: runner
+          - id: Windows 2025 NTFS Git fallback
+            runner: windows-2025
+            filesystem: ntfs
+            expected-backend: git
+            test-volume: runner
+          - id: Ubuntu 24.04 loop ext4 Git fallback
+            runner: ubuntu-24.04
+            filesystem: ext4
+            expected-backend: git
+            test-volume: loop
+          - id: Ubuntu 24.04 loop btrfs reflink
+            runner: ubuntu-24.04
+            filesystem: btrfs
+            expected-backend: reflink
+            test-volume: loop
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+      GIT_ATTR_NOSYSTEM: '1'
+      GIT_GRAFT_FIXTURE_MIB: 64
+      GIT_GRAFT_WORKSPACES: 5
+      GIT_GRAFT_EXPECT_BACKEND: ${{ matrix.expected-backend }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7.0.1
+
+      - name: Verify APFS runner volume
+        if: matrix.filesystem == 'apfs'
+        shell: bash
+        run: |
+          device="$(df -P "$RUNNER_TEMP" | awk 'NR == 2 { print $1 }')"
+          [[ -n "$device" ]]
+          filesystem_type="$(diskutil info -plist "$device" | plutil -extract FilesystemType raw -o - -)"
+          [[ "$filesystem_type" == apfs ]]
+          echo "GIT_GRAFT_TEST_VOLUME=$RUNNER_TEMP" >> "$GITHUB_ENV"
+
+      - name: Verify NTFS and enable Windows symlinks
+        if: matrix.filesystem == 'ntfs'
+        shell: pwsh
+        run: |
+          $drive = [System.IO.Path]::GetPathRoot($env:RUNNER_TEMP).Substring(0, 1)
+          $volume = Get-Volume -DriveLetter $drive
+          if ($volume.FileSystem -ne 'NTFS') { throw "Expected NTFS; found $($volume.FileSystem)" }
+          $developerMode = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock'
+          New-Item -Path $developerMode -Force | Out-Null
+          New-ItemProperty -Path $developerMode -Name AllowDevelopmentWithoutDevLicense -PropertyType DWord -Value 1 -Force | Out-Null
+          git config --global core.symlinks true
+          $probe = Join-Path $env:RUNNER_TEMP 'git-graft-symlink-probe'
+          New-Item -ItemType Directory -Path $probe -Force | Out-Null
+          Set-Content -NoNewline -Path (Join-Path $probe 'target') -Value 'symlink-ok'
+          New-Item -ItemType SymbolicLink -Path (Join-Path $probe 'link') -Target (Join-Path $probe 'target') | Out-Null
+          if ((Get-Content (Join-Path $probe 'link') -Raw) -ne 'symlink-ok') { throw 'Windows symlink probe failed' }
+          Remove-Item -LiteralPath $probe -Recurse -Force
+          Add-Content -Path $env:GITHUB_ENV -Value "GIT_GRAFT_TEST_VOLUME=$env:RUNNER_TEMP"
+
+      - name: Create dedicated Linux filesystem volume
+        if: matrix.test-volume == 'loop'
+        shell: bash
+        env:
+          FILESYSTEM: ${{ matrix.filesystem }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y btrfs-progs e2fsprogs
+          image="$RUNNER_TEMP/git-graft-${FILESYSTEM}.img"
+          mount_dir="$RUNNER_TEMP/git-graft-${FILESYSTEM}-mount"
+          mkdir -p "$mount_dir"
+          truncate -s 6G "$image"
+          loop_device="$(sudo losetup --find --show "$image")"
+          {
+            echo "GIT_GRAFT_TEST_IMAGE=$image"
+            echo "GIT_GRAFT_TEST_MOUNT=$mount_dir"
+            echo "GIT_GRAFT_TEST_LOOP=$loop_device"
+          } >> "$GITHUB_ENV"
+          if [[ "$FILESYSTEM" == ext4 ]]; then
+            sudo mkfs.ext4 -F "$loop_device"
+          else
+            sudo mkfs.btrfs -f "$loop_device"
+          fi
+          sudo mount -o nodiscard "$loop_device" "$mount_dir"
+          sudo chown "$(id -u):$(id -g)" "$mount_dir"
+          actual_fs="$(findmnt -n -o FSTYPE --mountpoint "$mount_dir")"
+          if [[ "$actual_fs" != "$FILESYSTEM" ]]; then
+            echo "Expected $FILESYSTEM, found $actual_fs" >&2
+            exit 1
+          fi
+          echo "GIT_GRAFT_TEST_VOLUME=$mount_dir" >> "$GITHUB_ENV"
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version: 24.5.0
+          package-manager-cache: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7.1.0
+        with:
+          python-version: 3.13.0
+
+      - name: Set up Bun 1.4.2
+        uses: oven-sh/setup-bun@v2.2.0
+        with:
+          bun-version: 1.4.2
+
+      - name: Set up pnpm 11.10.0
+        if: matrix.filesystem != 'ntfs'
+        uses: pnpm/action-setup@v6.1.1
+        with:
+          version: 11.10.0
+          standalone: false
+          run_install: false
+
+      - name: Install pnpm 11.10.0 Windows portable archive
+        if: matrix.filesystem == 'ntfs'
+        shell: pwsh
+        run: |
+          $install = Join-Path $env:RUNNER_TEMP 'pnpm-11.10.0'
+          $archive = Join-Path $env:RUNNER_TEMP 'pnpm-win32-x64.zip'
+          $uri = 'https://github.com/pnpm/pnpm/releases/download/v11.10.0/pnpm-win32-x64.zip'
+          Invoke-WebRequest -Uri $uri -OutFile $archive
+          Expand-Archive -LiteralPath $archive -DestinationPath $install
+          if (-not (Test-Path (Join-Path $install 'pnpm.exe') -PathType Leaf)) { throw 'Archive is missing pnpm.exe' }
+          if (-not (Test-Path (Join-Path $install 'dist') -PathType Container)) { throw 'Archive is missing the adjacent dist directory' }
+          Add-Content -Path $env:GITHUB_PATH -Value $install
+          Remove-Item -LiteralPath $archive -Force
+
+      - name: Verify Windows pnpm.exe
+        if: matrix.filesystem == 'ntfs'
+        shell: pwsh
+        run: |
+          $pnpm = Get-Command pnpm.exe -CommandType Application
+          $expected = Join-Path $env:RUNNER_TEMP 'pnpm-11.10.0\pnpm.exe'
+          if ($pnpm.Source -ne $expected) { throw "Unexpected pnpm.exe: $($pnpm.Source)" }
+          $version = (& $pnpm.Source --version).Trim()
+          if ($version -ne '11.10.0') { throw "Expected pnpm 11.10.0; found $version" }
+
+      - name: Set up uv 0.11.6
+        uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: 0.11.6
+          enable-cache: false
+
+      - name: Set up stable Rust, formatting, lint and LLVM tools
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt --component clippy --component llvm-tools-preview
+          rustup default stable
+
+      - name: Verify pinned toolchain and Git
+        shell: bash
+        run: |
+          test "$(node --version)" = v24.5.0
+          test "$(pnpm --version)" = 11.10.0
+          test "$(bun --version)" = 1.4.2
+          test "$(uv --version | awk '{print $2}')" = 0.11.6
+          test "$(python --version)" = 'Python 3.13.0'
+          git --version
+          rustc +stable -vV
+          cargo +stable --version
+          rustup +stable component list --installed | grep -E '^rustfmt($|-)'
+          rustup +stable component list --installed | grep -E '^clippy($|-)'
+          rustup +stable component list --installed | grep -E '^llvm-tools($|-)'
+
+      - name: Install locked Node dependencies
+        shell: bash
+        run: npm ci
+
+      - name: Strict TypeScript check
+        shell: bash
+        run: npm run typecheck
+
+      - name: Rust formatting
+        shell: bash
+        run: cargo fmt --all -- --check
+
+      - name: Rust Clippy
+        shell: bash
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+
+      - name: Rust tests
+        shell: bash
+        run: cargo test --locked --all-targets --all-features
+
+      - name: TypeScript E2E and native storage assertions
+        shell: bash
+        run: npm test
+
+      - name: Three-round release disk benchmark
+        shell: bash
+        run: npm run bench
+
+      - name: Rust source coverage through the full E2E suite
+        shell: bash
+        run: npm run coverage
+
+      - name: Clean up owned Linux loop filesystem
+        if: always() && matrix.test-volume == 'loop'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${GIT_GRAFT_TEST_MOUNT:-}" && -n "${GIT_GRAFT_TEST_LOOP:-}" ]]; then
+            source="$(findmnt -n -o SOURCE --mountpoint "$GIT_GRAFT_TEST_MOUNT" 2>/dev/null || true)"
+            if [[ "$source" == "$GIT_GRAFT_TEST_LOOP" ]]; then
+              sudo umount "$GIT_GRAFT_TEST_MOUNT"
+            fi
+            attached="$(sudo losetup -j "$GIT_GRAFT_TEST_IMAGE" 2>/dev/null | cut -d: -f1 || true)"
+            if [[ "$attached" == "$GIT_GRAFT_TEST_LOOP" ]]; then
+              sudo losetup -d "$GIT_GRAFT_TEST_LOOP"
+            fi
+          fi
+          if [[ -n "${GIT_GRAFT_TEST_IMAGE:-}" ]]; then rm -f -- "$GIT_GRAFT_TEST_IMAGE"; fi
+          if [[ -n "${GIT_GRAFT_TEST_MOUNT:-}" ]]; then rmdir -- "$GIT_GRAFT_TEST_MOUNT" 2>/dev/null || true; fi
+
+      - name: Upload this runner's E2E and coverage reports
+        if: always()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: ${{ matrix.filesystem }}-${{ runner.arch }}-reports
+          path: target/e2e/
+          if-no-files-found: warn
+          retention-days: 14
