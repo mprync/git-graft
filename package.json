@@ -1,0 +1,16 @@
+{
+  "name": "git-graft-e2e",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24.5" },
+  "scripts": {
+    "test": "node e2e/run.ts",
+    "typecheck": "tsc --noEmit",
+    "bench": "node e2e/run.ts --group space",
+    "coverage": "node e2e/coverage.ts"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.0",
+    "typescript": "5.9.3"
+  }
+}
