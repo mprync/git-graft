@@ -78,6 +78,8 @@ export const cases: Scenario[] = [
       if (independentProbe !== null) assert.equal(doctor.native_clone, independentProbe, 'Git Graft and independent native clone probe disagree');
       const probe = doctor.native_clone;
       const first = ctx.spawn('storage-cold');
+      // Plumbing consumers can ask this before any porcelain command refreshes the index.
+      assert.equal(ctx.git(['diff-files', '--quiet'], first.path), '');
       const cold = receipt(first.result);
       const platformBackend = process.platform === 'darwin' ? 'clonefile' : process.platform === 'linux' ? 'reflink' : 'git';
       const expected = process.env.GIT_GRAFT_EXPECT_BACKEND;
@@ -122,6 +124,7 @@ export const cases: Scenario[] = [
         assert.notEqual(lstatSync(join(first.path, 'executable.sh')).mode & 0o111, 0);
       }
       const warm = ctx.spawn('storage-warm');
+      assert.equal(ctx.git(['diff-files', '--quiet'], warm.path), '');
       const warmReceipt = receipt(warm.result);
       if (probe) assert.equal(warmReceipt.snapshot_reused, true);
       else { assert.equal(warmReceipt.backend, 'git'); assert.equal(warmReceipt.snapshot_reused, false); }
