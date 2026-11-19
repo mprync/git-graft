@@ -52,6 +52,44 @@ function purgeFixture(ctx: Context) {
 }
 
 export const cases: Scenario[] = [{
+  name: 'land commit refuses a Unicode case-renamed registered installation',
+  run(ctx) {
+    const probe = join(ctx.root, 'Ä-case-probe');
+    mkdirSync(probe);
+    const insensitive = existsSync(join(ctx.root, 'ä-case-probe'));
+    rmSync(probe, { recursive: true });
+    ctx.measure('unicode_case_insensitive', insensitive);
+    const native = objectResult(ctx.cli(['doctor']).source_storage).native_clone;
+    assert.equal(typeof native, 'boolean');
+    ctx.measure('native_clone', native);
+    if (!insensitive || !native) return;
+    const upper = 'Ä-Packages';
+    const lower = 'ä-Packages';
+    writeFileSync(join(ctx.repo, '.gitignore'), `/${upper}/\n`);
+    writeFileSync(join(ctx.repo, 'fixture.lock'), 'locked\n');
+    ctx.git(['add', '.gitignore', 'fixture.lock']); ctx.git(['commit', '-qm', 'Unicode install fixture']);
+    mkdirSync(join(ctx.repo, upper));
+    writeFileSync(join(ctx.repo, upper, 'package'), 'dependency payload');
+    ctx.cli(registration(ctx, ['--install-dir', upper, '--input', 'fixture.lock', '--key', 'unicode']));
+    const ws = ctx.spawn('unicode-case');
+    assert.equal(registered(ws.result)?.status, 'attached');
+    renameSync(join(ws.path, upper), join(ws.path, lower));
+    assert(readdirSync(ws.path).some(name => name.normalize('NFC') === lower));
+    writeFileSync(join(ws.path, '.gitignore'), '');
+    writeFileSync(join(ws.path, 'tracked.txt'), 'uncommitted source\n');
+    const primary = ctx.git(['rev-parse', 'HEAD']);
+    const workspace = ctx.git(['rev-parse', 'HEAD'], ws.path);
+    const staged = ctx.git(['diff', '--cached', '--binary'], ws.path);
+    assert.equal(ctx.fail(['land', 'unicode-case', '--lease', ws.lease, '--commit', 'Land source']).code,
+      'registered_install_exposed');
+    assert.equal(ctx.git(['rev-parse', 'HEAD']), primary);
+    assert.equal(ctx.git(['rev-parse', 'HEAD'], ws.path), workspace);
+    assert.equal(ctx.git(['diff', '--cached', '--binary'], ws.path), staged);
+    assert.equal(readFileSync(join(ws.path, 'tracked.txt'), 'utf8'), 'uncommitted source\n');
+    assert.equal(readFileSync(join(ws.path, lower, 'package'), 'utf8'), 'dependency payload');
+    assert.equal(readFileSync(join(ctx.repo, upper, 'package'), 'utf8'), 'dependency payload');
+  },
+}, {
   name: 'land commit stages source beside protected top-level and nested installs',
   run(ctx) {
     const native = objectResult(ctx.cli(['doctor']).source_storage).native_clone;
