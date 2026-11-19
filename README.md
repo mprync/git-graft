@@ -71,7 +71,7 @@ Managers can also register a relocatable installed directory, its tracked inputs
 
 On macOS/APFS, two standalone Homebrew checkouts added **16.12 MB** of unique file data. Two native worktrees added **59.88 MB**. The first graft establishes a private Git history and builds its indexes. At the same revision a second graft added **0.47 MB**. In the installed npm fixture, two active tasks used 0.31 MB with Graft and 70.64 MB with native worktrees.
 
-Creating the first and repeat Homebrew grafts took 6.46 s and 1.12 s. Native Git took 0.34 s and 0.35 s. Filesystem, repository history and dependency layout affect both results. [Benchmarks, methodology and raw results](docs/benchmarks.md)
+Creating the first Homebrew graft took **6.06 s**, a repeat took **1.15 s**, and a graft after a one-file commit took **2.04 s**. Native worktrees took 0.35 s, 0.37 s and 0.41 s respectively. Graft spent 4.13 s establishing verified private Git history on the first checkout. [Benchmarks, methodology and raw results](docs/benchmarks.md)
 
 ## Use with an MCP client
 

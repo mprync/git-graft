@@ -4,7 +4,11 @@
 
 `git graft doctor` probes the selected volume. Graft uses APFS cloning or Linux reflinks where supported and can use Git checkout or private copies elsewhere. The CI matrix defines macOS/APFS, Windows/NTFS, Linux/ext4 and Linux/Btrfs jobs. Check the results for the revision and filesystem you intend to use. [Native filesystem workflow](../.github/workflows/ci.yml)
 
-## Local release checks on November 19, 2026
+## Checkout performance changes on November 19, 2026
+
+On macOS arm64, the optimized executable from `bc88f56` (SHA-256 prefix `d71a90823520`) passed all 134 TypeScript scenarios on both Git 2.46.0 and Git 2.56.0, with zero unavailable cases. The suite checks that a damaged cached entry disqualifies the entire parent snapshot. All 127 Rust tests passed. The application and tests passed strict Clippy on macOS and cross-target Clippy for Linux and Windows. Rust 1.89 compiled all targets on macOS. Native Linux and Windows runs remain unverified. [Optimized Homebrew disk measurements](measurements/macos-arm64/homebrew-optimized-apfs.json)
+
+## Previous release and coverage on November 19, 2026
 
 On macOS arm64, a clean local clone of commit `2db7f5a4ba3c` produced the installed release used for testing and benchmarking. Its SHA-256 begins with `054cc1f44f7f`. It passed all **134 TypeScript end-to-end scenarios** on both the minimum Git 2.46.0 and Git 2.56.0. Each run exercised all 23 advertised CLI operations and all 22 MCP tools. [Scenario results and executable identity](measurements/macos-arm64/verification.json)
 
