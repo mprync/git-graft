@@ -223,6 +223,46 @@ pub(crate) fn no_extended_metadata(path: &Path) -> bool {
     unsafe { libc::llistxattr(path.as_ptr(), std::ptr::null_mut(), 0) == 0 }
 }
 
+#[cfg(all(test, windows))]
+mod windows_metadata_tests {
+    use super::no_extended_metadata;
+    use std::{fs, io::Write};
+
+    #[test]
+    fn rejects_named_streams_on_files_and_directories() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let file = temp.path().join("file");
+        let directory = temp.path().join("directory");
+        fs::write(&file, b"data")?;
+        fs::create_dir(&directory)?;
+        assert!(no_extended_metadata(&file));
+        assert!(no_extended_metadata(&directory));
+        for path in [&file, &directory] {
+            let stream = format!("{}:private", path.display());
+            fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .open(stream)?
+                .write_all(b"preserve")?;
+            assert!(!no_extended_metadata(path));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_directory_reparse_points_when_available() -> anyhow::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let target = temp.path().join("target");
+        let link = temp.path().join("link");
+        fs::create_dir(&target)?;
+        if std::os::windows::fs::symlink_dir(&target, &link).is_ok() {
+            assert!(!no_extended_metadata(&link));
+        }
+        Ok(())
+    }
+}
+
 #[cfg(target_os = "macos")]
 pub(crate) fn no_extended_metadata(path: &Path) -> bool {
     use std::{ffi::CString, os::unix::ffi::OsStrExt};
@@ -271,4 +311,77 @@ pub(crate) fn no_extended_metadata(path: &Path) -> bool {
 #[cfg(all(unix, not(any(target_os = "linux", target_os = "macos"))))]
 pub(crate) fn no_extended_metadata(_path: &Path) -> bool {
     false
+}
+
+#[cfg(windows)]
+pub(crate) fn no_extended_metadata(path: &Path) -> bool {
+    use std::{
+        fs::OpenOptions,
+        os::windows::{ffi::OsStrExt, fs::OpenOptionsExt, io::AsRawHandle},
+    };
+    use windows_sys::Win32::{
+        Foundation::{ERROR_HANDLE_EOF, INVALID_HANDLE_VALUE},
+        Storage::FileSystem::{
+            BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FindClose, FindFirstStreamW,
+            FindNextStreamW, FindStreamInfoStandard, GetFileInformationByHandle,
+            WIN32_FIND_STREAM_DATA,
+        },
+    };
+
+    // Open the entry itself, not a junction or mounted volume. Compare its
+    // identity again after the path-based stream enumeration.
+    let inspect = || -> Option<BY_HANDLE_FILE_INFORMATION> {
+        let file = OpenOptions::new()
+            .read(true)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)
+            .ok()?;
+        let mut info = BY_HANDLE_FILE_INFORMATION::default();
+        if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0
+            || info.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
+        {
+            return None;
+        }
+        Some(info)
+    };
+    let Some(before) = inspect() else {
+        return false;
+    };
+    let directory = before.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0;
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let mut data = WIN32_FIND_STREAM_DATA::default();
+    let handle = unsafe {
+        FindFirstStreamW(
+            wide.as_ptr(),
+            FindStreamInfoStandard,
+            (&mut data as *mut WIN32_FIND_STREAM_DATA).cast(),
+            0,
+        )
+    };
+    let clean = if handle == INVALID_HANDLE_VALUE {
+        // Directories normally have no $DATA streams. Any other failure is
+        // inconclusive (including filesystems without stream enumeration).
+        directory && std::io::Error::last_os_error().raw_os_error() == Some(ERROR_HANDLE_EOF as i32)
+    } else {
+        let end = data
+            .cStreamName
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(data.cStreamName.len());
+        let unnamed: Vec<u16> = "::$DATA".encode_utf16().collect();
+        let only_default = !directory && data.cStreamName[..end] == unnamed;
+        let no_next =
+            unsafe { FindNextStreamW(handle, (&mut data as *mut WIN32_FIND_STREAM_DATA).cast()) }
+                == 0
+                && std::io::Error::last_os_error().raw_os_error() == Some(ERROR_HANDLE_EOF as i32);
+        let closed = unsafe { FindClose(handle) } != 0;
+        only_default && no_next && closed
+    };
+    let Some(after) = inspect() else { return false };
+    clean
+        && before.dwVolumeSerialNumber == after.dwVolumeSerialNumber
+        && before.nFileIndexHigh == after.nFileIndexHigh
+        && before.nFileIndexLow == after.nFileIndexLow
+        && before.dwFileAttributes == after.dwFileAttributes
 }

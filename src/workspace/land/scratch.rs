@@ -84,6 +84,11 @@ pub(super) fn mark(p: &Project, dir: &Path) -> Result<()> {
 }
 
 fn owned(p: &Project, dir: &Path) -> Result<Owner> {
+    #[cfg(windows)]
+    ensure!(
+        recovery::no_extended_metadata(dir),
+        "landing scratch directory has additional metadata or cannot be inspected"
+    );
     let marker = objects::open_regular(&dir.join(OWNER))?;
     let owner: Owner = serde_json::from_slice(&registry::regular(&dir.join(OWNER))?)?;
     ensure!(
