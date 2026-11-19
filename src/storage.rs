@@ -1090,6 +1090,8 @@ impl StagedCheckout<'_> {
             .env("GIT_WORK_TREE", self.tree)
             .args([
                 "-c",
+                "index.version=4",
+                "-c",
                 "core.sparseCheckout=false",
                 "-c",
                 "core.protectHFS=true",
