@@ -36,8 +36,8 @@ From a populated Homebrew clone, `--history isolated` keeps the selected ancestr
 
 | Clean primary on APFS | Isolated ancestry | Single commit |
 | --- | ---: | ---: |
-| First spawn, median | 5.90 s | 0.589 s |
-| Native worktree in the paired timing runs | 0.41 s | 0.360 s |
+| First spawn, median | 5.90 s | 0.631 s |
+| Native worktree in the paired timing runs | 0.41 s | 0.380 s |
 | Additional file data, first workspace | 15,482,880 bytes | 5,693,440 bytes |
 | Additional file data, second workspace | 315,392 bytes | 319,488 bytes |
 | Additional working file data, both workspaces | 0 bytes | 0 bytes |
@@ -45,6 +45,8 @@ From a populated Homebrew clone, `--history isolated` keeps the selected ancestr
 On a cold tip spawn, Git reads the selected commit, trees and attributes while Graft reserves the workspace. After reservation, Git verifies this metadata in a private object store. Graft can then clone eligible files while Git builds the complete pack. Git verifies the complete pack before checking out the remaining paths or publishing the index.
 
 Preparing the metadata during reservation reduced median cold startup from 0.646 s to 0.589 s, improving five of six release pairs. Repeat startup took 0.452 s for Graft and 0.380 s for Git. Cold startup plus the first status took 1.017 s for Graft and 0.463 s for Git. All 3,318 regular files shared their existing APFS data blocks. The previous release had already reduced cold startup from 0.770 s to 0.636 s by overlapping checkout and pack creation. [Release timings and allocation](measurements/macos-arm64/homebrew-tip-reservation.json) · [Previous checkout measurements](measurements/macos-arm64/homebrew-tip-overlap.json)
+
+Graft now asks Git which attributes are set before copying source files. On Homebrew's 3,484 tracked paths, the report shrank from 1,579,954 bytes to 80,128 bytes. This also preserves checkout filters literally named `unspecified`. In six fresh release pairs, the preceding and corrected binaries took 0.642 s and 0.631 s respectively for first checkout. Repeat checkout took 0.476 s versus 0.384 s for a worktree. First checkout plus first status took 1.099 s versus 0.489 s. [Paired timings, CPU, memory and APFS allocation](measurements/macos-arm64/homebrew-tip-attributes.json)
 
 When a shallow export fits in one pack and the primary has no reusable pack, Git uses path names from the selected revision to find similar objects for compression. On the preceding release this reduced median pack transfer from 253 ms to 188 ms. [Pack export measurements](measurements/macos-arm64/homebrew-tip-pack-export.json)
 
