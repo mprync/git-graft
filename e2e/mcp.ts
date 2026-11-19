@@ -846,8 +846,9 @@ export const cases: Scenario[] = [
       ctx.git(['restore', '--source=HEAD', '--staged', '--worktree', '--', '.'], empty);
       assert.equal(readFileSync(join(empty, 'tracked.txt'), 'utf8'), 'initial\n');
 
-      const detached = await call(client, 'workspace_spawn', { name: 'mcp-detached', detach: true });
+      const detached = await call(client, 'workspace_spawn', { name: 'mcp-detached', detach: true, history: 'tip' });
       const detachedPath = workspacePath(detached);
+      assert.equal(ctx.git(['rev-parse', '--is-shallow-repository'], detachedPath), 'true');
       assert.equal(detached.branch, null);
       assert.equal(ctx.git(['branch', '--show-current'], detachedPath), '');
       assert.equal(ctx.git(['rev-parse', 'HEAD'], detachedPath), base);

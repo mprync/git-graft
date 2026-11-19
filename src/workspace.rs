@@ -96,7 +96,7 @@ fn with_lease(r: &Record) -> Value {
     value
 }
 
-fn project_uses_local_history(project: &Project) -> Result<bool> {
+fn project_history(project: &Project) -> Result<api::History> {
     // Read the primary repository's own setting, including for nested spawns.
     let out = git::raw(
         &project.repo,
@@ -110,9 +110,10 @@ fn project_uses_local_history(project: &Project) -> Result<bool> {
         ],
     )?;
     match (out.status.code(), out.stdout.as_slice()) {
-        (Some(1), b"") | (Some(0), b"isolated\0") => Ok(false),
-        (Some(0), b"local\0") => Ok(true),
-        (Some(0), _) => anyhow::bail!("graft.history must be local or isolated"),
+        (Some(1), b"") | (Some(0), b"isolated\0") => Ok(api::History::Isolated),
+        (Some(0), b"local\0") => Ok(api::History::Local),
+        (Some(0), b"tip\0") => Ok(api::History::Tip),
+        (Some(0), _) => anyhow::bail!("graft.history must be isolated, tip or local"),
         _ => anyhow::bail!("could not read the project's graft.history setting"),
     }
 }
@@ -130,21 +131,25 @@ fn spawn(p: &Project, origin: &Path, mut args: Spawn) -> Result<Value> {
         .as_ref()
         .and_then(|id| registry::authenticate(p, &args.name, id).ok())
         .filter(|record| !record.request.is_null());
-    let local = match args.history {
-        Some(mode) => mode == api::History::Local,
+    let history = match args.history {
+        Some(mode) => mode,
         None => {
             // A retry uses the policy at reservation, even after reconfiguration.
             // Older requests without the marker used isolated history.
-            let local = match &previous {
-                Some(record) => {
-                    record.request.get("project_local_history") == Some(&Value::Bool(true))
+            let history = match &previous {
+                Some(record) if record.request["project_local_history"] == true => {
+                    api::History::Local
                 }
-                None => project_uses_local_history(p)?,
+                Some(record) if record.request["project_history"] == "tip" => api::History::Tip,
+                Some(_) => api::History::Isolated,
+                None => project_history(p)?,
             };
-            if local {
-                request["project_local_history"] = Value::Bool(true);
+            match history {
+                api::History::Local => request["project_local_history"] = Value::Bool(true),
+                api::History::Tip => request["project_history"] = json!(history),
+                api::History::Isolated => (),
             }
-            local
+            history
         }
     };
     let mut reserved_base = None;
@@ -206,21 +211,17 @@ fn spawn(p: &Project, origin: &Path, mut args: Spawn) -> Result<Value> {
     }
     let build = (|| -> Result<()> {
         registry::verify(p, &r)?;
-        let initialize = if local {
-            objects::initialize_local
-        } else {
-            objects::initialize
-        };
-        let objects = initialize(
+        let objects = objects::initialize(
             &source,
             &r.path,
             &p.state,
             base.as_deref(),
             branch.as_deref(),
+            history,
         )?;
         let mut checkout = match &base {
             Some(oid) if !args.no_checkout => {
-                let materialize = if local {
+                let materialize = if history != api::History::Isolated {
                     storage::materialize_local
                 } else {
                     storage::materialize

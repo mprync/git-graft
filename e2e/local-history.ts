@@ -47,6 +47,46 @@ function read(path: string, file: string): string {
 
 export const cases: Scenario[] = [
   {
+    name: 'tip history exposes exactly the selected commit and tree, and lands back onto full history',
+    run(ctx) {
+      const parent = ctx.git(['rev-parse', 'HEAD']);
+      ctx.git(['switch', '-c', 'topic']);
+      const base = commitFile(ctx, ctx.repo, 'selected.txt', 'selected from topic\n');
+      ctx.git(['switch', 'main']);
+      const unrelated = commitFile(ctx, ctx.repo, 'other.txt', 'main only\n');
+      ctx.git(['repack', '-ad']);
+      const expected = [...new Set([base, ctx.git(['rev-parse', base + '^{tree}']),
+        ...ctx.git(['ls-tree', '-rt', '--format=%(objectname)', base]).split('\n')])].sort();
+
+      // Warm the full-ancestry cache first. The narrower visibility must survive a cache hit.
+      const full = ctx.spawn('ancestry', ['--history', 'isolated', '--base', base]);
+      assert(objects(ctx, full.path).includes(parent));
+      ctx.git(['config', '--local', 'graft.history', 'tip']);
+      const args = ['--request-id', randomUUID(), '--base', 'topic'];
+      const work = ctx.spawn('tip-branch', args);
+      ctx.git(['config', '--local', 'graft.history', 'local']);
+      assert.equal(ctx.spawn('tip-branch', args).lease, work.lease);
+      const second = ctx.spawn('tip-commit', ['--history', 'tip', '--base', base]);
+      for (const ws of [work, second]) {
+        assert.deepEqual(objects(ctx, ws.path), expected);
+        assert.equal(ctx.git(['rev-list', '--all'], ws.path), base);
+        checkout(ctx, ws.path, base, 'refs/heads/graft/' + (ws === work ? 'tip-branch' : 'tip-commit'));
+      }
+      const tip = commitFile(ctx, work.path, 'selected.txt', 'landed edit\n');
+      assert.equal(ctx.git(['rev-parse', 'HEAD^'], work.path), base);
+      ctx.cli(['land', 'tip-branch', '--lease', work.lease, '--into', 'topic']);
+      assert.equal(ctx.git(['rev-parse', 'topic']), tip);
+      assert.equal(ctx.git(['rev-parse', 'topic~2']), parent);
+      assert.equal(ctx.git(['rev-parse', 'main']), unrelated);
+      assert.equal(ctx.git(['rev-parse', '--is-shallow-repository']), 'false');
+      const restored = ctx.cli(['restore', 'tip-branch', '--lease', work.lease]);
+      assert.equal(restored.path, work.path);
+      assert.equal(ctx.git(['show', 'HEAD:selected.txt'], work.path), 'landed edit');
+      assert.deepEqual(objects(ctx, second.path), expected);
+      ctx.git(['fsck', '--full']);
+    },
+  },
+  {
     name: 'local checkout applies the copied attributes file from the workspace root',
     run(ctx) {
       writeFileSync(join(ctx.repo, 'custom attrs'), '*.txt text eol=crlf\n');

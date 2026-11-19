@@ -751,8 +751,9 @@ fn check_pack_pair(path: &Path, width: usize) -> Result<()> {
 mod tests {
     use super::*;
     use crate::{
+        api::History,
         git,
-        workspace::objects::{initialize_local, preflight},
+        workspace::objects::{initialize, preflight},
     };
 
     fn make_repo(repo: &Path, format: &str) -> Result<String> {
@@ -836,12 +837,13 @@ mod tests {
                 .context("missing donor pack")?;
             let probe = fixture.path().join("probe");
             let can_clone = clone_file(&open_regular(&donor)?, &probe).is_ok();
-            let receipt = initialize_local(
+            let receipt = initialize(
                 &preflight(&primary)?,
                 &workspace,
                 &state,
                 Some(&base),
                 Some("topic"),
+                History::Local,
             )?;
             assert_eq!(git::oid(&workspace, "HEAD")?, base);
             assert!(run(&workspace, &["remote"])?.is_empty());
@@ -945,8 +947,14 @@ mod tests {
                 _ => unreachable!(),
             }
 
-            let receipt =
-                initialize_local(&preflight(&primary)?, &workspace, &state, Some(&base), None)?;
+            let receipt = initialize(
+                &preflight(&primary)?,
+                &workspace,
+                &state,
+                Some(&base),
+                None,
+                History::Local,
+            )?;
             assert_ne!(receipt["source"], "local-snapshot", "{name}: {receipt}");
             assert!(receipt["source"].is_string(), "{receipt}");
             assert!(run(&workspace, &["cat-file", "-e", &staged]).is_err());

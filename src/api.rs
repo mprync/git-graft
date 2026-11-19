@@ -24,7 +24,7 @@ pub struct Spawn {
     #[arg(long, default_value = "HEAD")]
     #[serde(default = "head")]
     pub base: String,
-    /// Select isolated commit history or a fast snapshot of the local Git object database.
+    /// Keep selected ancestry (isolated), only the starting commit (tip), or all local objects (local).
     /// Local mode can read other branches' and unreferenced objects by ID.
     #[arg(long, value_enum)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -66,6 +66,7 @@ pub struct Spawn {
 pub enum History {
     Isolated,
     Local,
+    Tip,
 }
 
 impl Spawn {

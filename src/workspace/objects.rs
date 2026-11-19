@@ -14,7 +14,7 @@ use std::{
 
 use super::registry::MARKER;
 pub(super) use super::registry::sync_directory;
-use crate::{git, recovery::rename_exclusive};
+use crate::{api::History, git, recovery::rename_exclusive};
 
 mod history;
 pub(crate) use history::{
@@ -324,32 +324,7 @@ pub(super) fn initialize(
     state: &Path,
     base: Option<&str>,
     branch: Option<&str>,
-) -> Result<Value> {
-    initialize_with(source, root, state, base, branch, |_, _, _, _| Ok(None))
-}
-
-/// Opt in to cloning all visible objects from a trusted, ordinary local Git
-/// database. Unsupported sources or filesystems use the exact bootstrap.
-pub(super) fn initialize_local(
-    source: &Primary<'_>,
-    root: &Path,
-    state: &Path,
-    base: Option<&str>,
-    branch: Option<&str>,
-) -> Result<Value> {
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    return initialize_with(source, root, state, base, branch, local::bootstrap);
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    initialize(source, root, state, base, branch)
-}
-
-fn initialize_with(
-    source: &Primary<'_>,
-    root: &Path,
-    state: &Path,
-    base: Option<&str>,
-    branch: Option<&str>,
-    snapshot: impl FnOnce(&Path, &Path, &str, &str) -> Result<Option<Value>>,
+    history: History,
 ) -> Result<Value> {
     require_pristine(root)?;
     let Primary {
@@ -386,10 +361,22 @@ fn initialize_with(
             json!({"method": "none", "source": "none", "bytes": 0, "pack_bytes": 0, "index_bytes": 0, "shared_bytes": 0, "cache_bytes": 0, "object_format": format}),
         );
     };
-    let receipt = match snapshot(primary, root, format, &base)? {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    let snapshot = if history == History::Local {
+        local::bootstrap(primary, root, format, &base)?
+    } else {
+        None
+    };
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    let snapshot = None;
+    let receipt = match snapshot {
         Some(receipt) => receipt,
         None => {
-            let boundary = shallow::initialize(primary, root, &base)?;
+            let boundary = if history == History::Tip {
+                Some(shallow::publish(root, &base, format!("{base}\n"))?)
+            } else {
+                shallow::initialize(primary, root, &base)?
+            };
             history::bootstrap(
                 primary,
                 root,
@@ -854,7 +841,14 @@ mod tests {
         base: Option<&str>,
         branch: Option<&str>,
     ) -> Result<Value> {
-        initialize(&preflight(primary)?, root, state, base, branch)
+        initialize(
+            &preflight(primary)?,
+            root,
+            state,
+            base,
+            branch,
+            History::Isolated,
+        )
     }
 
     fn commit(repo: &Path, text: &str) -> Result<String> {

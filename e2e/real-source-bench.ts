@@ -1,7 +1,7 @@
 /** Compare release CLI processes on disposable local clones of a real repository.
  * node e2e/real-source-bench.ts [--repo /opt/homebrew] [--bin PATH]
  *   [--output PATH] [--apfs-file-data] [--rounds N] [--advance-base] [--include-revisions]
- *   [--history local|isolated] [--project-history local|isolated] [--clean-primary] [--no-deps]
+ *   [--history local|isolated|tip] [--project-history local|isolated|tip] [--clean-primary] [--no-deps]
  * The source is read only. Local clones copy the original pack files without repacking;
  * all configuration, branches, and test commits are created in temporary repositories.
  */
@@ -23,8 +23,9 @@ const output = resolve(values.output ?? 'target/e2e/real-source-bench.json');
 const rounds = Number(values.rounds ?? 4);
 const history = values.history;
 const projectHistory = values['project-history'];
-assert(projectHistory === undefined || projectHistory === 'isolated' || projectHistory === 'local', 'Expected local or isolated project history');
-assert(history === undefined || history === 'isolated' || history === 'local', 'Expected local or isolated history');
+for (const policy of [projectHistory, history]) {
+  assert(policy === undefined || ['isolated', 'local', 'tip'].includes(policy), 'Expected isolated, local or tip history');
+}
 const historyArgs = history ? ['--history', history] : [];
 const dependencyArgs = values['no-deps'] ? ['--no-deps'] : [];
 assert(Number.isSafeInteger(rounds) && rounds > 0, '--rounds must be a positive integer');
@@ -154,7 +155,9 @@ try {
     const checkHistory = (path: string, storage: Record<string,unknown>) => {
       const objects = objectResult(storage.objects);
       const local = objects.source === 'local-snapshot';
-      if ((history ?? projectHistory ?? 'isolated') === 'isolated') assert(!local, 'Isolated checkout used the whole donor database');
+      const policy = history ?? projectHistory ?? 'isolated';
+      if (policy !== 'local') assert(!local, 'Restricted history used the whole donor database');
+      if (policy === 'tip') assert.equal(command(['rev-list','--count','HEAD'],path),'1');
       for (const oid of [branch,...(existingUnrelated ? [existingUnrelated] : [])]) {
         const read = fixture.command('git',['cat-file','-e',oid],path);
         if (local) assert.equal(read.status,0,'Local snapshot lost a primary Git object');
@@ -260,7 +263,11 @@ try {
       const firstStatusSeconds = firstStatus(path);
       assert.equal(command(['rev-parse','HEAD'],path),advanced);
       assert.equal(command(['rev-parse','HEAD^{tree}'],path),advancedTree);
-      assert.equal(command(['rev-parse','HEAD^'],path),head);
+      if (arm === 'graft' && (history ?? projectHistory) === 'tip') {
+        assert.notEqual(fixture.command('git',['cat-file','-e',head],path).status,0);
+      } else {
+        assert.equal(command(['rev-parse','HEAD^'],path),head);
+      }
       assert.equal(readFileSync(join(path,file),'utf8'),content);
       for (const original of workspacePaths) {
         assert.equal(command(['rev-parse','HEAD'],original),head);

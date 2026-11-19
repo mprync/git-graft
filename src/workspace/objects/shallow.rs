@@ -87,6 +87,12 @@ pub(super) fn initialize(source: &Path, root: &Path, base: &str) -> Result<Optio
         contents.push_str(&oid);
         contents.push('\n');
     }
+    publish(root, base, contents).map(Some)
+}
+
+/// Freeze the boundary used by both the object walk and the new repository.
+pub(super) fn publish(root: &Path, base: &str, contents: String) -> Result<Boundary> {
+    let admin = root.join(".git");
     let file = admin.join("shallow");
     let mut staged = tempfile::NamedTempFile::new_in(&admin)?;
     staged.write_all(contents.as_bytes())?;
@@ -94,10 +100,10 @@ pub(super) fn initialize(source: &Path, root: &Path, base: &str) -> Result<Optio
     staged.persist_noclobber(&file)?;
     sync_directory(&admin)?;
     let digest = blake3::hash(contents.as_bytes());
-    Ok(Some(Boundary {
+    Ok(Boundary {
         file,
         cache_key: format!("{base}-shallow-{digest}"),
-    }))
+    })
 }
 
 pub(super) struct Quarantine {
