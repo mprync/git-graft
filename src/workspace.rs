@@ -178,16 +178,11 @@ fn spawn(p: &Project, origin: &Path, mut args: Spawn) -> Result<Value> {
             _ => json!({"backend":"empty","files":0,"logical_bytes":0}),
         };
         checkout["objects"] = objects;
-        if base.is_some()
-            && !args.no_checkout
-            && args.sparse.is_empty()
-            && !args.no_deps
-            && let Some(deps) = layer::inherit_shared(&r.path, &p.state, &p.repo)?
-        {
-            checkout["dependencies"] = deps;
-        }
         if base.is_some() && !args.no_checkout && args.sparse.is_empty() && !args.no_deps {
-            let registered = crate::package_manager::attach(p, &r.path)?;
+            if let Some(deps) = layer::inherit_shared(&r.path, &p.state, &p.repo)? {
+                checkout["dependencies"] = deps;
+            }
+            let registered = crate::package_manager::attach(p, &r.path);
             if !registered.is_empty() {
                 checkout["registered_dependencies"] = json!(registered);
             }
@@ -598,7 +593,7 @@ pub fn run(repo: &Path, command: Command) -> Result<Value> {
             let runtime = Runtime::new(&r.path, &p.state, r.port, &r.id)?;
             runtime.prepare_private_directory()?;
             drop(lock);
-            runtime.execute_registered(&a.argv, profile.as_ref())
+            runtime.execute_registered(&a.argv, &profile)
         }
         Command::AddDep(a) => {
             let attached = engine::check_dependency(&r.path, &r.storage["dependencies"], &a)?;

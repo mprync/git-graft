@@ -342,32 +342,47 @@ pub(crate) fn unregister(project: &Project, manager: &str) -> Result<Value> {
     Ok(json!({"manager":name, "registered":false, "cache_retained":true}))
 }
 
-pub(crate) fn attach(project: &Project, checkout: &Path) -> Result<Vec<Value>> {
-    let (state, _) = Managers::read(project)?;
+pub(crate) fn attach(project: &Project, checkout: &Path) -> Vec<Value> {
+    let Ok((state, _)) = Managers::read(project) else {
+        return vec![
+            json!({"manager": null, "status": "unavailable", "reason": "invalid_registration"}),
+        ];
+    };
     state
         .managers
         .values()
         .filter_map(|entry| entry.install.as_ref())
-        .map(|spec| layer::attach_registered(project, checkout, spec))
+        .map(|spec| {
+            layer::attach_registered(project, checkout, spec).unwrap_or_else(|_| {
+            json!({"manager": spec.manager, "status": "unavailable", "reason": "attachment_failed"})
+        })
+        })
         .collect()
 }
 
-pub(crate) struct ExecutionProfile {
-    cache: PathBuf,
-    env: Option<String>,
-    args: Vec<String>,
+pub(crate) enum ManagerSelection {
+    Unregistered,
+    InvalidRegistry,
+    Registered {
+        cache: PathBuf,
+        env: Option<String>,
+        args: Vec<String>,
+    },
 }
 
-impl ExecutionProfile {
+impl ManagerSelection {
     pub(crate) fn configure(&self, command: &mut Command) -> Result<()> {
-        let cache = dunce::simplified(&self.cache);
+        let Self::Registered { cache, env, args } = self else {
+            return Ok(());
+        };
+        let cache = dunce::simplified(cache);
         command.env("GRAFT_PACKAGE_CACHE", cache);
-        if let Some(env) = &self.env {
+        if let Some(env) = env {
             command.env(env, cache);
         }
-        if !self.args.is_empty() {
+        if !args.is_empty() {
             let path = crate::git::path_str(cache)?;
-            command.args(self.args.iter().map(|arg| arg.replace("{cache}", path)));
+            command.args(args.iter().map(|arg| arg.replace("{cache}", path)));
         }
         Ok(())
     }
@@ -377,7 +392,7 @@ pub(crate) fn execution(
     project: &Project,
     selection: Option<&str>,
     program: &str,
-) -> Result<Option<ExecutionProfile>> {
+) -> Result<ManagerSelection> {
     let name = if let Some(selection) = selection {
         identifier(selection)?
     } else {
@@ -385,7 +400,7 @@ pub(crate) fn execution(
             .file_name()
             .and_then(|file| file.to_str())
         else {
-            return Ok(None);
+            return Ok(ManagerSelection::Unregistered);
         };
         let mut file = file.to_ascii_lowercase();
         if cfg!(windows)
@@ -394,23 +409,26 @@ pub(crate) fn execution(
             file.truncate(stem.len());
         }
         if identifier(&file).is_err() {
-            return Ok(None);
+            return Ok(ManagerSelection::Unregistered);
         }
         file
     };
-    let (mut state, _) = Managers::read(project)?;
+    let (mut state, _) = match Managers::read(project) {
+        Err(_) if selection.is_none() => return Ok(ManagerSelection::InvalidRegistry),
+        result => result?,
+    };
     let Some(entry) = state.managers.remove(&name) else {
         ensure!(
             selection.is_none(),
             "package manager {name} is not registered in this project"
         );
-        return Ok(None);
+        return Ok(ManagerSelection::Unregistered);
     };
-    Ok(Some(ExecutionProfile {
+    Ok(ManagerSelection::Registered {
         cache: cache::prepare_registered_cache(project, &name)?,
         env: entry.cache_env,
         args: entry.cache_args,
-    }))
+    })
 }
 
 #[cfg(test)]
@@ -477,6 +495,10 @@ mod tests {
         let args = serde_json::from_value(json!({"manager":"example"}))?;
         assert!(register(&project, tmp.path(), &args).is_err());
         assert!(unregister(&project, "example").is_err());
+        assert_eq!(
+            attach(&project, tmp.path())[0]["reason"],
+            "invalid_registration"
+        );
         assert_eq!(std::fs::read(path)?, foreign);
         assert!(!cache::registered_cache_path(&project, "example").exists());
         Ok(())

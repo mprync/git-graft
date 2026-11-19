@@ -2,6 +2,7 @@
 
 mod managers;
 
+use crate::package_manager::ManagerSelection;
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
 use std::io::{self, Read};
@@ -243,22 +244,25 @@ impl Runtime {
     pub(crate) fn execute_registered(
         &self,
         argv: &[String],
-        profile: Option<&crate::package_manager::ExecutionProfile>,
+        selection: &ManagerSelection,
     ) -> Result<Value> {
         let (program, args) = argv.split_first().context("command must not be empty")?;
         ensure!(!program.is_empty(), "command must not be empty");
         let mut command = Command::new(program);
         self.configure(&mut command)?;
-        if let Some(profile) = profile {
-            profile.configure(&mut command)?;
-        }
+        selection.configure(&mut command)?;
         command.args(args);
-        Self::capture_command(command, program)
+        let mut result = Self::capture_command(command, program)?;
+        if matches!(selection, ManagerSelection::InvalidRegistry) {
+            result["registered_manager"] =
+                json!({"status": "unavailable", "reason": "invalid_registration"});
+        }
+        Ok(result)
     }
 
     #[cfg(test)]
     fn execute(&self, argv: &[String]) -> Result<Value> {
-        self.execute_registered(argv, None)
+        self.execute_registered(argv, &ManagerSelection::Unregistered)
     }
 
     pub(crate) fn install(
