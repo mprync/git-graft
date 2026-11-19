@@ -129,6 +129,7 @@ try {
     const metadata = ['HEAD','index','config','info/exclude'].map(file => [file,readFileSync(join(primary,'.git',file))] as const);
     const before = free();
     const beforeApfs = calibration?.available === true ? observe(root) : undefined;
+    let firstApfs: ReturnType<typeof observe> | undefined;
     const workspacePaths: string[] = [];
     const samples = [0,1].map(index => {
       const name = `agent-${index}`;
@@ -157,6 +158,7 @@ try {
       }
       const storage = receipt ? objectResult(receipt.storage) : undefined;
       const objectStorage = storage ? objectBootstrap(storage.objects,values['include-revisions'] === true) : undefined;
+      if (index === 0 && beforeApfs?.available === true) firstApfs = observe(root);
       return {seconds,resources:useResources ? resources(result.stderr) : null,bytesSincePopulatedCheckout:usedBytes,
         sourceStorage:storage ? sourceReceipt(storage) : undefined,objectBootstrap:objectStorage};
     });
@@ -169,10 +171,12 @@ try {
     for (const [file,expected] of [[staged,'unstaged data\n'],[untracked,'untracked data\n'],[ignored,'ignored data\n']])
       assert.equal(readFileSync(join(primary,file),'utf8'),expected,`Primary data changed: ${file}`);
     const afterApfs = beforeApfs?.available === true ? observe(root) : undefined;
-    const apfs = typeof beforeApfs?.bytes === 'string' && typeof afterApfs?.bytes === 'string'
+    const apfs = typeof beforeApfs?.bytes === 'string' && typeof firstApfs?.bytes === 'string' && typeof afterApfs?.bytes === 'string'
       ? {bytesSincePopulatedCheckout:(BigInt(afterApfs.bytes)-BigInt(beforeApfs.bytes)).toString(),
-        observerSeconds:Number(beforeApfs.observerSeconds)+Number(afterApfs.observerSeconds)}
-      : values['apfs-file-data'] ? {unavailable:calibration?.reason ?? beforeApfs?.reason ?? afterApfs?.reason ?? 'observer-failed'} : undefined;
+        firstCheckoutBytes:(BigInt(firstApfs.bytes)-BigInt(beforeApfs.bytes)).toString(),
+        additionalSecondCheckoutBytes:(BigInt(afterApfs.bytes)-BigInt(firstApfs.bytes)).toString(),
+        observerSeconds:beforeApfs.observerSeconds+firstApfs.observerSeconds+afterApfs.observerSeconds}
+      : values['apfs-file-data'] ? {unavailable:calibration?.reason ?? beforeApfs?.reason ?? firstApfs?.reason ?? afterApfs?.reason ?? 'observer-failed'} : undefined;
     let advanceBase;
     if (values['advance-base']) {
       // Construct a real one-file commit with a temporary index, preserving the
