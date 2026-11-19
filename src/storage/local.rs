@@ -66,7 +66,10 @@ impl<'a> LocalCheckout<'a> {
 
     fn command(&self) -> Command {
         let mut command = git_command(self.worktree);
+        // Let Git compress common path prefixes in the new private index.
         command.env("GIT_INDEX_FILE", &self.index).args([
+            "-c",
+            "index.version=4",
             "-c",
             "core.splitIndex=false",
             "-c",
