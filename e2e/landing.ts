@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, spawn as spawnProcess } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
+import { setTimeout as delay } from 'node:timers/promises';
 import { leaveIndexedCheckoutJournal } from './checkout-journal.ts';
 import type { Scenario } from './harness.ts';
 
@@ -58,6 +59,93 @@ function packageFiles(root: string, item?: { name: string; version: string; sect
 }
 
 export const cases: Scenario[] = [
+  {
+    name: 'interrupted first landing preserves work and retries with the same lease',
+    async run(ctx) {
+      const name = 'interrupted-process';
+      const workspace = ctx.spawn(name);
+      const old = ctx.git(['rev-parse', 'HEAD']);
+      const workspaceHead = ctx.git(['rev-parse', 'HEAD'], workspace.path);
+      write(workspace.path, 'feature.txt', 'private work survives interruption\n');
+      const hooks = join(ctx.root, 'interrupt-hooks');
+      mkdirSync(hooks);
+      const ready = join(ctx.root, 'hook-ready');
+      const release = join(ctx.root, 'hook-release');
+      const done = join(ctx.root, 'hook-done');
+      const hook = join(hooks, 'pre-commit');
+      writeFileSync(hook, '#!/bin/sh\nset -eu\nprintf ready > "$GRAFT_TEST_READY"\ni=0\nwhile [ ! -f "$GRAFT_TEST_RELEASE" ] && [ "$i" -lt 30 ]; do sleep 1; i=$((i+1)); done\nprintf done > "$GRAFT_TEST_DONE"\nexit 1\n');
+      chmodSync(hook, 0o755);
+      ctx.git(['config', '--local', 'core.hooksPath', hooks], workspace.path);
+      const args = landArgs(workspace, name, '--commit', 'commit interrupted work');
+      const env = { ...ctx.env, GRAFT_TEST_READY: ready.replaceAll('\\', '/'),
+        GRAFT_TEST_RELEASE: release.replaceAll('\\', '/'), GRAFT_TEST_DONE: done.replaceAll('\\', '/') };
+      const child = spawnProcess(ctx.bin, ['--repo', ctx.repo, '--json', ...args],
+        { cwd: ctx.repo, env, stdio: 'ignore', windowsHide: true });
+      const exited = new Promise<{code: number | null; signal: NodeJS.Signals | null}>((resolve, reject) => {
+        child.once('error', reject);
+        child.once('exit', (code, signal) => resolve({code, signal}));
+      });
+      const waitForExit = async () => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          return await Promise.race([exited, new Promise<never>((_, reject) => {
+            timer = setTimeout(() => reject(new Error('landing child did not exit')), 10_000);
+          })]);
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
+      };
+      const waitFor = async (condition: () => boolean, label: string, timeout = 20_000) => {
+        const deadline = Date.now() + timeout;
+        while (!condition()) {
+          assert(Date.now() < deadline, `timed out waiting for ${label}`);
+          await delay(50);
+        }
+      };
+      try {
+        await waitFor(() => existsSync(ready) || child.exitCode !== null || child.signalCode !== null, 'pre-commit hook');
+        assert(existsSync(ready), 'landing exited before the pre-commit hook');
+        assert(child.pid, 'landing child has no PID');
+        assert(child.kill('SIGKILL'), 'could not terminate the landing child');
+        const result = await waitForExit();
+        assert.notEqual(result.code, 0, 'interrupted landing unexpectedly succeeded');
+      } finally {
+        writeFileSync(release, 'release\n');
+        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+        await waitForExit();
+        await waitFor(() => !existsSync(join(workspace.path, '.git', 'index.lock')), 'Git commit to release its index lock');
+        if (existsSync(ready)) {
+          await waitFor(() => existsSync(done), 'hook completion');
+        }
+      }
+      assert.equal(ctx.git(['rev-parse', 'HEAD']), old);
+      assert.equal(ctx.git(['for-each-ref', '--format=%(refname)', 'refs/graft']), '');
+      assert.equal(read(ctx.repo, 'tracked.txt'), 'initial\n');
+      assert.equal(existsSync(join(ctx.repo, 'feature.txt')), false);
+      assert.equal(ctx.git(['rev-parse', 'HEAD'], workspace.path), workspaceHead);
+      assert.equal(read(workspace.path, 'feature.txt'), 'private work survives interruption\n');
+      assert.equal(ctx.git(['show', ':feature.txt'], workspace.path), 'private work survives interruption');
+      const plans = join(ctx.git(['rev-parse', '--absolute-git-dir']), 'graft', 'land-plans');
+      const planning = readdirSync(plans).filter(entry => entry.startsWith('.planning-'));
+      assert.equal(planning.length, 1, 'interrupted planning scratch should remain');
+      ctx.git(['config', '--local', '--unset', 'core.hooksPath'], workspace.path);
+      const retry = ctx.command(ctx.bin, ['--repo', ctx.repo, '--json', ...args]);
+      assert.equal(retry.status, 0, retry.error?.message ?? (retry.stderr || retry.stdout));
+      assert(retry.stderr.includes(planning[0]), 'retry should report retained planning scratch');
+      assert(retry.stderr.length < 64 * 1024, 'scratch diagnostic should remain bounded');
+      assert(existsSync(join(plans, planning[0])), 'ambiguous planning scratch must be preserved');
+      const landed = field(JSON.parse(retry.stdout));
+      assert.equal(landed.recovery_lease, workspace.lease);
+      assert.equal(landed.previous, old);
+      assert.equal(read(ctx.repo, 'feature.txt'), 'private work survives interruption\n');
+      ctx.git(['fsck', '--full']);
+      const restored = ctx.cli(['restore', name, '--lease', workspace.lease]);
+      assert.equal(restored.path, workspace.path);
+      assert.equal(ctx.git(['rev-parse', 'HEAD'], workspace.path), landed.workspace_tip);
+      assert.equal(read(workspace.path, 'feature.txt'), 'private work survives interruption\n');
+      ctx.git(['fsck', '--full'], workspace.path);
+    },
+  },
   {
     name: 'landing fast-forward preserves workspace commit',
     run(ctx) {
