@@ -357,16 +357,6 @@ fn native_checkout(
 // Native Git parallelizes only entries whose conversions can run concurrently.
 // Bound the worker pool so simultaneous spawns do not fan out to every CPU.
 const PARALLEL_THRESHOLD: usize = 256;
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-const MIN_CLONE_BYTES: u64 = 128 * 1024;
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-const MIN_SNAPSHOT_BYTES: u64 = 4 * 1024 * 1024;
-
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-fn clone_candidate(entries: &[Entry], entry: &Entry) -> bool {
-    entries.len() < PARALLEL_THRESHOLD
-        || entry.regular() && entry.size.is_some_and(|size| size >= MIN_CLONE_BYTES)
-}
 
 fn parallel_checkout(mut command: Command) -> Command {
     let workers = std::thread::available_parallelism().map_or(1, |count| count.get().min(4));
@@ -419,13 +409,11 @@ impl<'a> Checkout<'a> {
         let settings = {
             let git_version = git(worktree, &["version"])?;
             let mut identity = blake3::Hasher::new();
-            identity.update(b"git-graft-checkout-v5\0");
+            identity.update(b"git-graft-checkout-v6\0");
             identity.update(std::env::consts::OS.as_bytes());
-            identity.update(&MIN_CLONE_BYTES.to_le_bytes());
             identity.update(&git_version.stdout);
             identity.update(&out.stdout);
-            // A parent's files can only be reused under the same committed
-            // rules, even if its snapshot omits small .gitattributes files.
+            // A parent's files can only be reused under the same committed rules.
             for entry in entries.iter().filter(|entry| entry.attributes()) {
                 identity.update(&entry.name);
                 identity.update(b"\0");
@@ -483,11 +471,6 @@ impl<'a> Checkout<'a> {
         #[cfg(any(target_os = "macos", target_os = "linux"))]
         let command = self.frozen.configure(command, self.worktree, self.oid);
         command
-    }
-
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    fn cache_entry(&self, entry: &Entry) -> bool {
-        clone_candidate(self.entries, entry)
     }
 }
 
@@ -689,20 +672,6 @@ fn materialize_checkout(
     if !sparse.is_empty() {
         return native_checkout(worktree, oid, sparse, &entries, "sparse checkout");
     }
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    if entries.is_empty()
-        || (entries.len() >= PARALLEL_THRESHOLD
-            && entries
-                .iter()
-                .filter(|entry| clone_candidate(&entries, entry))
-                .filter_map(|entry| entry.size)
-                .fold(0u64, u64::saturating_add)
-                < MIN_SNAPSHOT_BYTES)
-    {
-        // A snapshot adds a stat pass over the whole tree. Below this
-        // aggregate savings threshold, a single native checkout is cheaper.
-        return native_checkout(worktree, oid, sparse, &entries, "limited clone savings");
-    }
     let checkout = Checkout::read(worktree, oid, &entries)?;
     if let Some(reason) = conversion_reason(&checkout)? {
         return native_checkout(worktree, oid, sparse, &entries, reason);
@@ -826,7 +795,7 @@ fn prepare(checkout: &Checkout<'_>, state: &Path, primary: Option<&Path>) -> Res
             .records()
             .iter()
             .map(|record| &record.entry)
-            .eq(entries.iter().filter(|entry| checkout.cache_entry(entry))),
+            .eq(entries.iter()),
         "source snapshot differs from the Git tree"
     );
     let staging = tempfile::Builder::new()
@@ -848,22 +817,6 @@ fn prepare(checkout: &Checkout<'_>, state: &Path, primary: Option<&Path>) -> Res
         stage_parent(&target, &mut directory)?;
         if let Some(size) = snapshot.clone_record(record, &destination, &target, mode)? {
             receipt.cloned.add(size);
-        }
-    }
-    if snapshot.records().len() != entries.len() {
-        let missing = || entries.iter().filter(|entry| !checkout.cache_entry(entry));
-        staged.run(
-            &["checkout-index", "--index", "--stdin", "-z"],
-            Some(path_input(missing())?),
-        )?;
-        for entry in missing().filter(|entry| entry.regular()) {
-            receipt.private.add(
-                if let Some(size) = entry.size.filter(|_| !checkout.may_convert_eol) {
-                    size
-                } else {
-                    destination.regular_size(entry.path()?)?
-                },
-            );
         }
     }
     Ok(Prepared { staging, receipt })
@@ -919,11 +872,7 @@ fn build_snapshot(
 ) -> Result<cache::Snapshot> {
     use std::collections::{BTreeMap, BTreeSet};
     let oid = checkout_settings.oid;
-    let entries: Vec<_> = checkout_settings
-        .entries
-        .iter()
-        .filter(|entry| checkout_settings.cache_entry(entry))
-        .collect();
+    let entries: Vec<_> = checkout_settings.entries.iter().collect();
     let base_parent = base.parent().context("missing snapshot directory")?;
     let staging = tempfile::Builder::new()
         .prefix(".building-")
@@ -1332,7 +1281,7 @@ mod tests {
     }
 
     #[test]
-    fn large_tree_uses_git_for_small_files_and_clones_verified_large_files() {
+    fn large_tree_clones_verified_files_and_preserves_conversions() {
         let (temp, repo, _) = fixture();
         let state = temp.path().join("state");
         fs::create_dir(&state).unwrap();
@@ -1385,38 +1334,29 @@ mod tests {
             }
             assert!(!workspace.join("sub/ignored").exists());
             if probe(&state, &workspace).unwrap() {
-                assert_eq!(receipt["cloned_files"], 2, "{receipt}");
-                assert_eq!(receipt["snapshot_reused"], warm, "{receipt}");
-                assert_eq!(
-                    receipt["primary_reused_files"],
-                    u64::from(!warm) * 2,
+                assert!(
+                    receipt["cloned_files"].as_u64().unwrap() >= PARALLEL_THRESHOLD as u64 + 2,
                     "{receipt}"
                 );
-                assert!(receipt["private_files"].as_u64().unwrap() >= PARALLEL_THRESHOLD as u64);
+                assert_eq!(receipt["snapshot_reused"], warm, "{receipt}");
+                if warm {
+                    assert_eq!(receipt["private_files"], 0, "{receipt}");
+                } else {
+                    assert!(
+                        receipt["primary_reused_files"].as_u64().unwrap() >= 2,
+                        "{receipt}"
+                    );
+                    assert!(
+                        receipt["private_files"].as_u64().unwrap() >= PARALLEL_THRESHOLD as u64,
+                        "{receipt}"
+                    );
+                }
             }
             fs::write(workspace.join("sub/large"), b"workspace edit").unwrap();
         }
         assert_eq!(fs::read(repo.join("sub/large")).unwrap(), large);
         assert_eq!(fs::read(repo.join("sub/small-0")).unwrap(), b"private\n");
         assert_eq!(fs::read(repo.join("sub/ignored")).unwrap(), b"private\n");
-
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
-        {
-            let medium = vec![0xa5; MIN_CLONE_BYTES as usize];
-            fs::write(repo.join("sub/large"), &medium).unwrap();
-            fs::write(repo.join("top-level-large"), &medium).unwrap();
-            command(&repo, &["add", "sub/large", "top-level-large"]);
-            command(&repo, &["commit", "-qm", "below clone savings threshold"]);
-            let oid = command(&repo, &["rev-parse", "HEAD"]);
-            let workspace = temp.path().join("mixed-native");
-            independent(&repo, &workspace);
-            let receipt = materialize(&workspace, &state, &oid, &[], &repo).unwrap();
-            assert_eq!(receipt["backend"], "git", "{receipt}");
-            assert_eq!(receipt["reason"], "limited clone savings", "{receipt}");
-            assert!(!state.join("bases").join(&oid).exists());
-            assert_eq!(fs::read(workspace.join("sub/large")).unwrap(), medium);
-            assert_eq!(command(&workspace, &["diff-files", "--quiet"]), "");
-        }
     }
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]

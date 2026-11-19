@@ -43,6 +43,49 @@ function nativeCloneAvailable(root: string): boolean | null {
 
 export const cases: Scenario[] = [
   {
+    name: 'many small source files share verified data and stay isolated',
+    run(ctx) {
+      ctx.git(['config', 'core.symlinks', 'true']);
+      const count = 320;
+      mkdirSync(join(ctx.repo, 'small'));
+      for (let i = 0; i < count; i++) writeFileSync(join(ctx.repo, 'small', `${i}.txt`), `committed ${i}\n`);
+      ctx.git(['add', '.']);
+      ctx.git(['commit', '-qm', 'many small files']);
+      writeFileSync(join(ctx.repo, 'small/0.txt'), 'wrong bytes!\n');
+      writeFileSync(join(ctx.repo, 'small/1.txt'), 'staged bytes\n');
+      ctx.git(['add', 'small/1.txt']);
+      writeFileSync(join(ctx.repo, 'small/2.txt'), 'unstaged data\n');
+      mkdirSync(join(ctx.repo, 'ignored'));
+      writeFileSync(join(ctx.repo, 'ignored/private'), 'secret');
+      const status = ctx.git(['status', '--porcelain']);
+      const first = ctx.spawn('small-cold');
+      const second = ctx.spawn('small-warm');
+      const cold = receipt(first.result), warm = receipt(second.result);
+      const probe = object(ctx.cli(['doctor']).source_storage).native_clone;
+      if (probe) {
+        assert.equal(cold.backend, process.platform === 'darwin' ? 'clonefile' : 'reflink');
+        assert.equal(cold.cloned_files, count + 2); // includes the fixture's tracked.txt and .gitignore
+        assert.equal(cold.private_files, 3);
+        assert.equal(cold.private_bytes, Buffer.byteLength('committed 0\ncommitted 1\ncommitted 2\n'));
+        assert.equal(cold.primary_reused_files, count - 3 + 2);
+        assert.equal(warm.cloned_files, count + 2);
+        assert.equal(warm.private_files, 0);
+        assert.equal(warm.snapshot_reused, true);
+      } else assert.equal(cold.backend, 'git');
+      for (const workspace of [first, second]) {
+        for (let i = 0; i < count; i++) assert.equal(readFileSync(join(workspace.path, 'small', `${i}.txt`), 'utf8'), `committed ${i}\n`);
+        assert.equal(existsSync(join(workspace.path, 'ignored/private')), false);
+        assert.equal(ctx.git(['status', '--porcelain'], workspace.path), '');
+        ctx.git(['fsck', '--full'], workspace.path);
+      }
+      writeFileSync(join(first.path, 'small/3.txt'), 'workspace edit');
+      assert.equal(readFileSync(join(second.path, 'small/3.txt'), 'utf8'), 'committed 3\n');
+      assert.equal(readFileSync(join(ctx.repo, 'small/3.txt'), 'utf8'), 'committed 3\n');
+      assert.equal(ctx.git(['status', '--porcelain']), status);
+      assert.equal(readFileSync(join(ctx.repo, 'ignored/private'), 'utf8'), 'secret');
+    },
+  },
+  {
     name: 'source clone checkout isolation and parent reuse',
     run(ctx) {
       const large = Buffer.alloc(3 * 1024 * 1024, 97);
