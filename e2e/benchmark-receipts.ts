@@ -12,7 +12,7 @@ export function objectBootstrap(value: unknown, includeRevisions = true): Record
     const field = input[key];
     if (typeof field === 'string' && allowed.includes(field)) safe[key] = field;
   }
-  for (const key of ['bytes','pack_bytes','index_bytes','shared_bytes','cache_bytes','pack_count','new_pack_count','reused_primary_packs','reused_primary_bytes','filtered_primary_packs','filtered_unchanged_bytes']) {
+  for (const key of ['bytes','pack_bytes','index_bytes','loose_bytes','shared_bytes','cache_bytes','pack_count','loose_count','new_pack_count','reused_primary_packs','reused_primary_bytes','filtered_primary_packs','filtered_unchanged_bytes']) {
     const field = input[key];
     if (typeof field === 'number' && Number.isSafeInteger(field) && field >= 0) safe[key] = field;
   }

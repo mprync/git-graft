@@ -1,7 +1,7 @@
 /** Compare release CLI processes on disposable local clones of a real repository.
  * node e2e/real-source-bench.ts [--repo /opt/homebrew] [--bin PATH]
  *   [--output PATH] [--apfs-file-data] [--rounds N] [--advance-base] [--include-revisions]
- *   [--history local|isolated] [--clean-primary]
+ *   [--history local|isolated] [--project-history local|isolated] [--clean-primary] [--no-deps]
  * The source is read only. Local clones copy the original pack files without repacking;
  * all configuration, branches, and test commits are created in temporary repositories.
  */
@@ -14,16 +14,19 @@ import { parseArgs } from 'node:util';
 import { Context, objectResult } from './harness.ts';
 import { objectBootstrap } from './benchmark-receipts.ts';
 
-const {values} = parseArgs({options:{repo:{type:'string'},bin:{type:'string'},output:{type:'string'},history:{type:'string'},
-  rounds:{type:'string'},'apfs-file-data':{type:'boolean'},'advance-base':{type:'boolean'},'include-revisions':{type:'boolean'},'clean-primary':{type:'boolean'}}});
+const {values} = parseArgs({options:{repo:{type:'string'},bin:{type:'string'},output:{type:'string'},history:{type:'string'},'project-history':{type:'string'},
+  rounds:{type:'string'},'apfs-file-data':{type:'boolean'},'advance-base':{type:'boolean'},'include-revisions':{type:'boolean'},'clean-primary':{type:'boolean'},'no-deps':{type:'boolean'}}});
 const repo = resolve(values.repo ?? '/opt/homebrew');
 const bin = resolve(values.bin ?? process.env.GIT_GRAFT_BIN ?? join(import.meta.dirname,'../target/release',
   process.platform === 'win32' ? 'git-graft.exe' : 'git-graft'));
 const output = resolve(values.output ?? 'target/e2e/real-source-bench.json');
 const rounds = Number(values.rounds ?? 4);
 const history = values.history;
+const projectHistory = values['project-history'];
+assert(projectHistory === undefined || projectHistory === 'isolated' || projectHistory === 'local', 'Expected local or isolated project history');
 assert(history === undefined || history === 'isolated' || history === 'local', 'Expected local or isolated history');
 const historyArgs = history ? ['--history', history] : [];
+const dependencyArgs = values['no-deps'] ? ['--no-deps'] : [];
 assert(Number.isSafeInteger(rounds) && rounds > 0, '--rounds must be a positive integer');
 assert(existsSync(bin) && /^git-graft(?:\.exe)?$/i.test(basename(bin)), 'Expected release git-graft executable');
 assert(existsSync(repo), 'Source repository does not exist');
@@ -113,6 +116,7 @@ try {
     command(['remote','remove','origin'],primary);
     command(['checkout','--quiet','--detach',head],primary);
     command(['config','gc.auto','0'],primary);
+    if (projectHistory) command(['config','--local','graft.history',projectHistory],primary);
     const cloneSeconds = (performance.now()-cloneStart)/1000;
     const branch = command(['commit-tree',`${head}^{tree}`,'-p',head,'-m',`unrelated benchmark commit ${round}`],primary);
     command(['update-ref','refs/heads/unrelated-benchmark',branch],primary);
@@ -150,7 +154,7 @@ try {
     const checkHistory = (path: string, storage: Record<string,unknown>) => {
       const objects = objectResult(storage.objects);
       const local = objects.source === 'local-snapshot';
-      if (history === 'isolated') assert(!local, 'Isolated checkout used the whole donor database');
+      if ((history ?? projectHistory ?? 'isolated') === 'isolated') assert(!local, 'Isolated checkout used the whole donor database');
       for (const oid of [branch,...(existingUnrelated ? [existingUnrelated] : [])]) {
         const read = fixture.command('git',['cat-file','-e',oid],path);
         if (local) assert.equal(read.status,0,'Local snapshot lost a primary Git object');
@@ -162,7 +166,7 @@ try {
       const name = `agent-${index}`;
       const target = join(root,name);
       const args = arm === 'native' ? ['worktree','add','-b',`graft/${name}`,target,head]
-        : ['graft','--repo',primary,'--json','spawn',name,...historyArgs,'--base',head,'--no-deps'];
+        : ['graft','--repo',primary,'--json','spawn',name,...historyArgs,'--base',head,...dependencyArgs];
       const start = performance.now();
       const result = useResources ? fixture.command('/usr/bin/time',[...timeArgs,'git',...args],primary)
         : fixture.command('git',args,primary);
@@ -243,7 +247,7 @@ try {
       const beforeAdvance = free();
       const target = join(root,'agent-2');
       const args = arm === 'native' ? ['worktree','add','-b','graft/agent-2',target,advanced]
-        : ['graft','--repo',primary,'--json','spawn','agent-2',...historyArgs,'--no-deps'];
+        : ['graft','--repo',primary,'--json','spawn','agent-2',...historyArgs,...dependencyArgs];
       const start = performance.now();
       const result = useResources ? fixture.command('/usr/bin/time',[...timeArgs,'git',...args],primary)
         : fixture.command('git',args,primary);
@@ -314,6 +318,7 @@ try {
       commits:Number(command(['rev-list','--count',head],template)),hasUnrelatedSourceCommit:Boolean(existingUnrelated)},
     preparation:{templateCloneSeconds:prepSeconds,method:'local clone --no-hardlinks; source pack layout preserved; no source configuration copied'},
     requestedHistory:history ?? 'default',primaryCheckout:values['clean-primary'] ? 'clean' : 'dirty',apfsCalibration:calibration,summary,runs,
+    projectHistory,dependencyDiscovery:!values['no-deps'],
     scope:'Each round starts from a fresh populated clone. Spawn timings include the entire CLI process and cold object setup. The first git status is timed separately for each workspace. Clone preparation and advanced commit creation are outside both timers. Checks verify source contents, primary state and object visibility for the actual history mode. Signed statfs deltas cover the volume. Separately timed APFS scans can warm caches and exclude metadata, forks and xattrs.'};
   mkdirSync(dirname(output),{recursive:true});
   writeFileSync(output,JSON.stringify(report,null,2)+'\n');
