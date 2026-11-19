@@ -312,7 +312,8 @@ fn land_workspace(p: &Project, opts: &api::Land) -> Result<Value> {
         if opts.reconcile {
             crate::cache::prepare_package_roots(p)?;
         }
-        let plan = land::prepare(p, &r.path, opts)?;
+        let installations = crate::package_manager::attached_directories(&r.storage)?;
+        let plan = land::prepare(p, &r.path, opts, &installations)?;
         r.plan = Some(plan.clone());
         registry::save(p, &r)?;
         plan

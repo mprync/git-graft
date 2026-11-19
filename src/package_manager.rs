@@ -360,6 +360,30 @@ pub(crate) fn attach(project: &Project, checkout: &Path) -> Vec<Value> {
         .collect()
 }
 
+/// A workspace keeps its attachment receipts even if the project registration
+/// is later changed, unregistered or purged.
+pub(crate) fn attached_directories(storage: &Value) -> Result<Vec<&str>> {
+    let mut directories = Vec::new();
+    if storage["dependencies"]["status"] == "attached" {
+        directories.push("node_modules");
+    }
+    if let Some(registered) = storage.get("registered_dependencies") {
+        for receipt in registered
+            .as_array()
+            .context("invalid installed dependency receipts")?
+        {
+            if receipt["status"] == "attached" {
+                let directory = receipt["directory"]
+                    .as_str()
+                    .context("missing installed dependency directory")?;
+                validate_relative(directory)?;
+                directories.push(directory);
+            }
+        }
+    }
+    Ok(directories)
+}
+
 pub(crate) enum ManagerSelection {
     Unregistered,
     InvalidRegistry,

@@ -197,7 +197,12 @@ fn store_for_plan(p: &Project, plan: &Plan) -> Result<PathBuf> {
 }
 
 /// Plan and durably pin both inputs and the result inside the owned bare store.
-pub(crate) fn prepare(p: &Project, workspace: &Path, options: &Land) -> Result<Plan> {
+pub(crate) fn prepare(
+    p: &Project,
+    workspace: &Path,
+    options: &Land,
+    installations: &[&str],
+) -> Result<Plan> {
     let root = stores(p, true)?;
     scratch::recover(p, &root)?;
     let (name, store, stage) = open_store(p, &root)?;
@@ -257,6 +262,7 @@ pub(crate) fn prepare(p: &Project, workspace: &Path, options: &Land) -> Result<P
         &p.state,
         options,
         planning_store,
+        installations,
         |old, workspace_tip| {
             base = Some(old.to_owned());
             tip = Some(workspace_tip.to_owned());
@@ -516,7 +522,7 @@ mod tests {
         }
 
         fn plan(&self) -> Result<Plan> {
-            prepare(&self.p, &self.workspace, &self.options)
+            prepare(&self.p, &self.workspace, &self.options, &[])
         }
 
         fn plan_squash(&self, p: &Project, contents: &str) -> Result<Plan> {
@@ -526,7 +532,7 @@ mod tests {
                 commit: Some("Commit private changes".into()),
                 ..Self::options()
             };
-            prepare(p, &self.workspace, &options)
+            prepare(p, &self.workspace, &options, &[])
         }
 
         fn sync_base(&self, oid: &str) {

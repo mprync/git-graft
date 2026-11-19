@@ -182,13 +182,60 @@ fn index_entries(bytes: &[u8]) -> Result<BTreeMap<&[u8], &[u8]>> {
         .collect()
 }
 
-fn stage_workspace(workspace: &Path) -> Result<()> {
+fn stage_workspace(workspace: &Path, installations: &[&str]) -> Result<()> {
     let admin = git::absolute_git_dir(workspace)?;
     let _lock = checkout::IndexLock::create(
         admin.join("index.lock"),
         format!("git-graft staging {}\n", uuid::Uuid::new_v4()),
     )?;
     git::check_idle_with_locks(workspace, true, false)?;
+    // Ask Git about the recorded directories, respecting the current checkout's
+    // ignore rules. Refuse before writing an index or importing package data.
+    let staging_git = || {
+        let mut command = git::command(workspace);
+        for key in [
+            "GIT_LITERAL_PATHSPECS",
+            "GIT_GLOB_PATHSPECS",
+            "GIT_NOGLOB_PATHSPECS",
+            "GIT_ICASE_PATHSPECS",
+        ] {
+            command.env_remove(key);
+        }
+        command
+    };
+    if !installations.is_empty() {
+        let changes = staging_git()
+            .args([
+                "--no-optional-locks",
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "core.untrackedCache=false",
+                "status",
+                "--porcelain=v1",
+                "-z",
+                "--untracked-files=normal",
+                "--no-renames",
+                "--ignore-submodules=none",
+                "--",
+            ])
+            .args(
+                installations
+                    .iter()
+                    .map(|path| format!(":(top,literal,icase){path}")),
+            )
+            .output()?;
+        if !changes.status.success() {
+            return Err(git_failure("inspect installed dependency paths", &changes));
+        }
+        if !changes.stdout.is_empty() {
+            return Err(fault(
+                "registered_install_exposed",
+                "Automatic staging would include installed dependencies. Restore their ignore rules or explicitly commit your intended files with Git.",
+                json!({"directories": installations}),
+            ));
+        }
+    }
     let staged = reject_partially_staged(workspace)?;
     let index = admin.join("index");
     let temporary = tempfile::tempdir_in(&admin)?;
@@ -202,7 +249,7 @@ fn stage_workspace(workspace: &Path) -> Result<()> {
         git::bytes(workspace, &["ls-files", "--stage", "-z"])?
     };
     let private_index = || {
-        let mut command = git::command(workspace);
+        let mut command = staging_git();
         command.env("GIT_INDEX_FILE", &next).args([
             "--no-replace-objects",
             "-c",
@@ -212,6 +259,13 @@ fn stage_workspace(workspace: &Path) -> Result<()> {
     };
     let output = private_index()
         .args(["add", "--sparse", "-A", "--", ":/"])
+        // An ignore rule can change after the status check. Exclude installed
+        // directories from the staging command itself as well.
+        .args(
+            installations
+                .iter()
+                .map(|path| format!(":(top,exclude,literal,icase){path}")),
+        )
         .output()?;
     if !output.status.success() {
         return Err(git_failure("stage workspace changes", &output));
@@ -329,6 +383,7 @@ pub(crate) fn prepare_with_import(
     state: &Path,
     options: &Land,
     objects: &Path,
+    installations: &[&str],
     import: impl FnOnce(&str, &str) -> Result<()>,
 ) -> Result<Plan> {
     let target = options.into.clone();
@@ -343,7 +398,7 @@ pub(crate) fn prepare_with_import(
         if message.trim().is_empty() {
             bail!("--commit requires a nonempty commit message");
         }
-        stage_workspace(workspace)?;
+        stage_workspace(workspace, installations)?;
         let output = git::raw(
             workspace,
             &["--no-replace-objects", "commit", "-m", message],
