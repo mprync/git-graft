@@ -15,8 +15,8 @@
   },
   "git": "git version 2.56.0",
   "binary": {
-    "bytes": 4132576,
-    "sha256": "0d79a77bb80b6c879db7eb473b7f12882f6b6b27c1ae2753e7eb1c5ae3c9786a"
+    "bytes": 4149136,
+    "sha256": "8ec6551387865d57811f13f10100af59c267dfa3e27c1e4b68f44fc91fbd3ff4"
   },
   "source": {
     "head": "bc63375ac3a4d6debb1ceb441ae6e22854f0909a",
@@ -27,31 +27,31 @@
     "hasUnrelatedSourceCommit": true
   },
   "preparation": {
-    "templateCloneSeconds": 0.992587792,
+    "templateCloneSeconds": 0.482738333,
     "method": "local clone --no-hardlinks; source pack layout preserved; no source configuration copied"
   },
   "requestedHistory": "default",
   "primaryCheckout": "clean",
   "apfsCalibration": {
     "available": true,
-    "observerSeconds": 0.19567183299999988
+    "observerSeconds": 0.19008054200000005
   },
   "summary": {
     "native": {
-      "coldSeconds": 0.5010169999999996,
-      "repeatSeconds": 0.6277843124999998,
-      "coldBytes": 31891456,
-      "repeatBytes": 63408128,
-      "advanceBaseSeconds": 0.5864587710000005,
-      "advanceBaseDeltaBytes": 31780864
+      "coldSeconds": 0.3723066039999987,
+      "repeatSeconds": 0.3198794999999989,
+      "coldBytes": 31760384,
+      "repeatBytes": 63547392,
+      "advanceBaseSeconds": 0.3155385415000012,
+      "advanceBaseDeltaBytes": 31832064
     },
     "graft": {
-      "coldSeconds": 0.8956452499999996,
-      "repeatSeconds": 0.7307141669999984,
-      "coldBytes": 2691072,
-      "repeatBytes": 5316608,
-      "advanceBaseSeconds": 0.9547033960000008,
-      "advanceBaseDeltaBytes": 1988608
+      "coldSeconds": 0.5870020830000002,
+      "repeatSeconds": 0.5447542914999994,
+      "coldBytes": 3450880,
+      "repeatBytes": 5558272,
+      "advanceBaseSeconds": 0.6009306040000011,
+      "advanceBaseDeltaBytes": 1806336
     }
   },
   "runs": [
@@ -62,62 +62,62 @@
       ],
       "results": {
         "native": {
-          "cloneSeconds": 0.821821583,
+          "cloneSeconds": 0.4559798750000001,
           "cold": {
-            "seconds": 0.6192947920000001,
-            "firstStatusSeconds": 0.04549887500000022,
+            "seconds": 0.34935483299999986,
+            "firstStatusSeconds": 0.10665887500000008,
             "resources": {
               "userSeconds": 0.05,
-              "systemSeconds": 0.32,
-              "peakRssBytes": 52576256
+              "systemSeconds": 0.23,
+              "peakRssBytes": 52166656
             },
-            "bytesSincePopulatedCheckout": "31772672"
+            "bytesSincePopulatedCheckout": "31600640"
           },
           "repeat": {
-            "seconds": 0.5917255419999997,
-            "firstStatusSeconds": 0.05799191700000029,
+            "seconds": 0.3211647079999998,
+            "firstStatusSeconds": 0.11579383299999972,
             "resources": {
               "userSeconds": 0.05,
-              "systemSeconds": 0.28,
-              "peakRssBytes": 52297728
+              "systemSeconds": 0.24,
+              "peakRssBytes": 52772864
             },
-            "bytesSincePopulatedCheckout": "63393792"
+            "bytesSincePopulatedCheckout": "63373312"
           },
           "apfs": {
             "bytesSincePopulatedCheckout": "59883520",
             "firstCheckoutBytes": "29941760",
             "additionalSecondCheckoutBytes": "29941760",
-            "observerSeconds": 1.111203958
+            "observerSeconds": 0.9493683329999998
           },
           "advanceBase": {
             "head": "73a700d99706046b1e36786b8014bf7ae16d5209",
             "tree": "4441712f94eca9b2dc47a82c3959a0e4c696034a",
-            "preparationSeconds": 0.10506379099999959,
-            "seconds": 0.5746880000000001,
-            "firstStatusSeconds": 0.14999312499999998,
+            "preparationSeconds": 0.16789937499999996,
+            "seconds": 0.3080912080000003,
+            "firstStatusSeconds": 0.11657283300000017,
             "resources": {
               "userSeconds": 0.05,
-              "systemSeconds": 0.29,
-              "peakRssBytes": 51888128
+              "systemSeconds": 0.24,
+              "peakRssBytes": 51838976
             },
-            "deltaBytes": "31625216",
+            "deltaBytes": "32325632",
             "apfs": {
               "additionalCheckoutBytes": "29945856",
-              "observerSeconds": 1.0563073329999988
+              "observerSeconds": 0.9624632510000002
             }
           }
         },
         "graft": {
-          "cloneSeconds": 0.8673570419999996,
+          "cloneSeconds": 0.41924216700000033,
           "cold": {
-            "seconds": 0.8999767910000009,
-            "firstStatusSeconds": 0.5108198749999993,
+            "seconds": 0.6209120000000002,
+            "firstStatusSeconds": 0.40400124999999937,
             "resources": {
               "userSeconds": 0.11,
-              "systemSeconds": 1.12,
-              "peakRssBytes": 17022976
+              "systemSeconds": 0.95,
+              "peakRssBytes": 16891904
             },
-            "bytesSincePopulatedCheckout": "1486848",
+            "bytesSincePopulatedCheckout": "4911104",
             "sourceStorage": {
               "backend": "clonefile",
               "cloned_files": 3318,
@@ -143,14 +143,14 @@
             }
           },
           "repeat": {
-            "seconds": 0.8026937089999993,
-            "firstStatusSeconds": 0.4844315830000014,
+            "seconds": 0.5683755409999994,
+            "firstStatusSeconds": 0.3901374999999989,
             "resources": {
               "userSeconds": 0.11,
-              "systemSeconds": 1.09,
+              "systemSeconds": 0.92,
               "peakRssBytes": 17022976
             },
-            "bytesSincePopulatedCheckout": "3502080",
+            "bytesSincePopulatedCheckout": "7278592",
             "sourceStorage": {
               "backend": "clonefile",
               "cloned_files": 3318,
@@ -187,23 +187,23 @@
               "records": "69632",
               "primaryChange": "0"
             },
-            "observerSeconds": 1.372616999
+            "observerSeconds": 1.1819059580000002
           },
           "advanceBase": {
             "head": "73a700d99706046b1e36786b8014bf7ae16d5209",
             "tree": "4441712f94eca9b2dc47a82c3959a0e4c696034a",
-            "preparationSeconds": 0.19627058299999953,
-            "seconds": 1.2383127920000006,
-            "firstStatusSeconds": 0.5582647499999984,
+            "preparationSeconds": 0.1879771669999991,
+            "seconds": 0.6545810410000013,
+            "firstStatusSeconds": 0.38219808399999966,
             "resources": {
-              "userSeconds": 0.12,
-              "systemSeconds": 2.23,
-              "peakRssBytes": 17088512
+              "userSeconds": 0.11,
+              "systemSeconds": 1.13,
+              "peakRssBytes": 17055744
             },
-            "deltaBytes": "1777664",
+            "deltaBytes": "1757184",
             "apfs": {
               "additionalCheckoutBytes": "315392",
-              "observerSeconds": 1.1671708739999995
+              "observerSeconds": 0.9690563330000004
             },
             "sourceStorage": {
               "backend": "clonefile",
@@ -239,16 +239,16 @@
       ],
       "results": {
         "graft": {
-          "cloneSeconds": 0.5172052079999994,
+          "cloneSeconds": 0.42215479099999903,
           "cold": {
-            "seconds": 0.8913137089999982,
-            "firstStatusSeconds": 0.436203125,
+            "seconds": 0.5530921660000003,
+            "firstStatusSeconds": 0.3432368750000005,
             "resources": {
-              "userSeconds": 0.11,
-              "systemSeconds": 1,
-              "peakRssBytes": 16891904
+              "userSeconds": 0.1,
+              "systemSeconds": 0.88,
+              "peakRssBytes": 17006592
             },
-            "bytesSincePopulatedCheckout": "3895296",
+            "bytesSincePopulatedCheckout": "1990656",
             "sourceStorage": {
               "backend": "clonefile",
               "cloned_files": 3318,
@@ -274,14 +274,14 @@
             }
           },
           "repeat": {
-            "seconds": 0.6587346249999974,
-            "firstStatusSeconds": 0.3810939580000013,
+            "seconds": 0.5211330419999994,
+            "firstStatusSeconds": 0.3338162919999995,
             "resources": {
-              "userSeconds": 0.11,
-              "systemSeconds": 0.97,
-              "peakRssBytes": 17006592
+              "userSeconds": 0.1,
+              "systemSeconds": 0.86,
+              "peakRssBytes": 17022976
             },
-            "bytesSincePopulatedCheckout": "7131136",
+            "bytesSincePopulatedCheckout": "3837952",
             "sourceStorage": {
               "backend": "clonefile",
               "cloned_files": 3318,
@@ -318,23 +318,23 @@
               "records": "69632",
               "primaryChange": "0"
             },
-            "observerSeconds": 1.3128594990000018
+            "observerSeconds": 1.2176082500000012
           },
           "advanceBase": {
             "head": "73a700d99706046b1e36786b8014bf7ae16d5209",
             "tree": "4441712f94eca9b2dc47a82c3959a0e4c696034a",
-            "preparationSeconds": 0.18421929199999795,
-            "seconds": 0.671094000000001,
-            "firstStatusSeconds": 0.43316083300000174,
+            "preparationSeconds": 0.20249962500000038,
+            "seconds": 0.5472801670000008,
+            "firstStatusSeconds": 0.3330455409999995,
             "resources": {
               "userSeconds": 0.11,
-              "systemSeconds": 0.98,
-              "peakRssBytes": 17055744
+              "systemSeconds": 0.88,
+              "peakRssBytes": 16973824
             },
-            "deltaBytes": "2199552",
+            "deltaBytes": "1855488",
             "apfs": {
               "additionalCheckoutBytes": "315392",
-              "observerSeconds": 1.0745226249999977
+              "observerSeconds": 1.046141125000002
             },
             "sourceStorage": {
               "backend": "clonefile",
@@ -362,48 +362,48 @@
           }
         },
         "native": {
-          "cloneSeconds": 0.6637763330000016,
+          "cloneSeconds": 0.7795461250000008,
           "cold": {
-            "seconds": 0.38273920799999905,
-            "firstStatusSeconds": 0.13152379199999994,
+            "seconds": 0.3952583749999976,
+            "firstStatusSeconds": 0.11394366699999955,
             "resources": {
               "userSeconds": 0.05,
-              "systemSeconds": 0.25,
-              "peakRssBytes": 52133888
+              "systemSeconds": 0.28,
+              "peakRssBytes": 52248576
             },
-            "bytesSincePopulatedCheckout": "32010240"
+            "bytesSincePopulatedCheckout": "31920128"
           },
           "repeat": {
-            "seconds": 0.6638430829999997,
-            "firstStatusSeconds": 0.14324454199999673,
+            "seconds": 0.31859429199999795,
+            "firstStatusSeconds": 0.10812924999999814,
             "resources": {
               "userSeconds": 0.05,
-              "systemSeconds": 0.27,
-              "peakRssBytes": 52609024
+              "systemSeconds": 0.23,
+              "peakRssBytes": 52035584
             },
-            "bytesSincePopulatedCheckout": "63422464"
+            "bytesSincePopulatedCheckout": "63721472"
           },
           "apfs": {
             "bytesSincePopulatedCheckout": "59883520",
             "firstCheckoutBytes": "29941760",
             "additionalSecondCheckoutBytes": "29941760",
-            "observerSeconds": 1.0520800010000022
+            "observerSeconds": 0.9253730830000022
           },
           "advanceBase": {
             "head": "73a700d99706046b1e36786b8014bf7ae16d5209",
             "tree": "4441712f94eca9b2dc47a82c3959a0e4c696034a",
-            "preparationSeconds": 0.19664016699999776,
-            "seconds": 0.598229542000001,
-            "firstStatusSeconds": 0.13847416599999998,
+            "preparationSeconds": 0.12644933299999683,
+            "seconds": 0.32298587500000214,
+            "firstStatusSeconds": 0.03070379099999991,
             "resources": {
               "userSeconds": 0.05,
-              "systemSeconds": 0.28,
-              "peakRssBytes": 51986432
+              "systemSeconds": 0.25,
+              "peakRssBytes": 51838976
             },
-            "deltaBytes": "31936512",
+            "deltaBytes": "31338496",
             "apfs": {
               "additionalCheckoutBytes": "29945856",
-              "observerSeconds": 1.0398288749999993
+              "observerSeconds": 0.9487295830000002
             }
           }
         }

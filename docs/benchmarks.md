@@ -6,12 +6,12 @@ These runs started from disposable local copies of Homebrew `bc63375ac3a4` on ma
 
 | Clean primary, median of five fresh runs | Graft | Native worktree |
 | --- | ---: | ---: |
-| First checkout | 0.644 s | 0.337 s |
-| Repeat at the same commit | 0.579 s | 0.329 s |
-| Third checkout after a one-file commit | 0.614 s | 0.337 s |
-| First checkout followed by first Git status | 1.015 s | 0.446 s |
+| First checkout | 0.654 s | 0.328 s |
+| Repeat at the same commit | 0.524 s | 0.346 s |
+| Third checkout after a one-file commit | 0.541 s | 0.354 s |
+| First checkout followed by first Git status | 1.062 s | 0.394 s |
 
-The last row is the median of the paired command times. The first status checks the cloned files against Git’s index. In a separate three-round run with staged, unstaged, untracked and ignored donor files, first checkout took 0.652 s for Graft and 0.317 s for a worktree. Both checkouts were clean and the donor retained its changes. [Clean timing samples](measurements/macos-arm64/homebrew-local-clean-timing.json) · [Dirty timing samples](measurements/macos-arm64/homebrew-local-dirty-timing.json)
+The last row is the median of the paired command times. The first status checks the cloned files against Git’s index. Median first-spawn user and system CPU times were 0.11 s and 0.95 s for Graft, and 0.05 s and 0.23 s for Git. Peak RSS medians were 17.0 MB and 52.2 MB respectively. In a separate three-round run with staged, unstaged, untracked and ignored donor files, first checkout took 0.608 s for Graft and 0.297 s for a worktree. Both checkouts were clean and the donor retained its changes. [Clean timing samples](measurements/macos-arm64/homebrew-local-clean-timing.json) · [Dirty timing samples](measurements/macos-arm64/homebrew-local-dirty-timing.json)
 
 | Additional APFS file data | Graft | Native worktree |
 | --- | ---: | ---: |
@@ -23,6 +23,12 @@ The last row is the median of the paired command times. The first status checks 
 All 3,318 regular source files and all four packs shared data blocks with the primary. For two grafts, the private Git v4 indexes accounted for 573,440 bytes and administrative files for the remaining 69,632 bytes. Git compresses common path prefixes in its v4 index. This saved 303,104 bytes across the two indexes compared with v2. The physical observer counts unique file extents after the initial status check. Filesystem metadata, resource forks and extended attributes are outside its scope. The physical results matched on two clean rounds and one dirty round. [Clean disk samples](measurements/macos-arm64/homebrew-local-clean-apfs.json) · [Dirty disk samples](measurements/macos-arm64/homebrew-local-dirty-apfs.json)
 
 To reproduce the clean timing run, use `npm run bench:source:real -- --repo /path/to/Homebrew/brew --project-history local --clean-primary --rounds 5 --advance-base --include-revisions`. Run the physical observer separately with `--apfs-file-data` and a different `--output` path. The reports identify the executable by SHA-256.
+
+The volume-wide first-checkout space change in the clean timing runs had a median of 1.89 MB for Graft and 31.60 MB for Git. This includes filesystem metadata for the new paths and any other activity on the volume. The 327,680-byte file-data measurement above counts blocks attributable to the fixture.
+
+### Durable snapshot writes
+
+The APFS local backend waits for writeback of each private object file and child directory, then issues one hardware flush before publishing the snapshot. In four alternating pairs of fresh Homebrew clones, this reduced median first spawn from 0.690 s to 0.623 s. In three pairs on a fixture with 256 newly committed files and 259 loose Git objects, it reduced median first spawn from 1.721 s to 0.317 s. Every run verified the checkout and the primary. [Paired release samples](measurements/macos-arm64/local-snapshot-writeback.json)
 
 ## Isolated history on the previous release
 

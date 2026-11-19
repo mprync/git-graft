@@ -15,8 +15,8 @@
   },
   "git": "git version 2.56.0",
   "binary": {
-    "bytes": 4132576,
-    "sha256": "0d79a77bb80b6c879db7eb473b7f12882f6b6b27c1ae2753e7eb1c5ae3c9786a"
+    "bytes": 4149136,
+    "sha256": "8ec6551387865d57811f13f10100af59c267dfa3e27c1e4b68f44fc91fbd3ff4"
   },
   "source": {
     "head": "bc63375ac3a4d6debb1ceb441ae6e22854f0909a",
@@ -27,31 +27,31 @@
     "hasUnrelatedSourceCommit": true
   },
   "preparation": {
-    "templateCloneSeconds": 0.470861541,
+    "templateCloneSeconds": 0.51456725,
     "method": "local clone --no-hardlinks; source pack layout preserved; no source configuration copied"
   },
   "requestedHistory": "default",
   "primaryCheckout": "dirty",
   "apfsCalibration": {
     "available": true,
-    "observerSeconds": 0.18324400000000002
+    "observerSeconds": 0.15325387499999998
   },
   "summary": {
     "native": {
-      "coldSeconds": 0.35609908399999995,
-      "repeatSeconds": 0.3021503749999997,
-      "coldBytes": 31748096,
-      "repeatBytes": 63422464,
-      "advanceBaseSeconds": 0.3189168329999998,
-      "advanceBaseDeltaBytes": 31551488
+      "coldSeconds": 0.4375050839999999,
+      "repeatSeconds": 0.3330937079999999,
+      "coldBytes": 36880384,
+      "repeatBytes": 68616192,
+      "advanceBaseSeconds": 0.32714566600000033,
+      "advanceBaseDeltaBytes": 31617024
     },
     "graft": {
-      "coldSeconds": 0.6652502079999995,
-      "repeatSeconds": 0.564292708,
-      "coldBytes": 2064384,
-      "repeatBytes": 4009984,
-      "advanceBaseSeconds": 0.6635189999999984,
-      "advanceBaseDeltaBytes": 1916928
+      "coldSeconds": 0.5901953329999997,
+      "repeatSeconds": 0.5009413750000004,
+      "coldBytes": 1941504,
+      "repeatBytes": 3981312,
+      "advanceBaseSeconds": 0.5191931249999998,
+      "advanceBaseDeltaBytes": 1933312
     }
   },
   "runs": [
@@ -62,62 +62,62 @@
       ],
       "results": {
         "native": {
-          "cloneSeconds": 0.443981583,
+          "cloneSeconds": 0.5008275830000001,
           "cold": {
-            "seconds": 0.35609908399999995,
-            "firstStatusSeconds": 0.09313262499999996,
+            "seconds": 0.4375050839999999,
+            "firstStatusSeconds": 0.10782537499999989,
             "resources": {
               "userSeconds": 0.05,
-              "systemSeconds": 0.25,
-              "peakRssBytes": 52199424
+              "systemSeconds": 0.26,
+              "peakRssBytes": 52330496
             },
-            "bytesSincePopulatedCheckout": "31748096"
+            "bytesSincePopulatedCheckout": "36880384"
           },
           "repeat": {
-            "seconds": 0.3021503749999997,
-            "firstStatusSeconds": 0.11838795900000014,
+            "seconds": 0.3330937079999999,
+            "firstStatusSeconds": 0.1134091669999998,
             "resources": {
               "userSeconds": 0.05,
-              "systemSeconds": 0.24,
-              "peakRssBytes": 52166656
+              "systemSeconds": 0.26,
+              "peakRssBytes": 52379648
             },
-            "bytesSincePopulatedCheckout": "63422464"
+            "bytesSincePopulatedCheckout": "68616192"
           },
           "apfs": {
             "bytesSincePopulatedCheckout": "59883520",
             "firstCheckoutBytes": "29941760",
             "additionalSecondCheckoutBytes": "29941760",
-            "observerSeconds": 0.9277938329999995
+            "observerSeconds": 0.9659697509999998
           },
           "advanceBase": {
             "head": "73a700d99706046b1e36786b8014bf7ae16d5209",
             "tree": "4441712f94eca9b2dc47a82c3959a0e4c696034a",
-            "preparationSeconds": 0.15647849999999972,
-            "seconds": 0.3189168329999998,
-            "firstStatusSeconds": 0.10888108299999931,
+            "preparationSeconds": 0.07105108299999983,
+            "seconds": 0.32714566600000033,
+            "firstStatusSeconds": 0.10659037499999977,
             "resources": {
               "userSeconds": 0.05,
-              "systemSeconds": 0.25,
-              "peakRssBytes": 51658752
+              "systemSeconds": 0.26,
+              "peakRssBytes": 51789824
             },
-            "deltaBytes": "31551488",
+            "deltaBytes": "31617024",
             "apfs": {
               "additionalCheckoutBytes": "29945856",
-              "observerSeconds": 0.8537919589999997
+              "observerSeconds": 0.9269727079999999
             }
           }
         },
         "graft": {
-          "cloneSeconds": 0.44867745800000014,
+          "cloneSeconds": 0.4616558750000004,
           "cold": {
-            "seconds": 0.6652502079999995,
-            "firstStatusSeconds": 0.4038981249999997,
+            "seconds": 0.5901953329999997,
+            "firstStatusSeconds": 0.38479887500000043,
             "resources": {
               "userSeconds": 0.11,
-              "systemSeconds": 0.9,
-              "peakRssBytes": 17006592
+              "systemSeconds": 0.86,
+              "peakRssBytes": 16924672
             },
-            "bytesSincePopulatedCheckout": "2064384",
+            "bytesSincePopulatedCheckout": "1941504",
             "sourceStorage": {
               "backend": "clonefile",
               "cloned_files": 3318,
@@ -143,14 +143,14 @@
             }
           },
           "repeat": {
-            "seconds": 0.564292708,
-            "firstStatusSeconds": 0.40321416700000007,
+            "seconds": 0.5009413750000004,
+            "firstStatusSeconds": 0.37242029100000035,
             "resources": {
               "userSeconds": 0.1,
-              "systemSeconds": 0.88,
-              "peakRssBytes": 16875520
+              "systemSeconds": 0.87,
+              "peakRssBytes": 17006592
             },
-            "bytesSincePopulatedCheckout": "4009984",
+            "bytesSincePopulatedCheckout": "3981312",
             "sourceStorage": {
               "backend": "clonefile",
               "cloned_files": 3318,
@@ -187,23 +187,23 @@
               "records": "69632",
               "primaryChange": "0"
             },
-            "observerSeconds": 1.132728624999998
+            "observerSeconds": 1.180252375
           },
           "advanceBase": {
             "head": "73a700d99706046b1e36786b8014bf7ae16d5209",
             "tree": "4441712f94eca9b2dc47a82c3959a0e4c696034a",
-            "preparationSeconds": 0.1660594170000004,
-            "seconds": 0.6635189999999984,
-            "firstStatusSeconds": 0.4841218750000007,
+            "preparationSeconds": 0.17035925000000135,
+            "seconds": 0.5191931249999998,
+            "firstStatusSeconds": 0.37193091599999933,
             "resources": {
-              "userSeconds": 0.11,
-              "systemSeconds": 1.03,
-              "peakRssBytes": 17072128
+              "userSeconds": 0.1,
+              "systemSeconds": 0.88,
+              "peakRssBytes": 17055744
             },
-            "deltaBytes": "1916928",
+            "deltaBytes": "1933312",
             "apfs": {
               "additionalCheckoutBytes": "315392",
-              "observerSeconds": 0.9638612510000002
+              "observerSeconds": 1.089144542
             },
             "sourceStorage": {
               "backend": "clonefile",
