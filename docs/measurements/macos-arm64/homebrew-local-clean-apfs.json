@@ -1,0 +1,416 @@
+{
+  "schemaVersion": 1,
+  "platform": "darwin",
+  "architecture": "arm64",
+  "node": "v24.5.0",
+  "operatingSystem": {
+    "type": "Darwin",
+    "release": "25.5.0",
+    "version": "Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:15 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T6041"
+  },
+  "resourceObserver": {
+    "tool": "/usr/bin/time",
+    "format": "bsd",
+    "scope": "Per CLI command; user and system CPU seconds and peak RSS. Includes the time wrapper; child accounting is OS-specific and is not simultaneous process-tree memory."
+  },
+  "git": "git version 2.56.0",
+  "binary": {
+    "bytes": 4132576,
+    "sha256": "e0a980e6645dbfc899ea71fbcd576abe3ae81014ceae16e35d964b59c81c9ec7"
+  },
+  "source": {
+    "head": "bc63375ac3a4d6debb1ceb441ae6e22854f0909a",
+    "tree": "ee570b9dbb122c6b6f0f609b83402c1f8eaca195",
+    "packCount": 4,
+    "packBytes": 130939998,
+    "commits": 53716,
+    "hasUnrelatedSourceCommit": true
+  },
+  "preparation": {
+    "templateCloneSeconds": 0.7275550829999999,
+    "method": "local clone --no-hardlinks; source pack layout preserved; no source configuration copied"
+  },
+  "requestedHistory": "default",
+  "primaryCheckout": "clean",
+  "apfsCalibration": {
+    "available": true,
+    "observerSeconds": 0.234434083
+  },
+  "summary": {
+    "native": {
+      "coldSeconds": 0.4754832500000016,
+      "repeatSeconds": 0.57924625,
+      "coldBytes": 48869376,
+      "repeatBytes": 113844224,
+      "advanceBaseSeconds": 0.5198153960000009,
+      "advanceBaseDeltaBytes": 40710144
+    },
+    "graft": {
+      "coldSeconds": 0.9068653120000008,
+      "repeatSeconds": 0.7240473754999985,
+      "coldBytes": 47708160,
+      "repeatBytes": 144865280,
+      "advanceBaseSeconds": 0.8514547915000004,
+      "advanceBaseDeltaBytes": 53680128
+    }
+  },
+  "runs": [
+    {
+      "order": [
+        "native",
+        "graft"
+      ],
+      "results": {
+        "native": {
+          "cloneSeconds": 0.7405399170000001,
+          "cold": {
+            "seconds": 0.5929827500000001,
+            "firstStatusSeconds": 0.13799712499999986,
+            "resources": {
+              "userSeconds": 0.05,
+              "systemSeconds": 0.29,
+              "peakRssBytes": 52527104
+            },
+            "bytesSincePopulatedCheckout": "32862208"
+          },
+          "repeat": {
+            "seconds": 0.5430682499999998,
+            "firstStatusSeconds": 0.04027691600000025,
+            "resources": {
+              "userSeconds": 0.05,
+              "systemSeconds": 0.29,
+              "peakRssBytes": 52625408
+            },
+            "bytesSincePopulatedCheckout": "63705088"
+          },
+          "apfs": {
+            "bytesSincePopulatedCheckout": "59883520",
+            "firstCheckoutBytes": "29941760",
+            "additionalSecondCheckoutBytes": "29941760",
+            "observerSeconds": 1.1447592930000001
+          },
+          "advanceBase": {
+            "head": "73a700d99706046b1e36786b8014bf7ae16d5209",
+            "tree": "4441712f94eca9b2dc47a82c3959a0e4c696034a",
+            "preparationSeconds": 0.2074417079999994,
+            "seconds": 0.5909040839999998,
+            "firstStatusSeconds": 0.03225724999999966,
+            "resources": {
+              "userSeconds": 0.05,
+              "systemSeconds": 0.28,
+              "peakRssBytes": 51658752
+            },
+            "deltaBytes": "31522816",
+            "apfs": {
+              "additionalCheckoutBytes": "29945856",
+              "observerSeconds": 1.109050749000001
+            }
+          }
+        },
+        "graft": {
+          "cloneSeconds": 1.6080914999999996,
+          "cold": {
+            "seconds": 0.9039994160000006,
+            "firstStatusSeconds": 0.4482579999999998,
+            "resources": {
+              "userSeconds": 0.11,
+              "systemSeconds": 1.25,
+              "peakRssBytes": 16973824
+            },
+            "bytesSincePopulatedCheckout": "5517312",
+            "sourceStorage": {
+              "backend": "clonefile",
+              "cloned_files": 3318,
+              "cloned_bytes": 20536136,
+              "private_files": 0,
+              "private_bytes": 0,
+              "primary_reused_files": 3318,
+              "primary_reused_bytes": 20536136,
+              "snapshot_reused": false
+            },
+            "objectBootstrap": {
+              "method": "clonefile",
+              "source": "local-snapshot",
+              "object_format": "sha1",
+              "bytes": 141372050,
+              "pack_bytes": 130939998,
+              "index_bytes": 10431880,
+              "loose_bytes": 172,
+              "shared_bytes": 141372050,
+              "cache_bytes": 0,
+              "pack_count": 4,
+              "loose_count": 1
+            }
+          },
+          "repeat": {
+            "seconds": 0.7303384589999987,
+            "firstStatusSeconds": 0.43523462499999915,
+            "resources": {
+              "userSeconds": 0.11,
+              "systemSeconds": 0.98,
+              "peakRssBytes": 17039360
+            },
+            "bytesSincePopulatedCheckout": "60358656",
+            "sourceStorage": {
+              "backend": "clonefile",
+              "cloned_files": 3318,
+              "cloned_bytes": 20536136,
+              "private_files": 0,
+              "private_bytes": 0,
+              "primary_reused_files": 3318,
+              "primary_reused_bytes": 20536136,
+              "snapshot_reused": false
+            },
+            "objectBootstrap": {
+              "method": "clonefile",
+              "source": "local-snapshot",
+              "object_format": "sha1",
+              "bytes": 141372050,
+              "pack_bytes": 130939998,
+              "index_bytes": 10431880,
+              "loose_bytes": 172,
+              "shared_bytes": 141372050,
+              "cache_bytes": 0,
+              "pack_count": 4,
+              "loose_count": 1
+            }
+          },
+          "apfs": {
+            "bytesSincePopulatedCheckout": "946176",
+            "firstCheckoutBytes": "479232",
+            "additionalSecondCheckoutBytes": "466944",
+            "fileDataByPurpose": {
+              "historyPacks": "0",
+              "historyIndexes": "0",
+              "checkoutIndexes": "876544",
+              "sourceFiles": "0",
+              "records": "69632",
+              "primaryChange": "0"
+            },
+            "observerSeconds": 1.3798627499999983
+          },
+          "advanceBase": {
+            "head": "73a700d99706046b1e36786b8014bf7ae16d5209",
+            "tree": "4441712f94eca9b2dc47a82c3959a0e4c696034a",
+            "preparationSeconds": 0.16500812500000028,
+            "seconds": 0.8374711659999994,
+            "firstStatusSeconds": 0.43250108399999954,
+            "resources": {
+              "userSeconds": 0.11,
+              "systemSeconds": 1.05,
+              "peakRssBytes": 16973824
+            },
+            "deltaBytes": "53596160",
+            "apfs": {
+              "additionalCheckoutBytes": "466944",
+              "observerSeconds": 1.0660125829999998
+            },
+            "sourceStorage": {
+              "backend": "clonefile",
+              "cloned_files": 3319,
+              "cloned_bytes": 20536157,
+              "private_files": 0,
+              "private_bytes": 0,
+              "primary_reused_files": 3319,
+              "primary_reused_bytes": 20536157,
+              "snapshot_reused": false
+            },
+            "objectBootstrap": {
+              "method": "clonefile",
+              "source": "local-snapshot",
+              "object_format": "sha1",
+              "bytes": 141373237,
+              "pack_bytes": 130939998,
+              "index_bytes": 10431880,
+              "loose_bytes": 1359,
+              "shared_bytes": 141373237,
+              "cache_bytes": 0,
+              "pack_count": 4,
+              "loose_count": 4
+            }
+          }
+        }
+      }
+    },
+    {
+      "order": [
+        "graft",
+        "native"
+      ],
+      "results": {
+        "graft": {
+          "cloneSeconds": 0.8034774170000019,
+          "cold": {
+            "seconds": 0.9097312080000011,
+            "firstStatusSeconds": 0.5818475829999988,
+            "resources": {
+              "userSeconds": 0.11,
+              "systemSeconds": 1.06,
+              "peakRssBytes": 16859136
+            },
+            "bytesSincePopulatedCheckout": "89899008",
+            "sourceStorage": {
+              "backend": "clonefile",
+              "cloned_files": 3318,
+              "cloned_bytes": 20536136,
+              "private_files": 0,
+              "private_bytes": 0,
+              "primary_reused_files": 3318,
+              "primary_reused_bytes": 20536136,
+              "snapshot_reused": false
+            },
+            "objectBootstrap": {
+              "method": "clonefile",
+              "source": "local-snapshot",
+              "object_format": "sha1",
+              "bytes": 141372050,
+              "pack_bytes": 130939998,
+              "index_bytes": 10431880,
+              "loose_bytes": 172,
+              "shared_bytes": 141372050,
+              "cache_bytes": 0,
+              "pack_count": 4,
+              "loose_count": 1
+            }
+          },
+          "repeat": {
+            "seconds": 0.7177562919999982,
+            "firstStatusSeconds": 0.5220797089999978,
+            "resources": {
+              "userSeconds": 0.11,
+              "systemSeconds": 1.08,
+              "peakRssBytes": 16957440
+            },
+            "bytesSincePopulatedCheckout": "229371904",
+            "sourceStorage": {
+              "backend": "clonefile",
+              "cloned_files": 3318,
+              "cloned_bytes": 20536136,
+              "private_files": 0,
+              "private_bytes": 0,
+              "primary_reused_files": 3318,
+              "primary_reused_bytes": 20536136,
+              "snapshot_reused": false
+            },
+            "objectBootstrap": {
+              "method": "clonefile",
+              "source": "local-snapshot",
+              "object_format": "sha1",
+              "bytes": 141372050,
+              "pack_bytes": 130939998,
+              "index_bytes": 10431880,
+              "loose_bytes": 172,
+              "shared_bytes": 141372050,
+              "cache_bytes": 0,
+              "pack_count": 4,
+              "loose_count": 1
+            }
+          },
+          "apfs": {
+            "bytesSincePopulatedCheckout": "946176",
+            "firstCheckoutBytes": "479232",
+            "additionalSecondCheckoutBytes": "466944",
+            "fileDataByPurpose": {
+              "historyPacks": "0",
+              "historyIndexes": "0",
+              "checkoutIndexes": "876544",
+              "sourceFiles": "0",
+              "records": "69632",
+              "primaryChange": "0"
+            },
+            "observerSeconds": 1.3100491670000047
+          },
+          "advanceBase": {
+            "head": "73a700d99706046b1e36786b8014bf7ae16d5209",
+            "tree": "4441712f94eca9b2dc47a82c3959a0e4c696034a",
+            "preparationSeconds": 0.2052457089999989,
+            "seconds": 0.8654384170000012,
+            "firstStatusSeconds": 0.4602844589999986,
+            "resources": {
+              "userSeconds": 0.11,
+              "systemSeconds": 1.2,
+              "peakRssBytes": 16891904
+            },
+            "deltaBytes": "53764096",
+            "apfs": {
+              "additionalCheckoutBytes": "466944",
+              "observerSeconds": 1.1037696670000041
+            },
+            "sourceStorage": {
+              "backend": "clonefile",
+              "cloned_files": 3319,
+              "cloned_bytes": 20536157,
+              "private_files": 0,
+              "private_bytes": 0,
+              "primary_reused_files": 3319,
+              "primary_reused_bytes": 20536157,
+              "snapshot_reused": false
+            },
+            "objectBootstrap": {
+              "method": "clonefile",
+              "source": "local-snapshot",
+              "object_format": "sha1",
+              "bytes": 141373237,
+              "pack_bytes": 130939998,
+              "index_bytes": 10431880,
+              "loose_bytes": 1359,
+              "shared_bytes": 141373237,
+              "cache_bytes": 0,
+              "pack_count": 4,
+              "loose_count": 4
+            }
+          }
+        },
+        "native": {
+          "cloneSeconds": 1.0518522919999995,
+          "cold": {
+            "seconds": 0.35798375000000304,
+            "firstStatusSeconds": 0.1226834170000002,
+            "resources": {
+              "userSeconds": 0.05,
+              "systemSeconds": 0.27,
+              "peakRssBytes": 52150272
+            },
+            "bytesSincePopulatedCheckout": "64876544"
+          },
+          "repeat": {
+            "seconds": 0.61542425,
+            "firstStatusSeconds": 0.12925220900000203,
+            "resources": {
+              "userSeconds": 0.05,
+              "systemSeconds": 0.39,
+              "peakRssBytes": 52428800
+            },
+            "bytesSincePopulatedCheckout": "163983360"
+          },
+          "apfs": {
+            "bytesSincePopulatedCheckout": "59883520",
+            "firstCheckoutBytes": "29941760",
+            "additionalSecondCheckoutBytes": "29941760",
+            "observerSeconds": 1.100299791999998
+          },
+          "advanceBase": {
+            "head": "73a700d99706046b1e36786b8014bf7ae16d5209",
+            "tree": "4441712f94eca9b2dc47a82c3959a0e4c696034a",
+            "preparationSeconds": 0.1863133749999979,
+            "seconds": 0.448726708000002,
+            "firstStatusSeconds": 0.22687283300000127,
+            "resources": {
+              "userSeconds": 0.05,
+              "systemSeconds": 0.32,
+              "peakRssBytes": 52166656
+            },
+            "deltaBytes": "49897472",
+            "apfs": {
+              "additionalCheckoutBytes": "29945856",
+              "observerSeconds": 1.0548692490000031
+            }
+          }
+        }
+      }
+    }
+  ],
+  "projectHistory": "local",
+  "dependencyDiscovery": true,
+  "scope": "Each round starts from a fresh populated clone. Spawn timings include the entire CLI process and cold object setup. The first git status is timed separately for each workspace. Clone preparation and advanced commit creation are outside both timers. Checks verify source contents, primary state and object visibility for the actual history mode. Signed statfs deltas cover the volume. Separately timed APFS scans can warm caches and exclude metadata, forks and xattrs."
+}

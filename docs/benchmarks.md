@@ -1,6 +1,30 @@
 # Release benchmarks
 
-## Disk use with two active workspaces
+## Local history on a populated Homebrew clone
+
+These runs started from disposable local copies of Homebrew `bc63375ac3a4` on macOS arm64/APFS with Git 2.56.0. Each primary had `graft.history=local`. Timing covers the ordinary release CLI process with dependency discovery enabled, including first-use initialization. No cache was seeded. Each workspace had its own Git repository and staging index.
+
+| Clean primary, median of five fresh runs | Graft | Native worktree |
+| --- | ---: | ---: |
+| First checkout | 0.815 s | 0.337 s |
+| Repeat at the same commit | 0.595 s | 0.340 s |
+| Third checkout after a one-file commit | 0.619 s | 0.322 s |
+| First checkout followed by first Git status | 1.181 s | 0.442 s |
+
+The last row is the median of the paired command times. The first status checks the cloned files against Git’s index. In a separate three-round run with staged, unstaged, untracked and ignored donor files, first checkout took 0.694 s for Graft and 0.605 s for a worktree. Both checkouts were clean and the donor retained its changes. [Clean timing samples](measurements/macos-arm64/homebrew-local-clean-timing.json) · [Dirty timing samples](measurements/macos-arm64/homebrew-local-dirty-timing.json)
+
+| Additional APFS file data | Graft | Native worktree |
+| --- | ---: | ---: |
+| First checkout | 479,232 bytes | 29,941,760 bytes |
+| Second checkout, incremental | 466,944 bytes | 29,941,760 bytes |
+| Two active checkouts, total | 946,176 bytes | 59,883,520 bytes |
+| Third checkout after a one-file commit, incremental | 466,944 bytes | 29,945,856 bytes |
+
+All 3,318 regular source files and all four packs shared data blocks with the primary. For two grafts, the checkout indexes accounted for 876,544 bytes and administrative files for the remaining 69,632 bytes. The physical observer counts unique file extents after the initial status check. Filesystem metadata, resource forks and extended attributes are outside its scope. The physical results matched on two clean rounds and one dirty round. [Clean disk samples](measurements/macos-arm64/homebrew-local-clean-apfs.json) · [Dirty disk samples](measurements/macos-arm64/homebrew-local-dirty-apfs.json)
+
+To reproduce the clean timing run, use `npm run bench:source:real -- --repo /path/to/Homebrew/brew --project-history local --clean-primary --rounds 5 --advance-base --include-revisions`. Run the physical observer separately with `--apfs-file-data` and a different `--output` path. The reports identify the executable by SHA-256.
+
+## Isolated history on the previous release
 
 Each benchmark starts with one populated primary checkout. “Additional file data” is the increase in unique physical file blocks across the entire fixture. It includes both task checkouts, their private Git files, and Graft’s shared project caches. MB means 1,000,000 bytes.
 

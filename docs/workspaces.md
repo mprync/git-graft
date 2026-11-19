@@ -10,7 +10,9 @@ On a compatible volume, a regular tracked file gets its own writable file identi
 
 If the selected commit itself tracks a symlink, Git's normal checkout rules apply. A trusted npm layer can also contain relative symlinks such as a package's command in `node_modules/.bin`. The layer checks that these links resolve inside the installation.
 
-Git stores earlier revisions separately from checked-out files, often with several branches mixed into one pack. Graft reuses whole eligible packs. For a suitable mixed pack it keeps the selected records at their existing offsets, rebuilds the index and asks Git to verify the result. Layouts outside its time, memory or filesystem limits use Git’s selective export. The first graft pays for any private base data. Later grafts at the same revision can share that verified base.
+Git stores earlier revisions separately from checked-out files, often with several branches mixed into one pack. With `--history local`, an eligible full clone supplies its existing packs, pack indexes and loose objects through copy-on-write. The new repository can read even unreferenced objects already in that clone. Repacking the primary leaves the snapshot intact.
+
+With the default isolated history, Graft reuses whole eligible packs. For a suitable mixed pack it keeps the selected records at their existing offsets, rebuilds the index and asks Git to verify the result. Other layouts use Git’s selective export. Later isolated grafts at the same revision can share the verified base.
 
 An agent can register a manager’s package cache, an installed directory or both. A cache stores packages per project and can hold multiple versions. A compatible installed directory gives each graft writable files backed by the existing data blocks. Adding a package writes its new data and whatever manifests, lockfiles or existing packages the resolver changes. The spawn receipt reports the source backend and each installation attachment. [Dependency setup](operations.md#register-a-package-manager) · [Measured space per checkout](benchmarks.md#disk-use-with-two-active-workspaces)
 
