@@ -1,0 +1,287 @@
+{
+  "fixture": "Fresh clean Homebrew bc63375ac3a4 local clones, macOS arm64 APFS, Git 2.56.0, --history tip",
+  "measurement": "Six alternating release pairs. Each CLI invocation includes project setup and dependency discovery. A separate run measures unique file extents after first status. Filesystem metadata is outside that measure.",
+  "release": {
+    "before": {
+      "bytes": 4149152,
+      "sha256": "d41d66f1b23234ee1ff94a9d2e8cfc4f2a3447e3985bd6f6d3d4a8fc907b860b"
+    },
+    "after": {
+      "bytes": 4165840,
+      "sha256": "0a0abc3ef326211e2bf32dad1bcbf8c481ccff52606c8aeec9e2091c18fabe20"
+    }
+  },
+  "pairs": [
+    {
+      "before": {
+        "graftCold": 0.7640373330000002,
+        "nativeCold": 0.40846745799999984,
+        "graftRepeat": 0.4537071249999999,
+        "nativeRepeat": 0.384450333,
+        "graftFirstStatus": 0.39910179199999946,
+        "nativeFirstStatus": 0.12623141699999996,
+        "graftResources": {
+          "userSeconds": 0.52,
+          "systemSeconds": 0.97,
+          "peakRssBytes": 77479936
+        },
+        "nativeResources": {
+          "userSeconds": 0.05,
+          "systemSeconds": 0.29,
+          "peakRssBytes": 52281344
+        }
+      },
+      "after": {
+        "graftCold": 0.6614616660000001,
+        "nativeCold": 0.37463770799999996,
+        "graftRepeat": 0.48486725000000025,
+        "nativeRepeat": 0.3913183330000002,
+        "graftFirstStatus": 0.400268,
+        "nativeFirstStatus": 0.15923412499999995,
+        "graftResources": {
+          "userSeconds": 0.55,
+          "systemSeconds": 1.09,
+          "peakRssBytes": 78184448
+        },
+        "nativeResources": {
+          "userSeconds": 0.05,
+          "systemSeconds": 0.26,
+          "peakRssBytes": 52396032
+        }
+      }
+    },
+    {
+      "before": {
+        "graftCold": 0.9132999999999992,
+        "nativeCold": 0.47351537499999996,
+        "graftRepeat": 0.5881527500000002,
+        "nativeRepeat": 0.5592539579999998,
+        "graftFirstStatus": 0.5231801250000008,
+        "nativeFirstStatus": 0.15114579200000025,
+        "graftResources": {
+          "userSeconds": 0.52,
+          "systemSeconds": 1.35,
+          "peakRssBytes": 78987264
+        },
+        "nativeResources": {
+          "userSeconds": 0.05,
+          "systemSeconds": 0.33,
+          "peakRssBytes": 52428800
+        }
+      },
+      "after": {
+        "graftCold": 0.6106768749999997,
+        "nativeCold": 0.4575804999999998,
+        "graftRepeat": 0.47183791599999947,
+        "nativeRepeat": 0.4301254160000003,
+        "graftFirstStatus": 0.4109975000000004,
+        "nativeFirstStatus": 0.0315473750000001,
+        "graftResources": {
+          "userSeconds": 0.55,
+          "systemSeconds": 0.98,
+          "peakRssBytes": 78954496
+        },
+        "nativeResources": {
+          "userSeconds": 0.05,
+          "systemSeconds": 0.29,
+          "peakRssBytes": 52510720
+        }
+      }
+    },
+    {
+      "before": {
+        "graftCold": 0.7687632080000003,
+        "nativeCold": 0.3876861670000001,
+        "graftRepeat": 0.48197770899999975,
+        "nativeRepeat": 0.3908787080000002,
+        "graftFirstStatus": 0.4092784579999998,
+        "nativeFirstStatus": 0.128358708,
+        "graftResources": {
+          "userSeconds": 0.53,
+          "systemSeconds": 1.06,
+          "peakRssBytes": 78430208
+        },
+        "nativeResources": {
+          "userSeconds": 0.05,
+          "systemSeconds": 0.29,
+          "peakRssBytes": 52477952
+        }
+      },
+      "after": {
+        "graftCold": 0.639361292,
+        "nativeCold": 0.35691941700000007,
+        "graftRepeat": 0.45858670799999984,
+        "nativeRepeat": 0.3877323750000001,
+        "graftFirstStatus": 0.4487570000000005,
+        "nativeFirstStatus": 0.13697741700000005,
+        "graftResources": {
+          "userSeconds": 0.56,
+          "systemSeconds": 1.06,
+          "peakRssBytes": 77987840
+        },
+        "nativeResources": {
+          "userSeconds": 0.05,
+          "systemSeconds": 0.27,
+          "peakRssBytes": 52527104
+        }
+      }
+    },
+    {
+      "before": {
+        "graftCold": 0.7704845420000002,
+        "nativeCold": 0.3795456670000001,
+        "graftRepeat": 0.4865232500000002,
+        "nativeRepeat": 0.372083625,
+        "graftFirstStatus": 0.44164837499999976,
+        "nativeFirstStatus": 0.11815145899999993,
+        "graftResources": {
+          "userSeconds": 0.54,
+          "systemSeconds": 1.02,
+          "peakRssBytes": 77643776
+        },
+        "nativeResources": {
+          "userSeconds": 0.05,
+          "systemSeconds": 0.29,
+          "peakRssBytes": 52346880
+        }
+      },
+      "after": {
+        "graftCold": 0.6103551670000001,
+        "nativeCold": 0.3535762500000001,
+        "graftRepeat": 0.46085166599999955,
+        "nativeRepeat": 0.35456391699999995,
+        "graftFirstStatus": 0.40740700000000013,
+        "nativeFirstStatus": 0.1386813750000001,
+        "graftResources": {
+          "userSeconds": 0.55,
+          "systemSeconds": 0.96,
+          "peakRssBytes": 77135872
+        },
+        "nativeResources": {
+          "userSeconds": 0.05,
+          "systemSeconds": 0.27,
+          "peakRssBytes": 52297728
+        }
+      }
+    },
+    {
+      "before": {
+        "graftCold": 0.8086161250000005,
+        "nativeCold": 0.36074966700000005,
+        "graftRepeat": 0.48169954099999995,
+        "nativeRepeat": 0.36233562499999994,
+        "graftFirstStatus": 0.4247683340000003,
+        "nativeFirstStatus": 0.0880429999999999,
+        "graftResources": {
+          "userSeconds": 0.53,
+          "systemSeconds": 1.03,
+          "peakRssBytes": 79167488
+        },
+        "nativeResources": {
+          "userSeconds": 0.05,
+          "systemSeconds": 0.26,
+          "peakRssBytes": 52314112
+        }
+      },
+      "after": {
+        "graftCold": 0.6317815420000001,
+        "nativeCold": 0.37847616700000003,
+        "graftRepeat": 0.6012762499999998,
+        "nativeRepeat": 0.49989162500000023,
+        "graftFirstStatus": 0.46818862499999975,
+        "nativeFirstStatus": 0.11128724999999985,
+        "graftResources": {
+          "userSeconds": 0.55,
+          "systemSeconds": 1.07,
+          "peakRssBytes": 78118912
+        },
+        "nativeResources": {
+          "userSeconds": 0.05,
+          "systemSeconds": 0.26,
+          "peakRssBytes": 52133888
+        }
+      }
+    },
+    {
+      "before": {
+        "graftCold": 0.7654362499999997,
+        "nativeCold": 0.33311975000000005,
+        "graftRepeat": 0.45305441599999996,
+        "nativeRepeat": 0.34528620799999976,
+        "graftFirstStatus": 0.40865033399999995,
+        "nativeFirstStatus": 0.11475358299999994,
+        "graftResources": {
+          "userSeconds": 0.53,
+          "systemSeconds": 0.95,
+          "peakRssBytes": 78692352
+        },
+        "nativeResources": {
+          "userSeconds": 0.05,
+          "systemSeconds": 0.26,
+          "peakRssBytes": 52166656
+        }
+      },
+      "after": {
+        "graftCold": 0.7113538750000002,
+        "nativeCold": 0.34104433300000003,
+        "graftRepeat": 0.47390520800000013,
+        "nativeRepeat": 0.32274870799999983,
+        "graftFirstStatus": 0.46496366699999997,
+        "nativeFirstStatus": 0.12647162500000014,
+        "graftResources": {
+          "userSeconds": 0.56,
+          "systemSeconds": 1.19,
+          "peakRssBytes": 77922304
+        },
+        "nativeResources": {
+          "userSeconds": 0.05,
+          "systemSeconds": 0.24,
+          "peakRssBytes": 51986432
+        }
+      }
+    }
+  ],
+  "apfs": {
+    "native": {
+      "firstCheckoutBytes": "29941760",
+      "additionalSecondCheckoutBytes": "29941760",
+      "additionalAdvancedCheckoutBytes": "29945856"
+    },
+    "graft": {
+      "firstCheckoutBytes": "5693440",
+      "additionalSecondCheckoutBytes": "319488",
+      "additionalAdvancedCheckoutBytes": "5672960",
+      "twoCheckoutFileDataByPurpose": {
+        "historyPacks": "5246976",
+        "historyIndexes": "106496",
+        "checkoutIndexes": "573440",
+        "sourceFiles": "0",
+        "records": "86016",
+        "primaryChange": "0"
+      }
+    }
+  },
+  "smallFixture": {
+    "fixture": "One committed regular file, eight alternating pairs, cold tip spawn in seconds",
+    "control": [
+      0.3919097911566496,
+      0.3179303330834955,
+      0.2707167090848088,
+      0.25794075010344386,
+      0.2967067500576377,
+      0.2733676249627024,
+      0.27685549994930625,
+      0.29223124985583127
+    ],
+    "overlap": [
+      0.2866623329464346,
+      0.28383295820094645,
+      0.2618907908909023,
+      0.2649520840495825,
+      0.277057999977842,
+      0.24361570901237428,
+      0.2577223749831319,
+      0.24889041716232896
+    ]
+  }
+}
