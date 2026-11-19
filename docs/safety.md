@@ -6,6 +6,8 @@ The selected commit determines the initial source tree. Local edits, untracked f
 
 A standalone workspace owns its Git objects, refs, reflogs, stash and index. It does not automatically receive new refs from the original repository. Landing transfers the selected committed work back. Graft declines unsupported histories and checkout configurations rather than silently changing their meaning.
 
+When reusing a mixed pack, Graft edits an unlinked copy, has Git index its contents, and verifies the object IDs before publishing the pack. On macOS, creating that copy briefly requires an owner-controlled, writable source pack directory. An interruption before unlinking can leave a private temporary directory there, eligible for Git’s normal expiry. The source pack stays intact. If the filesystem or directory cannot support this operation, Graft exports the selected objects through Git.
+
 ## Recover work
 
 Land and drop archive the workspace, including its private repository and files. Archives can retain ignored files, credentials and other sensitive user data; protect them as you would the workspace. Save the returned recovery lease:
