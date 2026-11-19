@@ -6,7 +6,7 @@
 
 ## Local snapshots on November 19, 2026
 
-On macOS arm64/APFS, the release built from `6a9994c` (SHA-256 prefix `8ec655138786`) passed all 137 end-to-end scenarios on both Git 2.46.0 and Git 2.56.0. Each run covered all 23 CLI operations and 22 MCP tools. All 136 Rust tests passed. A separate run exercised the local-history policy across 23 landing and six recovery scenarios. The release also passed the local snapshot tests for donor moves and repacks, independent writes, and fallback for a donor that borrows Git objects.
+On macOS arm64/APFS, the release built from `b92b8e2` (SHA-256 prefix `5933b8b3b0cb`) passed all 138 end-to-end scenarios on both Git 2.46.0 and Git 2.56.0. Each run covered all 23 CLI operations and 22 MCP tools. All 136 Rust tests passed. Local snapshot scenarios cover donor moves and repacks, independent writes, fallback for donors that borrow Git objects, and CRLF conversion from an external attributes file when Git checks out through a private staging directory.
 
 The locked sources installed offline from a fresh local clone. Strict Clippy passed on macOS and for the Linux and Windows cross-targets, and the sources checked on Rust 1.89. Native Linux and Windows runtime results are still outstanding. [Release timings and APFS measurements](benchmarks.md#local-history-on-a-populated-homebrew-clone)
 

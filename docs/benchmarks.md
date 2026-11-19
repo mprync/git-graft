@@ -6,12 +6,12 @@ These runs started from disposable local copies of Homebrew `bc63375ac3a4` on ma
 
 | Clean primary, median of five fresh runs | Graft | Native worktree |
 | --- | ---: | ---: |
-| First checkout | 0.654 s | 0.328 s |
-| Repeat at the same commit | 0.524 s | 0.346 s |
-| Third checkout after a one-file commit | 0.541 s | 0.354 s |
-| First checkout followed by first Git status | 1.062 s | 0.394 s |
+| First checkout | 0.552 s | 0.339 s |
+| Repeat at the same commit | 0.537 s | 0.366 s |
+| Third checkout after a one-file commit | 0.533 s | 0.353 s |
+| First checkout followed by first Git status | 0.968 s | 0.462 s |
 
-The last row is the median of the paired command times. The first status checks the cloned files against Git’s index. Median first-spawn user and system CPU times were 0.11 s and 0.95 s for Graft, and 0.05 s and 0.23 s for Git. Peak RSS medians were 17.0 MB and 52.2 MB respectively. In a separate three-round run with staged, unstaged, untracked and ignored donor files, first checkout took 0.608 s for Graft and 0.297 s for a worktree. Both checkouts were clean and the donor retained its changes. [Clean timing samples](measurements/macos-arm64/homebrew-local-clean-timing.json) · [Dirty timing samples](measurements/macos-arm64/homebrew-local-dirty-timing.json)
+The last row is the median of the paired command times. The first status checks the cloned files against Git’s index. Median first-spawn user and system CPU times were 0.10 s and 0.90 s for Graft, and 0.05 s and 0.27 s for Git. Peak RSS medians were 17.1 MB and 52.4 MB respectively. In a separate three-round run with staged, unstaged, untracked and ignored donor files, first checkout took 0.549 s for Graft and 0.329 s for a worktree. Both checkouts were clean and the donor retained its changes. [Clean timing samples](measurements/macos-arm64/homebrew-local-clean-timing.json) · [Dirty timing samples](measurements/macos-arm64/homebrew-local-dirty-timing.json)
 
 | Additional APFS file data | Graft | Native worktree |
 | --- | ---: | ---: |
@@ -24,7 +24,7 @@ All 3,318 regular source files and all four packs shared data blocks with the pr
 
 To reproduce the clean timing run, use `npm run bench:source:real -- --repo /path/to/Homebrew/brew --project-history local --clean-primary --rounds 5 --advance-base --include-revisions`. Run the physical observer separately with `--apfs-file-data` and a different `--output` path. The reports identify the executable by SHA-256.
 
-The volume-wide first-checkout space change in the clean timing runs had a median of 1.89 MB for Graft and 31.60 MB for Git. This includes filesystem metadata for the new paths and any other activity on the volume. The 327,680-byte file-data measurement above counts blocks attributable to the fixture.
+The volume-wide first-checkout space change in the clean timing runs had a median of 2.04 MB for Graft and 31.58 MB for Git. This includes filesystem metadata for the new paths and any other activity on the volume. The 327,680-byte file-data measurement above counts blocks attributable to the fixture.
 
 ### Durable snapshot writes
 
