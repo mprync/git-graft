@@ -341,6 +341,8 @@ export const cases: Scenario[] = [
       assert(Array.isArray(listed.managers));
       assert(listed.managers.some(item => object(item, 'manager').manager === registration.manager));
       const workspace = await spawnWorkspace(client, 'registered-mcp');
+      const empty = await call(client, 'workspace_exec', { name: 'registered-mcp', lease: workspace.lease, argv: [] }, true);
+      assert.match(string(empty.message, 'empty exec error'), /empty|required/i);
       const executed = await call(client, 'workspace_exec', { name: 'registered-mcp', lease: workspace.lease,
         manager: registration.manager, argv: [process.execPath, 'argument with spaces'] });
       const output = object(JSON.parse(string(executed.stdout, 'registered exec output')), 'registered output');

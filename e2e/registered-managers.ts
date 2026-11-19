@@ -68,6 +68,19 @@ export const cases: Scenario[] = [{
     assert.equal(readFileSync(join(a.path, 'private-output'), 'utf8'), 'changed');
   },
 }, {
+  name: 'cache-only registration, unselected execution and unknown explicit managers',
+  run(ctx) {
+    const entry = ctx.cli(['register-manager', 'cache-only']);
+    const ws = ctx.spawn('cache-only-workspace');
+    const argv = [process.execPath, '-e', 'process.stdout.write(JSON.stringify({cache:process.env.GRAFT_PACKAGE_CACHE ?? null}))'];
+    const run = (selection: string[]) => objectResult(JSON.parse(String(ctx.cli([
+      'exec', 'cache-only-workspace', '--lease', ws.lease, ...selection, '--', ...argv,
+    ]).stdout)));
+    assert.equal(run(['--manager', 'cache-only']).cache, entry.cache_dir);
+    assert.equal(run([]).cache, null);
+    ctx.fail(['exec', 'cache-only-workspace', '--lease', ws.lease, '--manager', 'not-registered', '--', ...argv]);
+  },
+}, {
   name: 'registration authenticates a leased seed and rejects foreign paths',
   run(ctx) {
     writeFileSync(join(ctx.repo, 'fixture.lock'), 'locked\n');
@@ -105,12 +118,14 @@ export const cases: Scenario[] = [{
     writeFileSync(join(ctx.repo, 'fixture.lock'), 'version one\n');
     writeFileSync(join(ctx.repo, '.gitignore'), 'vendor/\n');
     ctx.git(['add', 'fixture.lock', '.gitignore']); ctx.git(['commit', '-qm', 'fixture inputs']);
+    const originalCommit = ctx.git(['rev-parse', 'HEAD']);
     const tree = join(ctx.repo, 'vendor', 'bundle');
     mkdirSync(tree, { recursive: true });
     writeFileSync(join(tree, 'package'), 'original package');
     const args = registration(ctx, ['--install-dir', 'vendor/bundle', '--input', 'fixture.lock', '--key', 'fixture-v1']);
     const native = objectResult(ctx.cli(['doctor']).source_storage).native_clone;
     assert.equal(typeof native, 'boolean');
+    ctx.measure('native_clone', native);
     const registeredManager = ctx.cli(args);
     const a = ctx.spawn('install-a');
     const receipt = registered(a.result);
@@ -157,6 +172,14 @@ export const cases: Scenario[] = [{
       const missed = ctx.spawn('install-miss');
       assert.notEqual(registered(missed.result)?.status, 'attached');
       assert(!existsSync(join(missed.path, 'vendor/bundle')));
+      writeFileSync(join(tree, 'package'), 'second version');
+      ctx.cli(args);
+      const second = ctx.spawn('install-v2');
+      assert.equal(registered(second.result)?.status, 'attached');
+      assert.equal(readFileSync(join(second.path, 'vendor/bundle/package'), 'utf8'), 'second version');
+      const old = ctx.spawn('install-v1-again', ['--base', originalCommit]);
+      assert.equal(registered(old.result)?.status, 'attached');
+      assert.equal(readFileSync(join(old.path, 'vendor/bundle/package'), 'utf8'), 'original package');
     } else {
       assert.notEqual(receipt.status, 'attached');
       assert(!existsSync(join(a.path, 'vendor/bundle')));
@@ -164,6 +187,6 @@ export const cases: Scenario[] = [{
     const cache = String(registeredManager.cache_dir);
     ctx.cli(['unregister-manager', manager]);
     assert(existsSync(cache));
-    assert.equal(readFileSync(join(tree, 'package'), 'utf8'), 'original package');
+    assert.equal(readFileSync(join(tree, 'package'), 'utf8'), native ? 'second version' : 'original package');
   },
 }];
