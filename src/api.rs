@@ -103,7 +103,7 @@ pub struct Exec {
     pub name: String,
     #[arg(long, env = "GIT_GRAFT_LEASE", hide_env_values = true)]
     pub lease: String,
-    /// Registered package manager profile to use for this command.
+    /// Registered manager ID; use for wrappers or when the program name differs.
     #[arg(long)]
     pub manager: Option<String>,
     /// Program and arguments. Use -- before the program on the CLI.
@@ -115,22 +115,29 @@ pub struct Exec {
 #[derive(Debug, Args, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RegisterManager {
+    /// Portable manager ID; used to select this registration for execution.
     pub manager: String,
+    /// Environment variable to receive the project-scoped cache path.
     #[arg(long)]
     pub cache_env: Option<String>,
-    /// Cache argument template, containing {cache}; repeat for each argument.
+    /// Ordered arguments prepended to the command; repeat per argument. If provided, one must contain {cache}, replaced with the cache path.
     #[arg(long = "cache-arg", allow_hyphen_values = true)]
     #[serde(default)]
     pub cache_args: Vec<String>,
+    /// Optional checkout-relative installed directory to seed for reuse; requires inputs and key.
     #[arg(long)]
     pub install_dir: Option<String>,
+    /// Checkout-relative committed and tracked install input; repeat for each file.
     #[arg(long = "input")]
     #[serde(default)]
     pub inputs: Vec<String>,
+    /// Compatibility key covering ABI, toolchain and other install settings.
     #[arg(long)]
     pub key: Option<String>,
+    /// Source workspace name for the install; omit to use the primary checkout. Requires lease.
     #[arg(long)]
     pub workspace: Option<String>,
+    /// Lease for the explicitly selected source workspace; requires workspace.
     #[arg(long)]
     pub lease: Option<String>,
 }
@@ -138,6 +145,7 @@ pub struct RegisterManager {
 #[derive(Debug, Args, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ManagerName {
+    /// Registered manager ID.
     pub manager: String,
 }
 

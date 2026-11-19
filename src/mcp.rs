@@ -110,7 +110,7 @@ impl ServerHandler for Server {
             ),
             tool::<Empty>(
                 "workspace_list_managers",
-                "List registered package managers.",
+                "List project package manager registrations and their cache and install settings.",
                 true,
                 false,
             ),
@@ -196,19 +196,19 @@ impl ServerHandler for Server {
         if self.allow_exec {
             tools.push(tool::<RegisterManager>(
                 "workspace_register_manager",
-                "Register a package manager (enabled by host --allow-exec).",
+                "Register a project-scoped package cache and optionally seed a reusable install from the primary checkout or a leased workspace (enabled by host --allow-exec).",
                 false,
                 false,
             ));
             tools.push(tool::<ManagerName>(
                 "workspace_unregister_manager",
-                "Unregister a package manager (enabled by host --allow-exec).",
+                "Remove a package manager registration while retaining its cache (enabled by host --allow-exec).",
                 false,
                 true,
             ));
             tools.push(tool::<Exec>(
                 "workspace_exec",
-                "Execute a command in a workspace (enabled by host --allow-exec).",
+                "Execute a command in a leased workspace. Registered managers match the program name automatically; select manager explicitly for wrappers (enabled by host --allow-exec).",
                 false,
                 true,
             ));
