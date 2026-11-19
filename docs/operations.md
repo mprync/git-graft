@@ -54,7 +54,9 @@ The installed tree must be relocatable, free of private data and independent of 
 
 During a full spawn, Graft checks the declared inputs, platform and key, then attaches verified files into a vacant path using native copy-on-write. Inspect each entry in `storage.registered_dependencies`. An `attached` status means the installed files are ready. With `inputs_mismatch` or `unavailable`, run the manager’s ordinary install in that graft. Cache routing still works on a filesystem that cannot clone files. Sparse, empty and `--no-deps` checkouts skip attachment.
 
-`git graft unregister-manager NAME` removes the settings and retains cached files and existing installs. MCP exposes `workspace_list_managers`, `workspace_register_manager` and `workspace_unregister_manager`. Registration changes, command execution and automatic installation attachment require a server started with `--allow-exec`.
+`git graft unregister-manager NAME` removes the settings and retains cached files and existing installs. When all grafts are retired, `git graft gc --purge-cache` previews eligible caches and registered installations. Add `--apply` to remove verified entries. Changed or unrecognized generations remain available for inspection.
+
+MCP exposes `workspace_list_managers`, `workspace_register_manager` and `workspace_unregister_manager`. Registration changes, command execution and automatic installation attachment require a server started with `--allow-exec`.
 
 ## Reuse an npm installation
 

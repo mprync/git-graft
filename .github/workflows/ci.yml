@@ -248,6 +248,9 @@ jobs:
         shell: bash
         run: npm test
 
+      - name: Registered NuGet restore and isolated builds
+        run: node e2e/nuget.ts
+
       - name: Three-round release disk benchmark
         shell: bash
         run: npm run bench
