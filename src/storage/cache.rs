@@ -74,6 +74,19 @@ impl From<&Metadata> for Stamp {
     }
 }
 
+impl Stamp {
+    // libc's stat field widths vary between Unix targets.
+    #[allow(clippy::unnecessary_cast)]
+    fn matches_stat(&self, info: &libc::stat) -> bool {
+        self.device == info.st_dev as u64
+            && self.inode == info.st_ino as u64
+            && self.size == info.st_size as u64
+            && self.mode == info.st_mode as u32
+            && self.modified == (info.st_mtime as i64, info.st_mtime_nsec as i64)
+            && self.changed == (info.st_ctime as i64, info.st_ctime_nsec as i64)
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 enum Content {
     Regular(Stamp),
@@ -87,9 +100,17 @@ pub(super) struct Record {
 }
 
 impl Record {
-    fn capture(root: &Root, entry: &Entry) -> Result<Self> {
+    fn capture(root: &Root, entry: &Entry, verified: Option<Stamp>) -> Result<Self> {
         let path = entry.path()?;
-        let data = if entry.regular() {
+        let data = if let Some(verified) = verified {
+            // The pinned clone already passed its byte and metadata checks.
+            // Authenticate the same inode again without reopening it.
+            ensure!(
+                verified.matches_stat(&root.regular_stat(path)?),
+                "primary clone changed after verification"
+            );
+            Content::Regular(verified)
+        } else if entry.regular() {
             let (file, metadata) = root.regular_metadata(path)?;
             ensure!(
                 native::plain(&file, &metadata)?,
@@ -218,39 +239,22 @@ impl Snapshot {
         Ok(self.source.fork()?)
     }
 
-    pub(super) fn clone_record(
-        &self,
-        record: &Record,
-        destination: &Root,
-        output: &Path,
-        mode: u32,
-    ) -> Result<Option<u64>> {
-        record.clone_into(&self.source, destination, output, mode)
-    }
-
     pub(super) fn publish(
         temporary: &Path,
         base: &Path,
-        entries: &[&Entry],
-        verified_primary: &BTreeMap<&[u8], Stamp>,
+        entries: &[Entry],
+        mut reused: BTreeMap<&[u8], Option<Stamp>>,
         secret: &Key,
         oid: &str,
         settings: &str,
     ) -> Result<Self> {
         let root = Root::open(&temporary.join(TREE))?;
-        check_inventory(&root, entries.iter().copied())?;
+        check_inventory(&root, entries.iter())?;
         let records = entries
             .iter()
             .map(|entry| {
-                let record = Record::capture(&root, entry)?;
-                // Sign the same inode and metadata that backed the byte check.
-                if let Some(verified) = verified_primary.get(entry.name.as_slice()) {
-                    ensure!(
-                        matches!(&record.data, Content::Regular(stamp) if stamp == verified),
-                        "primary clone changed after verification"
-                    );
-                }
-                Ok(record)
+                let verified = reused.remove(entry.name.as_slice()).flatten();
+                Record::capture(&root, entry, verified)
             })
             .collect::<Result<Vec<_>>>()?;
         let manifest = Manifest {
@@ -383,8 +387,8 @@ mod tests {
         Snapshot::publish(
             &staging,
             &commit_dir.join(&settings),
-            &[&entry],
-            &BTreeMap::new(),
+            std::slice::from_ref(&entry),
+            BTreeMap::new(),
             &secret,
             &oid,
             &settings,
@@ -446,14 +450,18 @@ mod tests {
         };
         let path = tree(&generation).join(entry.path()?);
         fs::write(&path, b"verified")?;
-        let verified = [(entry.name.as_slice(), Stamp::from(&fs::metadata(&path)?))].into();
+        let verified = [(
+            entry.name.as_slice(),
+            Some(Stamp::from(&fs::metadata(&path)?)),
+        )]
+        .into();
         fs::write(&path, b"changed after verification")?;
         let base = directory.join("base");
         let result = Snapshot::publish(
             &generation,
             &base,
-            &[&entry],
-            &verified,
+            std::slice::from_ref(&entry),
+            verified,
             &[1; 32],
             &"a".repeat(40),
             "test-settings",

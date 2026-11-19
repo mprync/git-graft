@@ -109,28 +109,39 @@ impl Root {
     }
 
     fn subdirectory(&self, path: &Path) -> io::Result<File> {
-        let mut directory = self.directory.try_clone()?;
+        let mut directory = None;
         for part in path.components() {
             let Component::Normal(component) = part else {
                 return Err(invalid("unexpected relative path"));
             };
-            directory = open_at(&directory, component, libc::O_RDONLY | libc::O_DIRECTORY)?;
-            if directory.metadata()?.dev() != self.device {
+            let child = open_at(
+                directory.as_ref().unwrap_or(&self.directory),
+                component,
+                libc::O_RDONLY | libc::O_DIRECTORY,
+            )?;
+            if child.metadata()?.dev() != self.device {
                 return Err(invalid("mounted donor directory"));
             }
+            directory = Some(child);
         }
-        Ok(directory)
+        match directory {
+            Some(directory) => Ok(directory),
+            None => self.directory.try_clone(),
+        }
     }
 
     pub(crate) fn names(&self, path: &Path) -> io::Result<Vec<OsString>> {
         // Use a new open description: duplicating the root descriptor would
         // share its directory iteration offset between validations.
-        let directory = self.subdirectory(path)?;
-        let fresh = open_at(
-            &directory,
-            OsStr::new("."),
-            libc::O_RDONLY | libc::O_DIRECTORY,
-        )?;
+        let fresh = if path.as_os_str().is_empty() {
+            open_at(
+                &self.directory,
+                OsStr::new("."),
+                libc::O_RDONLY | libc::O_DIRECTORY,
+            )?
+        } else {
+            self.subdirectory(path)?
+        };
         let fd = fresh.into_raw_fd();
         let stream = unsafe { libc::fdopendir(fd) };
         if stream.is_null() {
@@ -197,6 +208,11 @@ impl Root {
     }
 
     pub(super) fn regular_size(&self, path: &Path) -> io::Result<u64> {
+        u64::try_from(self.regular_stat(path)?.st_size)
+            .map_err(|_| invalid("invalid regular file size"))
+    }
+
+    pub(super) fn regular_stat(&self, path: &Path) -> io::Result<libc::stat> {
         self.with_parent(path, |parent, name| {
             let info = stat_regular_at(parent, &CString::new(name.as_bytes())?)?;
             #[cfg(target_os = "macos")]
@@ -206,7 +222,7 @@ impl Root {
             if info.st_nlink != 1 || device != self.device {
                 return Err(invalid("expected an independent regular file"));
             }
-            u64::try_from(info.st_size).map_err(|_| invalid("invalid regular file size"))
+            Ok(info)
         })
     }
 

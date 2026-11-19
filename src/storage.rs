@@ -3,6 +3,8 @@
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+use std::collections::BTreeMap;
 #[cfg(target_os = "linux")]
 use std::fs::{File, OpenOptions};
 #[cfg(test)]
@@ -258,6 +260,12 @@ impl Counts {
     fn add(&mut self, size: u64) {
         self.files += 1;
         self.bytes += size;
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn merge(&mut self, other: Self) {
+        self.files += other.files;
+        self.bytes += other.bytes;
     }
 }
 
@@ -749,14 +757,14 @@ impl Prepared {
             native::rename_new(&entry.path(), &worktree.join(entry.file_name()))?;
         }
         let index = self.staging.path().join("index");
-        let installed = StagedCheckout {
+        // Git verifies the final inodes and records their stats with its own
+        // racy-index handling. APFS may change a top-level file's ctime on rename.
+        StagedCheckout {
             checkout,
             index: &index,
             tree: worktree,
-        };
-        // Git wrote stats for the batched paths. Refresh the new clone inodes
-        // and any top-level files whose ctime changed during publication.
-        installed.run(&["update-index", "--refresh"], None)?;
+        }
+        .run(&["update-index", "--refresh"], None)?;
         native::rename_new(&index, &destination)?;
         lock.close()?;
         let backend = if cfg!(target_os = "macos") {
@@ -780,6 +788,18 @@ fn prepare(checkout: &Checkout<'_>, state: &Path, primary: Option<&Path>) -> Res
     let secret = cache::key(state, true)?;
     let mut receipt = Receipt::default();
     let mode = native::creation_mode(worktree)?;
+    let staging = tempfile::Builder::new()
+        .prefix(".graft-source-")
+        .tempdir_in(worktree)?;
+    let tree = staging.path().join("tree");
+    fs::create_dir(&tree)?;
+    let index = staging.path().join("index");
+    let staged = StagedCheckout {
+        checkout,
+        index: &index,
+        tree: &tree,
+    };
+    staged.run(&["read-tree", oid], None)?;
     let snapshot = match fs::symlink_metadata(&base) {
         Ok(_) => {
             receipt.warm = true;
@@ -788,7 +808,7 @@ fn prepare(checkout: &Checkout<'_>, state: &Path, primary: Option<&Path>) -> Res
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             let parent = parent_candidate(checkout, &bases, settings, &secret);
             build_snapshot(
-                checkout,
+                &staged,
                 &secret,
                 &base,
                 parent.as_ref(),
@@ -807,35 +827,14 @@ fn prepare(checkout: &Checkout<'_>, state: &Path, primary: Option<&Path>) -> Res
             .eq(entries.iter()),
         "source snapshot differs from the Git tree"
     );
-    let staging = tempfile::Builder::new()
-        .prefix(".graft-source-")
-        .tempdir_in(worktree)?;
-    let tree = staging.path().join("tree");
-    fs::create_dir(&tree)?;
-    let index = staging.path().join("index");
-    let staged = StagedCheckout {
-        checkout,
-        index: &index,
-        tree: &tree,
-    };
-    staged.run(&["read-tree", oid], None)?;
     let destination = native::Root::open(&tree)?;
-    let mut directory = std::path::PathBuf::new();
-    for record in snapshot.records() {
-        stage_parent(&tree.join(record.entry.path()?), &mut directory)?;
-    }
+    stage_parents(&tree, entries)?;
     // Each worker pins the source and destination roots independently. Files
     // still pass the same stamp checks before and after every clone.
     let records = snapshot.records();
-    let workers = if records.len() >= PARALLEL_THRESHOLD {
-        std::thread::available_parallelism().map_or(1, |n| n.get().min(4))
-    } else {
-        1
-    };
-    let chunk_size = records.len().div_ceil(workers).max(1);
     let counts = std::thread::scope(|scope| -> Result<Vec<Counts>> {
         let mut tasks = Vec::new();
-        for chunk in records.chunks(chunk_size) {
+        for chunk in source_chunks(records) {
             let source = snapshot.fork_root()?;
             let destination = destination.fork()?;
             let tree = &tree;
@@ -859,18 +858,30 @@ fn prepare(checkout: &Checkout<'_>, state: &Path, primary: Option<&Path>) -> Res
             .collect()
     })?;
     for count in counts {
-        receipt.cloned.files += count.files;
-        receipt.cloned.bytes += count.bytes;
+        receipt.cloned.merge(count);
     }
     Ok(Prepared { staging, receipt })
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn stage_parent(target: &Path, previous: &mut std::path::PathBuf) -> Result<()> {
-    let parent = target.parent().context("missing source directory")?;
-    if *previous != parent {
-        fs::create_dir_all(parent)?;
-        parent.clone_into(previous);
+fn source_chunks<T>(entries: &[T]) -> std::slice::Chunks<'_, T> {
+    let workers = if entries.len() >= PARALLEL_THRESHOLD {
+        std::thread::available_parallelism().map_or(1, |count| count.get().min(4))
+    } else {
+        1
+    };
+    entries.chunks(entries.len().div_ceil(workers).max(1))
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn stage_parents(tree: &Path, entries: &[Entry]) -> Result<()> {
+    let mut previous = Path::new("");
+    for entry in entries {
+        let parent = entry.path()?.parent().context("missing source directory")?;
+        if previous != parent {
+            fs::create_dir_all(tree.join(parent))?;
+            previous = parent;
+        }
     }
     Ok(())
 }
@@ -897,15 +908,14 @@ fn parent_candidate(
         .split_whitespace()
         .next()?;
     crate::git::checked_oid(parent).ok()?;
-    let snapshot =
-        cache::Snapshot::load(&bases.join(parent).join(settings), secret, parent, settings).ok()?;
-    snapshot.verify().ok()?;
-    Some(snapshot)
+    // Every reused record is checked around its clone. Entries that the new
+    // commit does not need are still checked by GC when reclaiming a snapshot.
+    cache::Snapshot::load(&bases.join(parent).join(settings), secret, parent, settings).ok()
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn build_snapshot(
-    checkout_settings: &Checkout<'_>,
+    staged: &StagedCheckout<'_>,
     secret: &cache::Key,
     base: &Path,
     parent: Option<&cache::Snapshot>,
@@ -913,9 +923,8 @@ fn build_snapshot(
     mode: u32,
     receipt: &mut Receipt,
 ) -> Result<cache::Snapshot> {
-    use std::collections::{BTreeMap, BTreeSet};
-    let oid = checkout_settings.oid;
-    let entries: Vec<_> = checkout_settings.entries.iter().collect();
+    let checkout = staged.checkout;
+    let entries = checkout.entries;
     let base_parent = base.parent().context("missing snapshot directory")?;
     let staging = tempfile::Builder::new()
         .prefix(".building-")
@@ -924,57 +933,125 @@ fn build_snapshot(
     let tree = cache::tree(&generation);
     fs::create_dir(&generation)?;
     fs::create_dir(&tree)?;
-    let index = staging.path().join("index");
-    let staged = StagedCheckout {
-        checkout: checkout_settings,
-        index: &index,
-        tree: &tree,
-    };
-    staged.run(&["read-tree", oid], None)?;
+    stage_parents(&tree, entries)?;
 
-    let previous: BTreeMap<_, _> = parent
-        .into_iter()
-        .flat_map(|p| p.records())
-        .map(|record| (record.entry.name.as_slice(), record))
-        .collect();
     let donor = primary.and_then(|primary| native::Root::open(primary).ok());
     let private = native::Root::open(&tree)?;
-    let mut reused = BTreeSet::new();
+    let previous: BTreeMap<_, _> = parent
+        .into_iter()
+        .flat_map(cache::Snapshot::records)
+        .map(|record| (record.entry.name.as_slice(), record))
+        .collect();
+    let batches = std::thread::scope(|scope| -> Result<Vec<Reused<'_>>> {
+        let mut tasks = Vec::new();
+        for chunk in source_chunks(entries) {
+            let donor = donor.as_ref().map(native::Root::fork).transpose()?;
+            let parent = parent.map(cache::Snapshot::fork_root).transpose()?;
+            let private = private.fork()?;
+            let tree = &tree;
+            let previous = &previous;
+            tasks.push(scope.spawn(move || {
+                reuse_snapshot_files(
+                    checkout,
+                    chunk,
+                    &private,
+                    tree,
+                    parent.as_ref().map(|root| (root, previous)),
+                    donor.as_ref(),
+                    mode,
+                )
+            }));
+        }
+        tasks
+            .into_iter()
+            .map(|task| {
+                task.join()
+                    .map_err(|_| anyhow::anyhow!("source verification worker failed"))?
+            })
+            .collect()
+    })?;
+    let mut reused = BTreeMap::new();
+    for batch in batches {
+        receipt.parent.merge(batch.parent);
+        receipt.primary.merge(batch.primary);
+        reused.extend(batch.files);
+    }
+
+    if reused.len() < entries.len() {
+        let missing: Vec<_> = entries
+            .iter()
+            .filter(|entry| !reused.contains_key(entry.name.as_slice()))
+            .collect();
+        StagedCheckout {
+            checkout,
+            index: staged.index,
+            tree: &tree,
+        }
+        .run(
+            &["checkout-index", "--stdin", "-z"],
+            Some(path_input(missing.iter().copied())?),
+        )?;
+        for entry in missing.into_iter().filter(|entry| entry.regular()) {
+            receipt.private.add(private.regular_size(entry.path()?)?);
+        }
+    }
+    cache::Snapshot::publish(
+        &generation,
+        base,
+        entries,
+        reused,
+        secret,
+        checkout.oid,
+        &checkout.settings,
+    )
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[derive(Default)]
+struct Reused<'a> {
+    parent: Counts,
+    primary: Counts,
+    files: Vec<(&'a [u8], Option<cache::Stamp>)>,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn reuse_snapshot_files<'a>(
+    checkout: &Checkout<'_>,
+    entries: &'a [Entry],
+    private: &native::Root,
+    tree: &Path,
+    parent: Option<(&native::Root, &BTreeMap<&[u8], &cache::Record>)>,
+    donor: Option<&native::Root>,
+    mode: u32,
+) -> Result<Reused<'a>> {
+    let mut reused = Reused::default();
     let mut primary_clones = Vec::new();
-    let mut directory = std::path::PathBuf::new();
-    for entry in entries.iter().copied().filter(|entry| entry.regular()) {
+    for entry in entries.iter().filter(|entry| entry.regular()) {
         let path = entry.path()?;
-        let target = tree.join(path);
-        if let Some(snapshot) = parent
-            && let Some(record) = previous.get(entry.name.as_slice())
+        if let Some((source, previous)) = parent
+            && let Some(&record) = previous.get(entry.name.as_slice())
             && record.entry == *entry
+            && let Ok(Some(size)) = record.clone_into(source, private, &tree.join(path), mode)
         {
-            stage_parent(&target, &mut directory)?;
-            if let Ok(Some(size)) = snapshot.clone_record(record, &private, &target, mode) {
-                receipt.parent.add(size);
-                reused.insert(entry.name.as_slice());
-                continue;
-            }
+            reused.parent.add(size);
+            reused.files.push((entry.name.as_slice(), None));
+            continue;
         }
         // Git's filtered batch format separates the object and path by
         // whitespace. Let checkout-index handle names it cannot encode.
-        if checkout_settings.may_convert_eol && entry.name[0].is_ascii_whitespace() {
+        if checkout.may_convert_eol && entry.name[0].is_ascii_whitespace() {
             continue;
         }
-        if let Some(donor) = &donor
+        if let Some(donor) = donor
             && let Ok((source, metadata)) = donor.regular_metadata(path)
-        {
-            stage_parent(&target, &mut directory)?;
-            if private
+            && private
                 .clone_regular(path, &source, &metadata, entry.creation_mode(mode), false)
                 .is_ok()
-            {
-                primary_clones.push(entry);
-            }
+        {
+            primary_clones.push(entry);
         }
     }
-    let digests = verify::checkout_digests(checkout_settings, &primary_clones)?;
-    let mut verified_primary = BTreeMap::new();
+    let digests = verify::checkout_digests(checkout, &primary_clones)?;
     for (entry, expected) in primary_clones.into_iter().zip(digests) {
         let path = entry.path()?;
         let Ok((file, metadata)) = private.open_primary_clone(path, entry.creation_mode(mode))
@@ -983,38 +1060,15 @@ fn build_snapshot(
             continue;
         };
         if verify::digest(file)? == expected {
-            receipt.primary.add(metadata.len());
-            reused.insert(entry.name.as_slice());
-            verified_primary.insert(entry.name.as_slice(), cache::Stamp::from(&metadata));
+            reused.primary.add(metadata.len());
+            reused
+                .files
+                .push((entry.name.as_slice(), Some(cache::Stamp::from(&metadata))));
         } else {
             private.discard(path)?;
         }
     }
-
-    if reused.len() < entries.len() {
-        let missing = path_input(
-            entries
-                .iter()
-                .copied()
-                .filter(|entry| !reused.contains(entry.name.as_slice())),
-        )?;
-        staged.run(&["checkout-index", "--stdin", "-z"], Some(missing))?;
-        for entry in entries
-            .iter()
-            .filter(|entry| entry.regular() && !reused.contains(entry.name.as_slice()))
-        {
-            receipt.private.add(private.regular_size(entry.path()?)?);
-        }
-    }
-    cache::Snapshot::publish(
-        &generation,
-        base,
-        &entries,
-        &verified_primary,
-        secret,
-        oid,
-        &checkout_settings.settings,
-    )
+    Ok(reused)
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -1158,11 +1212,18 @@ mod tests {
         String::from_utf8(output.stdout).unwrap().trim().to_owned()
     }
     fn fixture() -> (tempfile::TempDir, PathBuf, String) {
+        fixture_with_format("sha1")
+    }
+
+    fn fixture_with_format(object_format: &str) -> (tempfile::TempDir, PathBuf, String) {
         let temp = tempfile::tempdir().unwrap();
         let repo = temp.path().join("repo");
         fs::create_dir(&repo).unwrap();
         let repo = dunce::canonicalize(repo).unwrap();
-        command(&repo, &["init", "-q"]);
+        command(
+            &repo,
+            &["init", "-q", &format!("--object-format={object_format}")],
+        );
         command(&repo, &["config", "user.email", "test@example.invalid"]);
         command(&repo, &["config", "user.name", "Test"]);
         command(&repo, &["config", "core.autocrlf", "false"]);
@@ -1431,6 +1492,35 @@ mod tests {
             if !conflict.ends_with("index.lock") {
                 assert!(!workspace.join(".git/index.lock").exists());
             }
+        }
+        Ok(())
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn publication_does_not_record_stats_for_a_same_size_edit() -> Result<()> {
+        for format in ["sha1", "sha256"] {
+            let (temp, repo, oid) = fixture_with_format(format);
+            let root = dunce::canonicalize(temp.path())?;
+            let state = root.join("state");
+            fs::create_dir(&state)?;
+            if !probe(&state, &state)? {
+                return Ok(());
+            }
+            let workspace = root.join("workspace");
+            independent(&repo, &workspace);
+            let entries = entries(&workspace, &oid)?;
+            let checkout = Checkout::read(&workspace, &oid, &entries)?;
+            let prepared = prepare(&checkout, &state, Some(&repo))?;
+            let file = prepared.staging.path().join("tree/script");
+            let modified = fs::metadata(&file)?.modified()?;
+            let replacement = file.with_extension("replacement");
+            fs::write(&replacement, b"#!/bin/xx\n")?;
+            fs::set_permissions(&replacement, fs::metadata(&file)?.permissions())?;
+            fs::File::open(&replacement)?.set_modified(modified)?;
+            fs::rename(&replacement, file)?;
+            assert!(prepared.install(&checkout).is_err());
+            assert!(!workspace.join(".git/index").exists());
         }
         Ok(())
     }
