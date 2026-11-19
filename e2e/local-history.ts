@@ -1,5 +1,6 @@
 /** Exercise local object snapshots and isolated history through the public CLI. */
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { existsSync, lstatSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -78,8 +79,12 @@ export const cases: Scenario[] = [
       const probe = objectResult(ctx.cli(['doctor']).source_storage);
       assert.equal(typeof probe.native_clone, 'boolean');
       const a = ctx.spawn('local-a', ['--history', 'local', '--base', 'main', '--branch', 'work']);
-      const b = ctx.spawn('local-b', ['--history', 'local', '--base', 'main', '--detach']);
+      ctx.git(['config', '--local', 'graft.history', 'local']);
+      const retry = ['--base', 'main', '--detach', '--request-id', randomUUID()];
+      const b = ctx.spawn('local-b', retry);
       const isolated = ctx.spawn('exact', ['--history', 'isolated', '--base', 'main', '--branch', 'work']);
+      ctx.git(['config', '--local', '--unset', 'graft.history']);
+      assert.equal(ctx.spawn('local-b', retry).lease, b.lease, 'retry must retain the original history choice');
       const workspaces = [a, b, isolated];
       for (const ws of workspaces) {
         const local = ws !== isolated && probe.native_clone;

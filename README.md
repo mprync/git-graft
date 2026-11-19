@@ -51,6 +51,8 @@ A successful land updates the destination and archives the workspace. Keep the r
 
 For a trusted local clone, `git graft spawn fix-parser --history local` can reuse the existing Git packs, their indexes and eligible source files through copy-on-write. Each graft still owns its files and can commit independently. The local snapshot includes other branches’ objects, staged blobs and dangling objects. Use `--history isolated` to limit readable objects to the selected history. The JSON field `storage.objects.source` reports `local-snapshot` when the filesystem and repository support it. [History and recovery](docs/safety.md#workspace-contents)
 
+Set `git config --local graft.history local` once in a trusted primary repository to use this mode for ordinary CLI and MCP spawns. Use `git config --local --unset graft.history` to restore the isolated default for future workspaces.
+
 For an installed npm project with a committed, supported lockfile, register the installation once. Choose a compatibility key that identifies the Node and npm versions, install options and environment used to create it.
 
 ```sh

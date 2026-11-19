@@ -828,7 +828,13 @@ export const cases: Scenario[] = [
         name: 'mcp-branch', request_id: randomUUID(), branch: 'custom/branch',
         base, no_checkout: true, lock: true, reason: 'manual population',
       };
+      ctx.git(['config', '--local', 'graft.history', 'local']);
       const locked = await call(client, 'workspace_spawn', args);
+      const probe = object(ctx.cli(['doctor']).source_storage, 'source filesystem capability');
+      if (probe.native_clone) {
+        assert.equal(object(object(locked.storage, 'workspace storage').objects, 'workspace history').source, 'local-snapshot');
+      }
+      ctx.git(['config', '--local', '--unset', 'graft.history']);
       assert.equal(locked.lease, args.request_id);
       assert.equal(locked.locked, 'manual population');
       assert.deepEqual(await call(client, 'workspace_spawn', args), locked);

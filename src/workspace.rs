@@ -96,6 +96,27 @@ fn with_lease(r: &Record) -> Value {
     value
 }
 
+fn project_uses_local_history(project: &Project) -> Result<bool> {
+    // Read the primary repository's own setting, including for nested spawns.
+    let out = git::raw(
+        &project.repo,
+        &[
+            "config",
+            "--local",
+            "--no-includes",
+            "--null",
+            "--get",
+            "graft.history",
+        ],
+    )?;
+    match (out.status.code(), out.stdout.as_slice()) {
+        (Some(1), b"") | (Some(0), b"isolated\0") => Ok(false),
+        (Some(0), b"local\0") => Ok(true),
+        (Some(0), _) => anyhow::bail!("graft.history must be local or isolated"),
+        _ => anyhow::bail!("could not read the project's graft.history setting"),
+    }
+}
+
 fn spawn(p: &Project, origin: &Path, mut args: Spawn) -> Result<Value> {
     if let Some(id) = &mut args.request_id {
         *id = uuid::Uuid::parse_str(id)
@@ -103,12 +124,31 @@ fn spawn(p: &Project, origin: &Path, mut args: Spawn) -> Result<Value> {
             .to_string();
     }
     crate::registry::validate_name(&args.name)?;
-    let request = serde_json::to_value(&args)?;
+    let mut request = serde_json::to_value(&args)?;
+    let previous = args
+        .request_id
+        .as_ref()
+        .and_then(|id| registry::authenticate(p, &args.name, id).ok())
+        .filter(|record| !record.request.is_null());
+    let local = match args.history {
+        Some(mode) => mode == api::History::Local,
+        None => {
+            // A retry uses the policy at reservation, even after reconfiguration.
+            // Older requests without the marker used isolated history.
+            let local = match &previous {
+                Some(record) => {
+                    record.request.get("project_local_history") == Some(&Value::Bool(true))
+                }
+                None => project_uses_local_history(p)?,
+            };
+            if local {
+                request["project_local_history"] = Value::Bool(true);
+            }
+            local
+        }
+    };
     let mut reserved_base = None;
-    if let Some(id) = &args.request_id
-        && let Ok(current) = registry::authenticate(p, &args.name, id)
-        && !current.request.is_null()
-    {
+    if let Some(current) = previous {
         ensure!(
             current.request == request,
             "request ID was used with different spawn options"
@@ -166,7 +206,6 @@ fn spawn(p: &Project, origin: &Path, mut args: Spawn) -> Result<Value> {
     }
     let build = (|| -> Result<()> {
         registry::verify(p, &r)?;
-        let local = args.history == Some(api::History::Local);
         let initialize = if local {
             objects::initialize_local
         } else {
