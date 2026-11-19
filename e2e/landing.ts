@@ -262,6 +262,51 @@ export const cases: Scenario[] = [
       ctx.git(['fsck', '--full']);
     },
   },
+  ...[false, true].map((overlap): Scenario => ({
+    name: overlap ? 'two grafts can resolve and retry competing edits to one line'
+      : 'two grafts can land independent edits to the same tracked file',
+    run(ctx) {
+      const file = 'settings.txt';
+      const base = ['first=1', ...Array.from({length: 10}, (_, i) => 'setting' + i), 'last=1', ''].join('\n');
+      write(ctx.repo, file, base);
+      commit(ctx, ctx.repo, 'base settings');
+      const a = ctx.spawn('settings-a');
+      const b = ctx.spawn('settings-b');
+      const aText = base.replace('first=1', 'first=2');
+      const bText = overlap ? base.replace('first=1', 'first=3') : base.replace('last=1', 'last=3');
+      write(a.path, file, aText);
+      assert.equal(read(b.path, file), base);
+      write(b.path, file, bText);
+      assert.equal(read(a.path, file), aText);
+      assert.equal(read(ctx.repo, file), base);
+      const aTip = commit(ctx, a.path, 'change first setting');
+      const bTip = commit(ctx, b.path, 'second task settings');
+      ctx.cli(landArgs(a, 'settings-a'));
+      assert.equal(read(ctx.repo, file), aText);
+      assert.equal(read(b.path, file), bText);
+
+      let combined = aText.replace('last=1', 'last=3');
+      if (overlap) {
+        const conflict = ctx.fail(landArgs(b, 'settings-b'));
+        assert.equal(conflict.code, 'merge_conflict');
+        assert.deepEqual(field(conflict.details).paths, [file]);
+        assert.equal(ctx.git(['rev-parse', 'HEAD']), aTip);
+        assert.equal(ctx.git(['rev-parse', 'HEAD'], b.path), bTip);
+        assert.equal(read(b.path, file), bText);
+        ctx.git(['fetch', '--no-tags', '--', ctx.repo, 'refs/heads/main'], b.path);
+        const merge = ctx.command('git', ['merge', '--no-edit', 'FETCH_HEAD'], b.path);
+        assert.equal(merge.status, 1);
+        assert.equal(ctx.git(['diff', '--name-only', '--diff-filter=U'], b.path), file);
+        combined = base.replace('first=1', 'first=4');
+        write(b.path, file, combined);
+        commit(ctx, b.path, 'resolve both proposed values');
+      }
+      ctx.cli(landArgs(b, 'settings-b'));
+      assert.equal(read(ctx.repo, file), combined);
+      for (const tip of [aTip, bTip]) ctx.git(['merge-base', '--is-ancestor', tip, 'HEAD']);
+      ctx.git(['fsck', '--full']);
+    },
+  })),
   {
     name: 'landing reports real conflict paths and preserves unmerged work',
     run(ctx) {

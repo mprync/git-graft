@@ -40,6 +40,20 @@ Retain the `recovery_lease` from land or drop. `restore NAME --lease TOKEN` reop
 
 For a disconnected spawn, retry with the same client-generated, cryptographically random UUIDv4 `request_id` and the same options. The request ID acts as the workspace lease; keep it secret and share it only with trusted local tools. `heartbeat` renews a task lease. Close external editors and builds before retirement, especially on Windows where open handles can prevent a move. Graft locks coordinate Graft operations, not arbitrary external processes.
 
+## When two tasks edit the same file
+
+Two grafts created from the same commit each get a writable checkout of that version. Saving or committing a file in one leaves the other graft and the primary at their own versions. When both tasks land into the same branch, the first successful landing updates that branch. Graft uses Git's three-way merge for a second, diverged task. Edits to separate parts of a file can merge automatically.
+
+If Git reports conflicting edits, Graft returns the paths and keeps the second workspace. From that workspace, fetch the current destination and merge it locally. This example uses a destination named `main`.
+
+```sh
+git fetch --no-tags /absolute/path/to/primary refs/heads/main
+git merge FETCH_HEAD
+git status
+```
+
+Resolve any conflicts, stage the resolutions, commit the merge and run the project's tests. From the primary, retry `git graft land NAME --into main --lease TOKEN` with the same workspace lease.
+
 ## Interrupted checkout update
 
 A checked-out destination interrupted during land or undo can return `checkout_recovery_required` with `target`, `previous`, `commit` and `recovery_path`. Before editing the destination, retry the same command with the same lease. Graft can finish a verified update or restart it from the saved original index and a clean previous checkout.
