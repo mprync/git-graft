@@ -273,15 +273,14 @@ pub(super) fn recover(p: &Project, root: &Path) -> Result<()> {
             .file_name()
             .to_str()
             .is_some_and(|name| name.starts_with(".pending-"))
+            && let Err(error) = purge(p, root, &entry.path())
         {
-            if let Err(error) = purge(p, root, &entry.path()) {
-                retained += 1;
-                if retained <= 3 {
-                    eprintln!(
-                        "git-graft: landing scratch retained at {}: {error:#}",
-                        entry.path().display()
-                    );
-                }
+            retained += 1;
+            if retained <= 3 {
+                eprintln!(
+                    "git-graft: landing scratch retained at {}: {error:#}",
+                    entry.path().display()
+                );
             }
         }
     }

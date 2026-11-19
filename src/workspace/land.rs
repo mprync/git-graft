@@ -265,8 +265,7 @@ pub(crate) fn prepare(p: &Project, workspace: &Path, options: &Land) -> Result<P
                 &p.repo,
                 workspace,
                 &p.state,
-                &prefix,
-                stage,
+                stage.then_some(prefix.as_str()),
                 old,
                 workspace_tip,
             )?);

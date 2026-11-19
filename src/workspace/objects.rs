@@ -689,8 +689,7 @@ pub(super) fn import_plan_inputs(
     primary: &Path,
     workspace: &Path,
     state: &Path,
-    import_prefix: &str,
-    allow_cache: bool,
+    import_prefix: Option<&str>,
     old: &str,
     tip: &str,
 ) -> Result<Vec<PackLock>> {
@@ -716,8 +715,7 @@ pub(super) fn import_plan_inputs(
         );
         // A ref makes the verified base visible to fetch-pack negotiation and
         // protects it until the durable plan pins have been written.
-        let pin = format!("{import_prefix}/base");
-        let cached = if allow_cache {
+        let cached = if import_prefix.is_some() {
             plan_cache::restore(private, state, format, &old)?
         } else {
             None
@@ -727,7 +725,8 @@ pub(super) fn import_plan_inputs(
         } else {
             transfer_result(private, primary, &old)?
         };
-        if allow_cache {
+        if let Some(import_prefix) = import_prefix {
+            let pin = format!("{import_prefix}/base");
             run(
                 private,
                 &[
@@ -740,7 +739,7 @@ pub(super) fn import_plan_inputs(
             )?;
         }
         locks.extend(transfer_result(private, workspace, tip)?);
-        if allow_cache {
+        if let Some(import_prefix) = import_prefix {
             let tip = exact_commit(workspace, tip)?;
             let pin = format!("{import_prefix}/tip");
             run(
