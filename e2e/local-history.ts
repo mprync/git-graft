@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { existsSync, lstatSync, readFileSync, readdirSync, readlinkSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { assertSeparateRegularFiles, objectResult, type Context, type Scenario } from './harness.ts';
@@ -305,15 +305,44 @@ export const cases: Scenario[] = [
     },
   },
   {
-    name: 'local checkout applies the copied attributes file from the workspace root',
+    name: 'local and tip checkouts share raw files while honoring external checkout attributes',
     run(ctx) {
-      writeFileSync(join(ctx.repo, 'custom attrs'), '*.txt text eol=crlf\n');
+      const plain = randomBytes(1024 * 1024);
+      writeFileSync(join(ctx.repo, 'plain.bin'), plain);
+      writeFileSync(join(ctx.repo, 'other.txt'), 'other\n');
+      ctx.git(['add', 'plain.bin', 'other.txt']);
+      ctx.git(['commit', '-qm', 'raw and converted files']);
+      const attributes = join(ctx.repo, 'custom attrs');
+      writeFileSync(attributes, '*.txt text eol=crlf\n');
+      mkdirSync(join(ctx.repo, '.git/info'), { recursive: true });
+      writeFileSync(join(ctx.repo, '.git/info/attributes'), 'other.txt text eol=lf\n');
       ctx.git(['config', '--local', 'core.attributesFile', 'custom attrs']);
       ctx.git(['config', '--local', 'core.autocrlf', 'false']);
-      const ws = ctx.spawn('external-attrs', ['--history', 'local']);
-      assert.equal(read(ws.path, 'tracked.txt'), 'initial\r\n');
-      assert.equal(ctx.git(['show', ':tracked.txt'], ws.path), 'initial');
-      assert.equal(ctx.git(['status', '--porcelain'], ws.path), '');
+      const reference = join(ctx.root, 'native');
+      ctx.git(['-c', 'core.attributesFile=' + attributes, 'worktree', 'add', '-q', '--detach', reference, 'HEAD']);
+      assert.equal(read(reference, 'tracked.txt'), 'initial\r\n');
+      assert.equal(read(reference, 'other.txt'), 'other\n');
+      const nativeClone = objectResult(ctx.cli(['doctor']).source_storage).native_clone;
+      for (const history of ['local', 'tip']) {
+        if (history === 'tip') {
+          ctx.git(['config', '--local', '--unset', 'core.attributesFile']);
+          const config = join(ctx.root, 'home', '.config', 'git');
+          mkdirSync(config, {recursive:true});
+          writeFileSync(join(config, 'attributes'), readFileSync(attributes));
+        }
+        const ws = ctx.spawn('external-' + history, ['--history', history]);
+        for (const file of ['tracked.txt', 'other.txt', 'plain.bin']) {
+          assert.deepEqual(readFileSync(join(ws.path, file)), readFileSync(join(reference, file)));
+        }
+        assert.equal(ctx.git(['write-tree'], ws.path), ctx.git(['rev-parse', 'HEAD^{tree}']));
+        assert.equal(ctx.git(['status', '--porcelain'], ws.path), '');
+        if (nativeClone && ['darwin', 'linux'].includes(process.platform)) {
+          const bytes = objectResult(ws.result.storage).cloned_bytes;
+          assert(typeof bytes === 'number' && bytes >= plain.length, 'expected the raw donor file to be cloned');
+        }
+        writeFileSync(join(ws.path, 'plain.bin'), 'private edit');
+        assert.deepEqual(readFileSync(join(ctx.repo, 'plain.bin')), plain);
+      }
     },
   },
   {

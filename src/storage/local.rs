@@ -297,16 +297,16 @@ mod direct {
         // workers before using their results to select donor files.
         let (tracked, reason, conversions) = std::thread::scope(|scope| -> Result<_> {
             let config = scope.spawn(|| native_reason(checkout.worktree));
-            let attributes = files.iter().any(Entry::attributes).then(|| {
-                scope.spawn(|| checkout_conversions(checkout.proof_command(), oid, files))
-            });
+            // Git also applies info/attributes and user and system rules when
+            // the selected tree has no .gitattributes of its own.
+            let attributes =
+                scope.spawn(|| checkout_conversions(checkout.proof_command(), oid, files));
             let tracked = donor_index(&primary)?;
             let reason = config
                 .join()
                 .map_err(|_| anyhow::anyhow!("checkout configuration worker failed"))??;
             let conversions = attributes
-                .map(|task| task.join())
-                .transpose()
+                .join()
                 .map_err(|_| anyhow::anyhow!("checkout attribute worker failed"))?;
             Ok((tracked, reason, conversions))
         })?;
@@ -333,13 +333,11 @@ mod direct {
             return Ok(Err("no eligible local donor files"));
         }
 
-        if let Some(result) = conversions {
-            let Ok(conversions) = result else {
-                return Ok(Err("cannot inspect committed attributes"));
-            };
-            for (eligible, conversion) in candidates.iter_mut().zip(conversions) {
-                *eligible &= conversion == Conversion::Raw;
-            }
+        let Ok(conversions) = conversions else {
+            return Ok(Err("cannot inspect checkout attributes"));
+        };
+        for (eligible, conversion) in candidates.iter_mut().zip(conversions) {
+            *eligible &= conversion == Conversion::Raw;
         }
         if !candidates.contains(&true) {
             return Ok(Err("path-dependent checkout conversion"));
@@ -442,22 +440,6 @@ mod direct {
         };
         if enabled(b"core.sparsecheckout\n") || enabled(b"core.autocrlf\n") {
             return Ok(Some("Git checkout configuration"));
-        }
-        for variable in ["GIT_ATTR_SYSTEM", "GIT_ATTR_GLOBAL"] {
-            if variable == "GIT_ATTR_SYSTEM"
-                && std::env::var_os("GIT_ATTR_NOSYSTEM").as_deref() == Some(OsStr::new("1"))
-            {
-                continue;
-            }
-            let Ok(output) = git(worktree, &["var", variable]) else {
-                return Ok(Some("cannot determine external attributes"));
-            };
-            if let Some(reason) = external_attributes(&output.stdout) {
-                return Ok(Some(reason));
-            }
-        }
-        if let Some(reason) = existing_attributes(&worktree.join(".git/info/attributes")) {
-            return Ok(Some(reason));
         }
         if !git(
             worktree,
