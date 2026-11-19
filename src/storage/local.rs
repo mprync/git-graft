@@ -472,41 +472,46 @@ mod direct {
         files: &[Entry],
         candidates: &mut [bool],
     ) -> Result<()> {
-        let attrs = [
-            "filter",
-            "ident",
-            "working-tree-encoding",
-            "text",
-            "eol",
-            "crlf",
-        ];
-        let input = path_input(files.iter())?;
-        let output = checkout
-            .proof_command()
-            .env("GIT_NO_REPLACE_OBJECTS", "1")
-            .args(["check-attr", &format!("--source={oid}"), "-z", "--stdin"])
-            .args(attrs)
-            .stdin(Stdio::from(input))
-            .output()?;
-        ensure!(
-            output.status.success(),
-            "read checkout attributes: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let mut fields = output.stdout.split(|&byte| byte == 0);
-        for (entry, eligible) in files.iter().zip(candidates) {
-            for attr in attrs {
-                ensure!(
-                    fields.next() == Some(entry.name.as_slice())
-                        && fields.next() == Some(attr.as_bytes()),
-                    "malformed checkout attributes"
-                );
-                match fields.next().context("missing checkout attribute")? {
-                    b"unspecified" => (),
-                    _ => *eligible = false,
-                }
+        // Git omits unspecified attributes with --all. An explicit filter
+        // named "unspecified" is therefore distinguishable from no filter.
+        let output = crate::git::bounded_stdout(
+            checkout
+                .proof_command()
+                .env("GIT_NO_REPLACE_OBJECTS", "1")
+                .args([
+                    "check-attr",
+                    &format!("--source={oid}"),
+                    "--all",
+                    "-z",
+                    "--stdin",
+                ])
+                .stdin(Stdio::from(path_input(files.iter())?)),
+            16 * 1024 * 1024,
+        )?;
+        if output.is_empty() {
+            return Ok(());
+        }
+        let mut native = std::collections::HashSet::new();
+        let mut fields = output
+            .strip_suffix(b"\0")
+            .context("truncated checkout attributes")?
+            .split(|&b| b == 0);
+        while let Some(path) = fields.next() {
+            let attr = fields.next().context("missing checkout attribute")?;
+            fields.next().context("missing checkout attribute value")?;
+            if matches!(
+                attr,
+                b"filter" | b"ident" | b"working-tree-encoding" | b"text" | b"eol" | b"crlf"
+            ) {
+                native.insert(path);
             }
         }
+        for (entry, eligible) in files.iter().zip(candidates) {
+            if native.remove(entry.name.as_slice()) {
+                *eligible = false;
+            }
+        }
+        ensure!(native.is_empty(), "unexpected path in checkout attributes");
         Ok(())
     }
 

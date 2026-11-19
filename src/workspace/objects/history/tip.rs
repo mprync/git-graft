@@ -10,7 +10,7 @@ use serde_json::Value;
 use std::{
     collections::HashSet,
     fs,
-    io::{Read, Seek, Write},
+    io::{Seek, Write},
     path::Path,
     process::{Command, Stdio},
     thread,
@@ -80,26 +80,6 @@ fn git_objects(repo: &Path, objects: Option<&Path>) -> Command {
     command
 }
 
-fn bounded_output(command: &mut Command) -> Result<Vec<u8>> {
-    let mut child = command
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()?;
-    let mut bytes = Vec::new();
-    let read = child
-        .stdout
-        .take()
-        .context("missing Git metadata output")?
-        .take(PROOF_LIMIT + 1)
-        .read_to_end(&mut bytes);
-    let status = child.wait()?;
-    ensure!(
-        read? as u64 <= PROOF_LIMIT && status.success(),
-        "cannot read bounded Git metadata"
-    );
-    Ok(bytes)
-}
-
 // Trees authenticate the mapping from path to blob. Attribute blobs are the
 // only file contents Git needs before it decides which files can be cloned.
 fn metadata_ids(repo: &Path, objects: Option<&Path>, base: &str) -> Result<Vec<ObjectId>> {
@@ -111,8 +91,10 @@ fn metadata_ids(repo: &Path, objects: Option<&Path>, base: &str) -> Result<Vec<O
         ObjectId::from_hex(base.as_bytes(), width)?,
         ObjectId::from_hex(output_text(&tree)?.as_bytes(), width)?,
     ]);
-    let rows =
-        bounded_output(git_objects(repo, objects).args(["ls-tree", "-r", "-t", "-z", base]))?;
+    let rows = crate::git::bounded_stdout(
+        git_objects(repo, objects).args(["ls-tree", "-r", "-t", "-z", base]),
+        PROOF_LIMIT,
+    )?;
     for row in rows.split(|&b| b == 0).filter(|row| !row.is_empty()) {
         let tab = row
             .iter()
@@ -160,7 +142,7 @@ pub(in crate::workspace) fn prepare_tip_proof(primary: &Path, base: &str) -> Res
         );
     }
     input.rewind()?;
-    bounded_output(
+    crate::git::bounded_stdout(
         transfer_git(primary)
             .args([
                 "pack-objects",
@@ -170,6 +152,7 @@ pub(in crate::workspace) fn prepare_tip_proof(primary: &Path, base: &str) -> Res
                 "--window=0",
             ])
             .stdin(input),
+        PROOF_LIMIT,
     )
 }
 

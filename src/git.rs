@@ -5,6 +5,7 @@ use serde::Serialize;
 use serde_json::json;
 use std::{
     fs, io,
+    io::Read,
     path::{Path, PathBuf},
     process::{Command, Output, Stdio},
 };
@@ -61,6 +62,28 @@ pub fn command(dir: &Path) -> Command {
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdin(Stdio::null());
     cmd
+}
+
+/// Read optional Git metadata within a fixed memory budget. Closing the pipe
+/// before waiting also releases a writer whose output exceeded the limit.
+pub(crate) fn bounded_stdout(command: &mut Command, limit: u64) -> Result<Vec<u8>> {
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()?;
+    let mut bytes = Vec::new();
+    let read = child
+        .stdout
+        .take()
+        .context("missing Git metadata output")?
+        .take(limit.saturating_add(1))
+        .read_to_end(&mut bytes);
+    let status = child.wait()?;
+    ensure!(
+        read? as u64 <= limit && status.success(),
+        "cannot read bounded Git metadata"
+    );
+    Ok(bytes)
 }
 
 /// Read and write the owned object database of a private bare repository while

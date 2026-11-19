@@ -47,6 +47,24 @@ function read(path: string, file: string): string {
 
 export const cases: Scenario[] = [
   {
+    name: 'checkout honors a Git filter literally named unspecified',
+    run(ctx) {
+      ctx.git(['config', '--global', 'filter.unspecified.smudge', 'tr a-z A-Z']);
+      ctx.git(['config', '--global', 'filter.unspecified.clean', 'tr A-Z a-z']);
+      const base = commitFile(ctx, ctx.repo, '.gitattributes', 'tracked.txt filter=unspecified\n');
+      const native = join(ctx.root, 'native-filter');
+      ctx.git(['worktree', 'add', '--quiet', '--detach', native, base]);
+      const expected = read(native, 'tracked.txt');
+      assert.equal(expected, 'INITIAL\n');
+      for (const history of ['tip', 'local']) {
+        const ws = ctx.spawn('filtered-' + history, ['--history', history, '--base', base]);
+        assert.equal(read(ws.path, 'tracked.txt'), expected);
+        assert.equal(ctx.git(['status', '--porcelain'], ws.path), '');
+      }
+      assert.equal(read(ctx.repo, 'tracked.txt'), 'initial\n');
+    },
+  },
+  {
     name: 'a failed tip export leaves an unpublished index and a recoverable workspace',
     run(ctx) {
       const tip = commitFile(ctx, ctx.repo, 'selected', 'content missing from the export\n');
