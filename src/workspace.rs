@@ -470,7 +470,11 @@ pub fn run(repo: &Path, command: Command) -> Result<Value> {
             None => Ok(json!({"managers": []})),
         };
     }
-    let (p, lock) = Project::open(primary)?;
+    let (p, lock) = if matches!(&command, Command::Spawn(_)) {
+        Project::open_for_spawn(primary)?
+    } else {
+        Project::open(primary)?
+    };
     let p = &p;
     match &command {
         Command::Doctor

@@ -616,6 +616,15 @@ impl Project {
     /// The returned file holds the project lock. Long-running child commands
     /// release it after taking their workspace lock.
     pub fn open(repo: &Path) -> Result<(Self, File)> {
+        Self::open_registry(repo, true)
+    }
+
+    /// Spawning can attach an existing installation. It never seeds one.
+    pub(crate) fn open_for_spawn(repo: &Path) -> Result<(Self, File)> {
+        Self::open_registry(repo, false)
+    }
+
+    fn open_registry(repo: &Path, create_dependency_caches: bool) -> Result<(Self, File)> {
         let (repo, common, state, root) = Self::paths(repo)?;
         dir(&state)?;
         #[cfg(unix)]
@@ -663,7 +672,12 @@ impl Project {
             id,
         };
         for name in ["cache", "layers"] {
-            project.init_cache_directory(&project.state.join(name))?;
+            let path = project.state.join(name);
+            if create_dependency_caches {
+                project.init_cache_directory(&path)?;
+            } else if exists(&path)? {
+                owned_directory(&path)?;
+            }
         }
         Ok((project, lock))
     }
