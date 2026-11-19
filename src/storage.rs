@@ -672,6 +672,9 @@ fn materialize_checkout(
     if !sparse.is_empty() {
         return native_checkout(worktree, oid, sparse, &entries, "sparse checkout");
     }
+    if entries.is_empty() {
+        return native_checkout(worktree, oid, sparse, &entries, "empty tree");
+    }
     let checkout = Checkout::read(worktree, oid, &entries)?;
     if let Some(reason) = conversion_reason(&checkout)? {
         return native_checkout(worktree, oid, sparse, &entries, reason);
