@@ -19,6 +19,7 @@ mod history;
 pub(crate) use history::{
     HISTORY_CACHE_DIR, HISTORY_CACHE_MARKER, history_cache_root, verify_history_cache_generation,
 };
+mod plan_cache;
 mod shallow;
 
 const SETTINGS: &str = r"^(core\.(autocrlf|eol|safecrlf|symlinks|filemode|ignorecase|precomposeunicode|protecthfs|protectntfs|bigfilethreshold)|(user|author|committer)\.(name|email))$";
@@ -664,11 +665,23 @@ pub(super) fn transfer_result(destination: &Path, source: &Path, oid: &str) -> R
     Ok(locks)
 }
 
+pub(super) fn remove_import_pin(private: &Path, reference: &str) -> Result<()> {
+    if let Some(oid) = crate::recovery::direct_ref(private, reference)? {
+        run(
+            private,
+            &["update-ref", "--no-deref", "-d", reference, &oid],
+        )?;
+    }
+    Ok(())
+}
+
 /// Copy the old and workspace commits into a private landing repository.
 pub(super) fn import_plan_inputs(
     private: &Path,
     primary: &Path,
     workspace: &Path,
+    state: &Path,
+    import_prefix: &str,
     old: &str,
     tip: &str,
 ) -> Result<()> {
@@ -685,8 +698,44 @@ pub(super) fn import_plan_inputs(
         let tip = exact_commit(workspace, tip)?;
         shallow::import_plan_inputs(private, primary, workspace, &old, &tip)
     } else {
-        let _old = transfer_result(private, primary, old)?;
+        let old = exact_commit(primary, old)?;
+        let format = object_format(primary)?;
+        ensure!(
+            object_format(private)? == format && object_format(workspace)? == format,
+            "Git object formats differ"
+        );
+        // A ref makes the verified base visible to fetch-pack negotiation and
+        // protects it until the durable plan pins have been written.
+        let pin = format!("{import_prefix}/base");
+        let cached = plan_cache::restore(private, state, format, &old)?;
+        let _old = if cached.is_none() {
+            Some(transfer_result(private, primary, &old)?)
+        } else {
+            None
+        };
+        run(
+            private,
+            &[
+                "update-ref",
+                "--no-deref",
+                &pin,
+                &old,
+                &"0".repeat(old.len()),
+            ],
+        )?;
         let _tip = transfer_result(private, workspace, tip)?;
+        let tip = exact_commit(workspace, tip)?;
+        let pin = format!("{import_prefix}/tip");
+        run(
+            private,
+            &[
+                "update-ref",
+                "--no-deref",
+                &pin,
+                &tip,
+                &"0".repeat(tip.len()),
+            ],
+        )?;
         Ok(())
     }
 }

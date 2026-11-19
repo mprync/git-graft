@@ -193,15 +193,44 @@ fn store_for_plan(p: &Project, plan: &Plan) -> Result<PathBuf> {
     Ok(store)
 }
 
+// Each operation owns its pins until the permanent plan pins are installed.
+// Removing them on every return also avoids retaining rejected private tips.
+struct ImportPins<'a> {
+    store: &'a Path,
+    prefix: String,
+}
+
+impl Drop for ImportPins<'_> {
+    fn drop(&mut self) {
+        for kind in ["base", "tip"] {
+            let name = format!("{}/{kind}", self.prefix);
+            let _ = objects::remove_import_pin(self.store, &name);
+        }
+    }
+}
+
 /// Plan and durably pin both inputs and the result inside the owned bare store.
 pub(crate) fn prepare(p: &Project, workspace: &Path, options: &Land) -> Result<Plan> {
     let root = stores(p, true)?;
     let (name, store) = open_store(p, &root)?;
+    let pins = ImportPins {
+        store: &store,
+        prefix: format!("refs/graft/import/{}", uuid::Uuid::new_v4()),
+    };
     let plan =
         landing::prepare_with_import(&p.repo, workspace, &p.state, options, &store, |old, tip| {
-            objects::import_plan_inputs(&store, &p.repo, workspace, old, tip)
+            objects::import_plan_inputs(
+                &store,
+                &p.repo,
+                workspace,
+                &p.state,
+                &pins.prefix,
+                old,
+                tip,
+            )
         })?;
     create_plan_pins(&store, &plan)?;
+    drop(pins);
     let receipt = plan_receipt(&root, &plan);
     if registry::exists(&receipt)? {
         // The immutable commit tuple can repeat across workspaces or boundary

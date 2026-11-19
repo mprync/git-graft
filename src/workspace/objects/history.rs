@@ -30,6 +30,24 @@ pub(super) struct Boundary<'a> {
     pub(super) cache_key: &'a str,
 }
 
+/// Clone only an existing, verified exact generation into private staging.
+pub(super) fn restore_exact(
+    state: &Path,
+    format: &str,
+    oid: &str,
+    stage: &Path,
+) -> Result<Option<Vec<(PathBuf, PathBuf)>>> {
+    let width = if format == "sha1" { 20 } else { 32 };
+    Ok(cache::Cache::new(state, format, oid)
+        .restore(stage, width)?
+        .map(|packs| {
+            packs
+                .into_iter()
+                .map(|pack| (pack.pack, pack.index))
+                .collect()
+        }))
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct ObjectId([u8; 32]);
 

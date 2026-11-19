@@ -241,6 +241,10 @@ export const cases: Scenario[] = [
       const tip = commit(ctx, workspace.path, 'theirs');
       const fault = ctx.fail(landArgs(workspace, 'conflict', '--reconcile'));
       assert.equal(fault.code, 'merge_conflict');
+      const admin = ctx.git(['rev-parse', '--absolute-git-dir']);
+      const format = ctx.git(['rev-parse', '--show-object-format']);
+      const store = join(admin, 'graft', 'land-plans', `${format}-full`);
+      assert.equal(ctx.git(['for-each-ref', '--format=%(refname)', 'refs/graft/import'], store), '');
       const details = field(fault.details);
       assert.deepEqual(details.paths, ['tracked.txt']);
       assert.ok(Array.isArray(details.conflicts));

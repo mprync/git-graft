@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { leaveIndexedCheckoutJournal } from './checkout-journal.ts';
 import type { Context, Scenario } from './harness.ts';
@@ -44,6 +44,63 @@ function assertUndo(ctx: Context, dest: string, previous: string, landed: string
 }
 
 export const cases: Scenario[] = [
+  {
+    name: 'landing falls back when history cache ownership is unrecognized',
+    run(ctx) {
+      const ws = ctx.spawn('foreign-cache');
+      const admin = ctx.git(['rev-parse', '--absolute-git-dir']);
+      const marker = join(admin, 'graft', 'independent-packs-v2', 'graft-pack-cache');
+      if (!existsSync(marker)) ctx.unavailable('verified history cache is unavailable on this filesystem');
+      writeFileSync(marker, 'foreign cache marker\n');
+      const tip = commit(ctx, ws.path, 'feature.txt', 'preserved feature\n');
+      assert.equal(land(ctx, 'foreign-cache', ws), tip);
+      assert.equal(readFileSync(marker, 'utf8'), 'foreign cache marker\n');
+      ctx.git(['fsck', '--full'], planStore(ctx));
+      ctx.cli(undo('foreign-cache', ws.lease));
+      assert.equal(existsSync(join(ctx.repo, 'feature.txt')), false);
+    },
+  },
+  {
+    name: 'landing reuses verified delta history without duplicate objects and survives recovery',
+    run(ctx) {
+      writeFileSync(join(ctx.repo, 'history.bin'), randomBytes(1024 * 1024));
+      ctx.git(['add', 'history.bin']);
+      ctx.git(['commit', '-qm', 'history']);
+      ctx.git(['gc']);
+      const first = ctx.spawn('cache-base');
+      commit(ctx, ctx.repo, 'base-change.txt', 'base change\n');
+      const old = ctx.git(['rev-parse', 'HEAD']);
+      const ws = ctx.spawn('cache-delta');
+      const admin = ctx.git(['rev-parse', '--absolute-git-dir']);
+      const cache = join(admin, 'graft', 'independent-packs-v2', `sha1-${old}`);
+      if (!existsSync(cache)) ctx.unavailable('verified history cache is unavailable on this filesystem');
+      const cachedPacks = readdirSync(cache).filter(name => name.endsWith('.pack'));
+      assert(cachedPacks.length >= 2, 'expected inherited and delta packs');
+      const tip = commit(ctx, ws.path, 'feature.txt', 'landed change\n');
+      assert.equal(land(ctx, 'cache-delta', ws), tip);
+      const store = planStore(ctx);
+      const packDir = join(store, 'objects', 'pack');
+      const packs = readdirSync(packDir).filter(name => name.endsWith('.pack'));
+      for (const name of cachedPacks) assert(packs.includes(name), `missing cached pack ${name}`);
+      const ids: string[] = [];
+      for (const pack of packs) {
+        const output = ctx.git(['verify-pack', '-v', join(packDir, pack.replace(/\.pack$/, '.idx'))], store);
+        ids.push(...output.split('\n').map(line => line.match(/^([0-9a-f]{40,64}) (?:commit|tree|blob|tag) /)?.[1]).filter((id): id is string => !!id));
+      }
+      const historyBlob = ctx.git(['rev-parse', `${old}:history.bin`]);
+      assert.equal(ids.filter(id => id === historyBlob).length, 1, 'plan store duplicated the large history blob');
+      ctx.cli(['gc', '--apply']);
+      ctx.git(['gc', '--prune=now']);
+      ctx.git(['fsck', '--full'], store);
+      ctx.git(['fsck', '--full']);
+      const restored = ctx.cli(['restore', 'cache-delta', '--lease', ws.lease]);
+      assert.notEqual(restored.lease, ws.lease);
+      ctx.cli(undo('cache-delta', ws.lease));
+      assert.equal(existsSync(join(ctx.repo, 'feature.txt')), false);
+      assert.equal(readFileSync(join(ws.path, 'feature.txt'), 'utf8'), 'landed change\n');
+      ctx.cli(['drop', 'cache-base', '--lease', first.lease]);
+    },
+  },
   {
     name: 'undo reverses an entire fast-forward after restore and garbage collection',
     run(ctx) {
