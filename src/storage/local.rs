@@ -61,7 +61,7 @@ fn materialize<F: FnOnce() -> Result<()>>(
     ready: F,
 ) -> Result<Value> {
     let oid = checkout_identity_with_objects(workspace, oid, proof_objects)?;
-    validate_sparse(&workspace, &oid, sparse)?;
+    validate_sparse(workspace, &oid, sparse)?;
     let files = entries_with_objects(workspace, &oid, proof_objects)?;
     let checkout = LocalCheckout::reserve(workspace, proof_objects)?;
 
