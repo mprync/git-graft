@@ -112,6 +112,16 @@ export const cases: Scenario[] = [{
       assert.equal(readFileSync(join(ws.path, 'tracked.txt'), 'utf8'), 'initial\n');
       assert.deepEqual(objectResult(ws.result.storage).registered_dependencies,
         [{ manager: null, status: 'unavailable', reason: 'invalid_registration' }]);
+      const argv = [process.execPath, '-e', 'process.stdout.write("source execution")'];
+      const exec = ctx.cli(['exec', `foreign-registration-${index}`, '--lease', ws.lease, '--', ...argv]);
+      assert.equal(exec.success, true);
+      assert.equal(exec.stdout, 'source execution');
+      const warning = objectResult(exec.registered_manager);
+      assert.equal(warning.status, 'unavailable');
+      assert.equal(warning.reason, 'invalid_registration');
+      ctx.fail(['exec', `foreign-registration-${index}`, '--lease', ws.lease,
+        '--manager', 'foreign-fixture', '--', ...argv]);
+      assert.equal(readFileSync(registry, 'utf8'), data);
       for (const args of [
         ['register-manager', 'foreign-fixture', '--cache-env', 'FIXTURE_CACHE'],
         ['unregister-manager', 'foreign-fixture'],
@@ -247,7 +257,9 @@ export const cases: Scenario[] = [{
     ctx.git(['init', '-q', '-b', 'main'], other);
     writeFileSync(join(other, 'tracked'), 'other');
     ctx.git(['add', '.'], other); ctx.git(['commit', '-qm', 'other'], other);
+    assert(!existsSync(join(other, '.git', 'graft')));
     assert.deepEqual(ctx.cli(['list-managers'], other).managers, []);
+    assert(!existsSync(join(other, '.git', 'graft')));
     assert.notEqual(ctx.cli(args, other).cache_dir, cache);
     assert.deepEqual(ctx.cli(['unregister-manager', manager]), { manager, registered: false, cache_retained: true });
     assert.equal(readFileSync(join(cache, 'download'), 'utf8'), 'local package');
