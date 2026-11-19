@@ -18,6 +18,7 @@ use crate::{
 };
 
 use super::objects;
+mod scratch;
 
 const STORE_OWNER: &str = "graft-object-store";
 
@@ -94,7 +95,7 @@ fn verified_store(p: &Project, root: &Path, name: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn open_store(p: &Project, root: &Path) -> Result<(String, PathBuf)> {
+fn open_store(p: &Project, root: &Path) -> Result<(String, PathBuf, bool)> {
     let format = git::text(&p.repo, &["rev-parse", "--show-object-format"])?;
     ensure!(
         matches!(format.as_str(), "sha1" | "sha256"),
@@ -109,8 +110,10 @@ fn open_store(p: &Project, root: &Path) -> Result<(String, PathBuf)> {
         let stage = tempfile::Builder::new()
             .prefix(".pending-")
             .tempdir_in(root)?;
+        scratch::mark(p, stage.path())?;
+        let stage = stage.keep();
         git::bytes(
-            stage.path(),
+            &stage,
             &[
                 "-c",
                 "init.defaultRefFormat=files",
@@ -121,21 +124,21 @@ fn open_store(p: &Project, root: &Path) -> Result<(String, PathBuf)> {
                 &format!("--object-format={format}"),
             ],
         )?;
-        registry::atomic(&stage.path().join(STORE_OWNER), p.id().as_bytes())?;
+        registry::atomic(&stage.join(STORE_OWNER), p.id().as_bytes())?;
         if !shallow.is_empty() {
-            registry::atomic(&stage.path().join("shallow"), &shallow)?;
+            registry::atomic(&stage.join("shallow"), &shallow)?;
         }
         for file in ["HEAD", "config"] {
             OpenOptions::new()
                 .write(true)
-                .open(stage.path().join(file))?
+                .open(stage.join(file))?
                 .sync_all()?;
         }
-        super::registry::sync_directory(stage.path())?;
-        recovery::rename_exclusive(&stage.keep(), &path)?;
-        super::registry::sync_directory(root)?;
+        super::registry::sync_directory(&stage)?;
+        scratch::checkpoint(p, &stage)?;
+        return Ok((name, stage, true));
     }
-    Ok((name.clone(), verified_store(p, root, &name)?))
+    Ok((name.clone(), verified_store(p, root, &name)?, false))
 }
 
 fn sync_pin_directories(store: &Path, reference: &str) -> Result<()> {
@@ -193,48 +196,119 @@ fn store_for_plan(p: &Project, plan: &Plan) -> Result<PathBuf> {
     Ok(store)
 }
 
-// Each operation owns its pins until the permanent plan pins are installed.
-// Removing them on every return also avoids retaining rejected private tips.
-struct ImportPins<'a> {
-    store: &'a Path,
-    prefix: String,
-}
-
-impl Drop for ImportPins<'_> {
-    fn drop(&mut self) {
-        for kind in ["base", "tip"] {
-            let name = format!("{}/{kind}", self.prefix);
-            let _ = objects::remove_import_pin(self.store, &name);
-        }
-    }
-}
-
 /// Plan and durably pin both inputs and the result inside the owned bare store.
 pub(crate) fn prepare(p: &Project, workspace: &Path, options: &Land) -> Result<Plan> {
     let root = stores(p, true)?;
-    let (name, store) = open_store(p, &root)?;
-    let pins = ImportPins {
-        store: &store,
-        prefix: format!("refs/graft/import/{}", uuid::Uuid::new_v4()),
+    scratch::recover(p, &root)?;
+    let (name, store, stage) = open_store(p, &root)?;
+    // Merge-tree can write conflict objects even when planning fails. Keep
+    // those writes separate from the checkpointed first store.
+    let planning = if stage {
+        let temp = tempfile::Builder::new()
+            .prefix(".planning-")
+            .tempdir_in(&root)?;
+        let format = git::text(&store, &["rev-parse", "--show-object-format"])?;
+        git::bytes(
+            temp.path(),
+            &[
+                "init",
+                "--bare",
+                "--quiet",
+                "--template=",
+                &format!("--object-format={format}"),
+            ],
+        )?;
+        let object_path = store.join("objects");
+        let path = git::path_str(&object_path)?;
+        let mut escaped = String::new();
+        for ch in path.chars() {
+            match ch {
+                '\\' => escaped.push_str(r"\\"),
+                '"' => escaped.push_str(r#"\""#),
+                ch if ch.is_ascii_control() => escaped.push_str(&format!("\\{:03o}", ch as u32)),
+                ch => escaped.push(ch),
+            }
+        }
+        let path = escaped;
+        registry::atomic(
+            &temp.path().join("objects/info/alternates"),
+            format!("\"{path}\"\n").as_bytes(),
+        )?;
+        if registry::exists(&store.join("shallow"))? {
+            registry::atomic(
+                &temp.path().join("shallow"),
+                &registry::regular(&store.join("shallow"))?,
+            )?;
+        }
+        Some(temp)
+    } else {
+        None
     };
-    let plan =
-        landing::prepare_with_import(&p.repo, workspace, &p.state, options, &store, |old, tip| {
-            objects::import_plan_inputs(
+    let planning_store = planning
+        .as_ref()
+        .map_or(store.as_path(), |temp| temp.path());
+    let prefix = format!("refs/graft/import/{}", uuid::Uuid::new_v4());
+    let mut imported = None;
+    let mut base = None;
+    let mut tip = None;
+    let result = landing::prepare_with_import(
+        &p.repo,
+        workspace,
+        &p.state,
+        options,
+        planning_store,
+        |old, workspace_tip| {
+            base = Some(old.to_owned());
+            tip = Some(workspace_tip.to_owned());
+            imported = Some(objects::import_plan_inputs(
                 &store,
                 &p.repo,
                 workspace,
                 &p.state,
-                &pins.prefix,
+                &prefix,
+                stage,
                 old,
-                tip,
-            )
-        })?;
-    create_plan_pins(&store, &plan)?;
-    drop(pins);
+                workspace_tip,
+            )?);
+            if stage {
+                scratch::checkpoint(p, &store)?;
+            }
+            Ok(())
+        },
+    );
+    let mut result_locks = None;
+    let result = result.and_then(|plan| {
+        if stage {
+            result_locks = Some(objects::transfer_result(&store, planning_store, &plan.new)?);
+        }
+        create_plan_pins(&store, &plan)?;
+        Ok(plan)
+    });
+    let plan = match result {
+        Ok(plan) => plan,
+        Err(error) => {
+            if stage {
+                scratch::purge(p, &root, &store)
+                    .context("retain unverified private landing scratch")?;
+            }
+            return Err(error);
+        }
+    };
+    if stage && let Some(old) = &base {
+        objects::remove_import_pin(&store, &format!("{prefix}/base"), old)?;
+    }
+    if stage && let Some(tip) = &tip {
+        objects::remove_import_pin(&store, &format!("{prefix}/tip"), tip)?;
+    }
+    drop(imported);
+    drop(result_locks);
+    if stage {
+        recovery::rename_exclusive(&store, &root.join(&name))?;
+        super::registry::sync_directory(&root)?;
+        verified_store(p, &root, &name)?;
+    }
     let receipt = plan_receipt(&root, &plan);
     if registry::exists(&receipt)? {
-        // The immutable commit tuple can repeat across workspaces or boundary
-        // changes. Reuse its earlier durable receipt when it still validates.
         store_for_plan(p, &plan)?;
     } else {
         let mut file = tempfile::NamedTempFile::new_in(&root)?;
@@ -469,6 +543,73 @@ mod tests {
             );
             run(&self.workspace, &["merge", "--ff-only", oid]);
         }
+    }
+
+    #[test]
+    fn incomplete_first_store_is_not_published_or_adopted() -> Result<()> {
+        let fixture = Fixture::new()?;
+        let root = stores(&fixture.p, true)?;
+        let (name, staged, stage) = open_store(&fixture.p, &root)?;
+        assert!(stage);
+        assert!(!root.join(&name).exists());
+        let plan = fixture.plan()?;
+        assert_eq!(plan.old, fixture.base);
+        assert!(!staged.exists());
+        assert!(root.join(name).exists());
+        Ok(())
+    }
+
+    #[test]
+    fn interrupted_store_with_foreign_file_is_preserved() -> Result<()> {
+        let fixture = Fixture::new()?;
+        let root = stores(&fixture.p, true)?;
+        let (_, staged, _) = open_store(&fixture.p, &root)?;
+        fs::write(staged.join("foreign"), b"preserve")?;
+        fixture.plan()?;
+        assert_eq!(fs::read(staged.join("foreign"))?, b"preserve");
+        Ok(())
+    }
+
+    #[test]
+    fn replaced_scratch_file_is_preserved_while_landing_continues() -> Result<()> {
+        let fixture = Fixture::new()?;
+        let root = stores(&fixture.p, true)?;
+        let (_, staged, _) = open_store(&fixture.p, &root)?;
+        let config = staged.join("config");
+        let original = fs::read(&config)?;
+        recovery::rename_exclusive(&config, &root.join("saved-config"))?;
+        fs::write(&config, &original)?;
+        fixture.plan()?;
+        assert_eq!(fs::read(&config)?, original);
+        Ok(())
+    }
+
+    #[test]
+    fn interrupted_pack_install_is_retained_and_does_not_block_retry() -> Result<()> {
+        let fixture = Fixture::new()?;
+        let root = stores(&fixture.p, true)?;
+        let (_, staged, _) = open_store(&fixture.p, &root)?;
+        let partial =
+            staged.join("objects/pack/pack-1111111111111111111111111111111111111111.pack");
+        fs::write(&partial, b"partial pack")?;
+        fixture.plan()?;
+        assert_eq!(fs::read(partial)?, b"partial pack");
+        Ok(())
+    }
+
+    #[test]
+    fn torn_marker_and_foreign_planning_scratch_do_not_block_landing() -> Result<()> {
+        let fixture = Fixture::new()?;
+        let root = stores(&fixture.p, true)?;
+        let (_, staged, _) = open_store(&fixture.p, &root)?;
+        fs::write(staged.join(".graft-land-pending"), b"torn")?;
+        let foreign = root.join(".planning-foreign");
+        fs::create_dir(&foreign)?;
+        fs::write(foreign.join("data"), b"preserve")?;
+        fixture.plan()?;
+        assert_eq!(fs::read(staged.join(".graft-land-pending"))?, b"torn");
+        assert_eq!(fs::read(foreign.join("data"))?, b"preserve");
+        Ok(())
     }
 
     #[test]
@@ -874,8 +1015,34 @@ mod tests {
         write(&fixture.workspace, file, "theirs\n");
         let tip = commit(&fixture.workspace, "theirs");
         let error = fixture.plan().unwrap_err();
-        let fault = error.downcast_ref::<Fault>().unwrap();
+        let fault = error
+            .downcast_ref::<Fault>()
+            .unwrap_or_else(|| panic!("{error:#}"));
         assert_eq!(fault.code, "merge_conflict");
+        let root = stores(&fixture.p, false).unwrap();
+        assert!(!fs::read_dir(&root).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".pending-")
+        }));
+        assert_eq!(
+            fixture
+                .plan()
+                .unwrap_err()
+                .downcast_ref::<Fault>()
+                .unwrap()
+                .code,
+            "merge_conflict"
+        );
+        assert!(!fs::read_dir(&root).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".pending-")
+        }));
         assert_eq!(fault.details["paths"], json!([file]));
         let conflicts = fault.details["conflicts"].as_array().unwrap();
         assert_eq!(conflicts.len(), 1);

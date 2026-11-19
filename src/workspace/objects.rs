@@ -323,7 +323,7 @@ pub(super) fn initialize(
     Ok(receipt)
 }
 
-fn open_regular(path: &Path) -> io::Result<File> {
+pub(super) fn open_regular(path: &Path) -> io::Result<File> {
     if !fs::symlink_metadata(path)?.is_file() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -454,7 +454,7 @@ fn pin_matches(primary: &Path, pin: &str, oid: &str) -> Result<bool> {
     Ok(false)
 }
 
-struct PackLock {
+pub(super) struct PackLock {
     path: PathBuf,
     file: File,
     marker: Vec<u8>,
@@ -644,7 +644,11 @@ fn import(primary: &Path, workspace: &Path, tip: &str, pin: &str) -> Result<()> 
 }
 
 /// Keep newly installed packs safe from GC until the caller publishes a ref.
-pub(super) fn transfer_result(destination: &Path, source: &Path, oid: &str) -> Result<impl Drop> {
+pub(super) fn transfer_result(
+    destination: &Path,
+    source: &Path,
+    oid: &str,
+) -> Result<Vec<PackLock>> {
     ensure!(
         object_format(destination)? == object_format(source)?,
         "Git object formats differ"
@@ -665,8 +669,12 @@ pub(super) fn transfer_result(destination: &Path, source: &Path, oid: &str) -> R
     Ok(locks)
 }
 
-pub(super) fn remove_import_pin(private: &Path, reference: &str) -> Result<()> {
+pub(super) fn remove_import_pin(private: &Path, reference: &str, expected: &str) -> Result<()> {
     if let Some(oid) = crate::recovery::direct_ref(private, reference)? {
+        ensure!(
+            oid == expected,
+            "temporary import pin was replaced: {reference}"
+        );
         run(
             private,
             &["update-ref", "--no-deref", "-d", reference, &oid],
@@ -682,9 +690,10 @@ pub(super) fn import_plan_inputs(
     workspace: &Path,
     state: &Path,
     import_prefix: &str,
+    allow_cache: bool,
     old: &str,
     tip: &str,
-) -> Result<()> {
+) -> Result<Vec<PackLock>> {
     if shallow::is_shallow(private)?
         || shallow::is_shallow(primary)?
         || shallow::is_shallow(workspace)?
@@ -696,7 +705,8 @@ pub(super) fn import_plan_inputs(
         );
         let old = exact_commit(primary, old)?;
         let tip = exact_commit(workspace, tip)?;
-        shallow::import_plan_inputs(private, primary, workspace, &old, &tip)
+        shallow::import_plan_inputs(private, primary, workspace, &old, &tip)?;
+        Ok(Vec::new())
     } else {
         let old = exact_commit(primary, old)?;
         let format = object_format(primary)?;
@@ -707,36 +717,44 @@ pub(super) fn import_plan_inputs(
         // A ref makes the verified base visible to fetch-pack negotiation and
         // protects it until the durable plan pins have been written.
         let pin = format!("{import_prefix}/base");
-        let cached = plan_cache::restore(private, state, format, &old)?;
-        let _old = if cached.is_none() {
-            Some(transfer_result(private, primary, &old)?)
+        let cached = if allow_cache {
+            plan_cache::restore(private, state, format, &old)?
         } else {
             None
         };
-        run(
-            private,
-            &[
-                "update-ref",
-                "--no-deref",
-                &pin,
-                &old,
-                &"0".repeat(old.len()),
-            ],
-        )?;
-        let _tip = transfer_result(private, workspace, tip)?;
-        let tip = exact_commit(workspace, tip)?;
-        let pin = format!("{import_prefix}/tip");
-        run(
-            private,
-            &[
-                "update-ref",
-                "--no-deref",
-                &pin,
-                &tip,
-                &"0".repeat(tip.len()),
-            ],
-        )?;
-        Ok(())
+        let mut locks = if let Some(cached) = cached {
+            cached
+        } else {
+            transfer_result(private, primary, &old)?
+        };
+        if allow_cache {
+            run(
+                private,
+                &[
+                    "update-ref",
+                    "--no-deref",
+                    &pin,
+                    &old,
+                    &"0".repeat(old.len()),
+                ],
+            )?;
+        }
+        locks.extend(transfer_result(private, workspace, tip)?);
+        if allow_cache {
+            let tip = exact_commit(workspace, tip)?;
+            let pin = format!("{import_prefix}/tip");
+            run(
+                private,
+                &[
+                    "update-ref",
+                    "--no-deref",
+                    &pin,
+                    &tip,
+                    &"0".repeat(tip.len()),
+                ],
+            )?;
+        }
+        Ok(locks)
     }
 }
 
