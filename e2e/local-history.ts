@@ -1,11 +1,12 @@
 /** Exercise local object snapshots and isolated history through the public CLI. */
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { existsSync, lstatSync, readFileSync, readdirSync, readlinkSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { assertSeparateRegularFiles, objectResult, type Context, type Scenario } from './harness.ts';
+import { assertNoRecord, packRecords } from './pack-records.ts';
 
 const exec = promisify(execFile);
 
@@ -15,6 +16,12 @@ function objects(ctx: Context, path = ctx.repo): string[] {
 
 function closure(ctx: Context, tip: string, path = ctx.repo): string[] {
   return ctx.git(['rev-list', '--objects', '--no-object-names', tip], path).split('\n').sort();
+}
+
+function tipObjects(ctx: Context, tip: string, repo = ctx.repo): string[] {
+  const tree = ctx.git(['rev-parse', tip + '^{tree}'], repo);
+  const entries = ctx.git(['ls-tree', '-rt', '--format=%(objectname)', tip], repo);
+  return [...new Set([tip, tree, ...entries.split('\n').filter(Boolean)])].sort();
 }
 
 function checkout(ctx: Context, path: string, tip: string, ref: string) {
@@ -46,6 +53,80 @@ function read(path: string, file: string): string {
 }
 
 export const cases: Scenario[] = [
+  ...['sha1', 'sha256'].map((format): Scenario => ({
+    name: `advancing a cached tip excludes replaced, deleted and parent objects (${format})`,
+    run(ctx) {
+      const donor = join(ctx.root, format);
+      ctx.git(['init', '-q', '-b', 'main', '--object-format=' + format, donor]);
+      for (let i = 0; i < 96; i++) writeFileSync(join(donor, `file-${i}`), randomBytes(16 * 1024));
+      ctx.git(['add', '.'], donor);
+      ctx.git(['commit', '-qm', 'base'], donor);
+      const base = ctx.git(['rev-parse', 'HEAD'], donor);
+      const parent = ctx.spawn('parent', ['--history', 'tip'], donor);
+      const initialObjects = objects(ctx, parent.path);
+      const changed = readFileSync(join(donor, 'file-20'));
+      const deleted = readFileSync(join(donor, 'file-21'));
+      writeFileSync(join(donor, 'file-20'), 'replacement\n');
+      ctx.git(['rm', '-q', '--', 'file-21'], donor);
+      ctx.git(['commit', '-qam', 'replace and delete'], donor);
+      const next = ctx.git(['rev-parse', 'HEAD'], donor);
+      const expected = tipObjects(ctx, next, donor);
+      const child = ctx.spawn('child', ['--history', 'tip'], donor);
+      const receipt = objectResult(objectResult(child.result.storage).objects);
+      const nativeClone = objectResult(ctx.cli(['doctor'], donor).source_storage).native_clone;
+      if (nativeClone) {
+        assert.equal(receipt.source, 'parent-tip-cache');
+        assert.equal(receipt.filtered_parent_packs, 1);
+      }
+      assert.deepEqual(objects(ctx, child.path), expected);
+      assert.equal(ctx.git(['rev-list', '--all'], child.path), next);
+      assert.equal(read(child.path, 'file-20'), 'replacement\n');
+      assert(!existsSync(join(child.path, 'file-21')));
+      assert.equal(ctx.git(['fsck', '--full'], child.path), '');
+      const advanced = commitFile(ctx, donor, 'added', 'one more commit\n');
+      const grandchild = ctx.spawn('grandchild', ['--history', 'tip'], donor);
+      assert.deepEqual(objects(ctx, grandchild.path), tipObjects(ctx, advanced, donor));
+      assert.equal(ctx.git(['fsck', '--full'], grandchild.path), '');
+      if (nativeClone) {
+        const reuse = objectResult(objectResult(grandchild.result.storage).objects);
+        assert.equal(reuse.source, 'parent-tip-cache');
+        assert(Number(reuse.reused_parent_packs) >= 1);
+      }
+      const removed = new Set(initialObjects.filter(id => !expected.includes(id)));
+      const dir = join(parent.path, '.git', 'objects', 'pack');
+      for (const index of readdirSync(dir).filter(name => name.endsWith('.idx'))) {
+        const bytes = readFileSync(join(dir, index.replace(/\.idx$/, '.pack')));
+        for (const record of packRecords(ctx, join(dir, index), parent.path)) {
+          if (!removed.delete(record.id)) continue;
+          const excluded = bytes.subarray(record.offset, record.offset + record.size);
+          assertNoRecord(child.path, excluded);
+          assertNoRecord(grandchild.path, excluded);
+        }
+      }
+      assert.equal(removed.size, 0);
+      assert.equal(ctx.git(['rev-parse', 'HEAD'], parent.path), base);
+      assert.deepEqual(objects(ctx, parent.path), initialObjects);
+      assert.deepEqual(readFileSync(join(parent.path, 'file-20')), changed);
+      assert.deepEqual(readFileSync(join(parent.path, 'file-21')), deleted);
+      if (nativeClone) {
+        const cache = join(donor, '.git', 'graft', 'independent-packs-v2');
+        const generations = readdirSync(cache).filter(name => name.startsWith(format + '-' + advanced + '-shallow-'));
+        assert.equal(generations.length, 1);
+        const receipt = join(cache, generations[0], 'verified.json');
+        const held = join(ctx.root, 'held-receipt');
+        renameSync(receipt, held);
+        try {
+          const last = commitFile(ctx, donor, 'added', 'updated content\n');
+          const fallback = ctx.spawn('fallback', ['--history', 'tip'], donor);
+          assert.equal(objectResult(objectResult(fallback.result.storage).objects).source, 'local-export');
+          assert.deepEqual(objects(ctx, fallback.path), tipObjects(ctx, last, donor));
+          assert.equal(read(grandchild.path, 'added'), 'one more commit\n');
+        } finally {
+          renameSync(held, receipt);
+        }
+      }
+    },
+  })),
   {
     name: 'checkout honors literal filter names that also describe Git attribute states',
     run(ctx) {
@@ -115,8 +196,7 @@ export const cases: Scenario[] = [
       ctx.git(['commit', '-qm', 'selected checkout']);
       const base = ctx.git(['rev-parse', 'HEAD']);
       const tree = ctx.git(['rev-parse', `${base}^{tree}`]);
-      const expected = [...new Set([base, tree,
-        ...ctx.git(['ls-tree', '-rt', '--format=%(objectname)', base]).split('\n')])].sort();
+      const expected = tipObjects(ctx, base);
       ctx.git(['switch', '-c', 'unrelated']);
       const unrelated = commitFile(ctx, ctx.repo, 'other.txt', 'other branch\n');
       ctx.git(['switch', 'main']);
@@ -194,8 +274,7 @@ export const cases: Scenario[] = [
       ctx.git(['switch', 'main']);
       const unrelated = commitFile(ctx, ctx.repo, 'other.txt', 'main only\n');
       ctx.git(['repack', '-ad']);
-      const expected = [...new Set([base, ctx.git(['rev-parse', base + '^{tree}']),
-        ...ctx.git(['ls-tree', '-rt', '--format=%(objectname)', base]).split('\n')])].sort();
+      const expected = tipObjects(ctx, base);
 
       // Warm the full-ancestry cache first. The narrower visibility must survive a cache hit.
       const full = ctx.spawn('ancestry', ['--history', 'isolated', '--base', base]);

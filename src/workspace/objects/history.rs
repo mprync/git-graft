@@ -216,12 +216,17 @@ pub(super) fn bootstrap(
     if let Some(ancestor) = ancestor {
         receipt["ancestor"] = json!(ancestor);
         receipt["new_pack_count"] = json!(packs.len() - shared_count);
+    } else if source == "parent-tip-cache" {
+        receipt["reused_parent_packs"] = json!(shared_count);
+        receipt["filtered_parent_packs"] = json!(donor_reuse.filtered);
     } else if source != "cache" && shared_count != 0 {
         receipt["reused_primary_packs"] = json!(shared_count);
         receipt["reused_primary_bytes"] = json!(reused_bytes);
     }
     if donor_reuse.filtered > 0 {
-        receipt["filtered_primary_packs"] = json!(donor_reuse.filtered);
+        if source != "parent-tip-cache" {
+            receipt["filtered_primary_packs"] = json!(donor_reuse.filtered);
+        }
         // Logical ranges retained at their original offsets. Physical savings
         // depend on allocation-block boundaries and are measured separately.
         receipt["filtered_unchanged_bytes"] = json!(donor_reuse.unchanged_bytes);
@@ -305,7 +310,7 @@ fn stage_cold_packs(
     let donor = stage.join("donor");
     let exported = stage.join("exported");
     fs::create_dir_all(donor.join("pack"))?;
-    match pack_with_donors(source, root, &donor.join("pack"), expected, width) {
+    match pack_with_donors(source, root, &donor.join("pack"), expected, width, None) {
         Ok((packs, reused)) => {
             let source = if reused.whole == packs.len() {
                 "primary-pack"
@@ -317,6 +322,14 @@ fn stage_cold_packs(
             Ok((packs, source, donor, reused))
         }
         Err(_) => {
+            // A cached parent tip can contain most of the new selection.
+            // Keep its original objects outside the workspace while filtering.
+            if let Some((tip, boundary)) = shallow_tip
+                && let Ok(Some((packs, objects, reuse))) =
+                    tip::stage_parent(source, root, stage, tip, boundary, expected, width)
+            {
+                return Ok((packs, "parent-tip-cache", objects, reuse));
+            }
             // Git's revision walk supplies path names to its delta search.
             // Only use it for a complete single-pack export with a pinned
             // shallow boundary. A residual set must use its explicit IDs.
@@ -616,12 +629,16 @@ fn pack_with_donors(
     stage: &Path,
     expected: &[ObjectId],
     width: usize,
+    parent_objects: Option<&Path>,
 ) -> Result<(Vec<Pack>, DonorReuse)> {
     ensure!(
         cfg!(any(target_os = "macos", target_os = "linux")),
         "CoW unavailable"
     );
-    let objects = repository_path(source.primary, "objects")?;
+    let objects = match parent_objects {
+        Some(path) => path.to_owned(),
+        None => repository_path(source.primary, "objects")?,
+    };
     let dir = objects.join("pack");
     ensure!(
         fs::symlink_metadata(&objects)?.is_dir() && fs::symlink_metadata(&dir)?.is_dir(),
@@ -703,7 +720,13 @@ fn pack_with_donors(
                 if remaining.is_empty() {
                     break;
                 }
-                if let Ok(candidate) = mixed::prepare(source.state, &donor, &remaining, width) {
+                if let Ok(candidate) = mixed::prepare(
+                    parent_objects.unwrap_or(source.state),
+                    &donor,
+                    &remaining,
+                    width,
+                    parent_objects.is_some(),
+                ) {
                     for id in &candidate.ids {
                         ensure!(remaining.remove(id), "duplicate filtered Git object");
                     }

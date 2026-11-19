@@ -5,14 +5,14 @@ export function objectBootstrap(value: unknown, includeRevisions = true): Record
   const safe: Record<string, unknown> = {};
   const enums: Record<string,string[]> = {
     method:['clonefile','reflink','local-pack','none'],
-    source:['primary-pack','filtered-primary','cache','local-export','ancestor-cache','local-snapshot','none'],
+    source:['primary-pack','filtered-primary','cache','local-export','ancestor-cache','parent-tip-cache','local-snapshot','none'],
     object_format:['sha1','sha256'],
   };
   for (const [key,allowed] of Object.entries(enums)) {
     const field = input[key];
     if (typeof field === 'string' && allowed.includes(field)) safe[key] = field;
   }
-  for (const key of ['bytes','pack_bytes','index_bytes','loose_bytes','shared_bytes','cache_bytes','pack_count','loose_count','new_pack_count','reused_primary_packs','reused_primary_bytes','filtered_primary_packs','filtered_unchanged_bytes']) {
+  for (const key of ['bytes','pack_bytes','index_bytes','loose_bytes','shared_bytes','cache_bytes','pack_count','loose_count','new_pack_count','reused_primary_packs','reused_primary_bytes','filtered_primary_packs','reused_parent_packs','filtered_parent_packs','filtered_unchanged_bytes']) {
     const field = input[key];
     if (typeof field === 'number' && Number.isSafeInteger(field) && field >= 0) safe[key] = field;
   }

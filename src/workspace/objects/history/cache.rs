@@ -122,6 +122,15 @@ impl<'a> Cache<'a> {
     }
 
     pub(super) fn restore(&self, stage: &Path, width: usize) -> Result<Option<Vec<Pack>>> {
+        self.restore_bounded(stage, width, None)
+    }
+
+    pub(super) fn restore_bounded(
+        &self,
+        stage: &Path,
+        width: usize,
+        budget: Option<std::ops::RangeInclusive<u64>>,
+    ) -> Result<Option<Vec<Pack>>> {
         if !reflinks_available() {
             return Ok(None);
         }
@@ -135,6 +144,14 @@ impl<'a> Cache<'a> {
             return Ok(None);
         }
         let (receipt, _) = read_receipt(&self.key, self.format, self.base)?;
+        let bytes = receipt
+            .packs
+            .iter()
+            .map(VerifiedPack::bytes)
+            .fold(0, u64::saturating_add);
+        if budget.is_some_and(|range| !range.contains(&bytes) || receipt.packs.len() >= 16) {
+            return Ok(None);
+        }
         let restore = |entry: &VerifiedPack| -> Result<Pack> {
             let from = Pack::at(&self.key, &entry.hash, width)?;
             let to = Pack::at(stage, &entry.hash, width)?;
@@ -146,11 +163,6 @@ impl<'a> Cache<'a> {
             .map_or(1, usize::from)
             .min(MAX_RESTORE_WORKERS)
             .min(receipt.packs.len());
-        let bytes = receipt
-            .packs
-            .iter()
-            .map(VerifiedPack::bytes)
-            .fold(0, u64::saturating_add);
         if workers < 2 || bytes < PARALLEL_RESTORE_BYTES {
             return receipt
                 .packs
@@ -403,16 +415,33 @@ fn write_synced(path: &Path, bytes: &[u8]) -> Result<()> {
 }
 
 pub(super) fn private_tempdir_in(parent: &Path) -> Result<tempfile::TempDir> {
+    private_tempdir(parent, ".tmp")
+}
+
+// Native Git prunes expired tmp_* directories under objects/pack, including
+// children left behind when the process was interrupted.
+pub(super) fn temporary_pack_dir(parent: &Path) -> Result<tempfile::TempDir> {
     #[cfg(unix)]
-    let stage = {
+    {
+        use std::os::unix::fs::MetadataExt;
+        let dir = fs::symlink_metadata(parent)?;
+        ensure!(
+            dir.is_dir() && dir.uid() == unsafe { libc::geteuid() } && dir.mode() & 0o022 == 0,
+            "donor pack directory is not privately writable"
+        );
+    }
+    private_tempdir(parent, "tmp_pack_graft_")
+}
+
+fn private_tempdir(parent: &Path, prefix: &str) -> Result<tempfile::TempDir> {
+    let mut builder = tempfile::Builder::new();
+    builder.prefix(prefix);
+    #[cfg(unix)]
+    {
         use std::os::unix::fs::PermissionsExt;
-        tempfile::Builder::new()
-            .permissions(fs::Permissions::from_mode(0o700))
-            .tempdir_in(parent)?
-    };
-    #[cfg(not(unix))]
-    let stage = tempfile::tempdir_in(parent)?;
-    Ok(stage)
+        builder.permissions(fs::Permissions::from_mode(0o700));
+    }
+    Ok(builder.tempdir_in(parent)?)
 }
 
 pub(super) fn clone_checked(source: &File, destination: &Path) -> Result<()> {

@@ -1,8 +1,8 @@
 //! Prepare checkout from a small independently indexed store while Git builds
 //! the complete single-commit pack. Only the complete pack is installed.
 use super::{
-    Boundary, ObjectId, Pack, bootstrap, cache, checked, output_text, transfer_git,
-    verify_membership,
+    Boundary, DonorReuse, ObjectId, Pack, Source, bootstrap, cache, checked, output_text,
+    pack_with_donors, rename_exclusive, transfer_git, verify_membership,
 };
 use crate::workspace::objects::{Primary, finish_head};
 use anyhow::{Context, Result, ensure};
@@ -11,13 +11,87 @@ use std::{
     collections::HashSet,
     fs,
     io::{Seek, Write},
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     thread,
 };
 
 // Larger manifests or attribute files take the ordinary verified checkout.
 const PROOF_LIMIT: u64 = 16 * 1024 * 1024;
+
+type ParentPacks = (Vec<Pack>, PathBuf, DonorReuse);
+
+pub(super) fn stage_parent(
+    source: Source<'_>,
+    root: &Path,
+    stage: &Path,
+    tip: &str,
+    boundary: &Path,
+    expected: &[ObjectId],
+    width: usize,
+) -> Result<Option<ParentPacks>> {
+    let format = if width == 20 { "sha1" } else { "sha256" };
+    let cache = cache::Cache::new(source.state, format, tip);
+    if !cache.has_root()
+        || fs::metadata(boundary)?.len() != (tip.len() + 1) as u64
+        || fs::read(boundary)? != format!("{tip}\n").as_bytes()
+    {
+        return Ok(None);
+    }
+    let mut query = transfer_git(source.primary);
+    query.args(["rev-parse", "--verify", &format!("{tip}^1")]);
+    let parent = checked(query)?;
+    let parent = output_text(&parent)?;
+    ObjectId::from_hex(parent.as_bytes(), width)?;
+    let key = crate::workspace::objects::shallow::cache_key(parent, &format!("{parent}\n"));
+    let generation = cache.for_base(&key);
+    if !generation.has_entry() {
+        return Ok(None);
+    }
+    let primary_objects = super::repository_path(source.primary, "objects")?;
+    let primary_packs = primary_objects.join("pack");
+    ensure!(
+        fs::symlink_metadata(&primary_objects)?.is_dir()
+            && fs::symlink_metadata(&primary_packs)?.is_dir(),
+        "invalid primary Git object directory"
+    );
+    let original = cache::temporary_pack_dir(&primary_packs)?;
+    let original_packs = original.path().join("pack");
+    fs::create_dir(&original_packs)?;
+    // A small new selection can follow a very large deletion. Bound the
+    // optional parent read before cloning or hashing its pack files.
+    let budget = super::mixed::MIN_PACK_BYTES..=(192 << 20);
+    if generation
+        .restore_bounded(&original_packs, width, Some(budget))?
+        .is_none()
+    {
+        return Ok(None);
+    }
+    // Even an interrupted verification must leave unverified parent bytes
+    // in primary scratch. Move only individually verified pack pairs.
+    let selection = original.path().join("selection");
+    fs::create_dir(&selection)?;
+    let (mut packs, reuse) = pack_with_donors(
+        source,
+        root,
+        &selection,
+        expected,
+        width,
+        Some(original.path()),
+    )?;
+    verify_membership(&packs, expected, width)?;
+    let objects = stage.join("parent-selection");
+    let pack_dir = objects.join("pack");
+    fs::create_dir_all(&pack_dir)?;
+    for pack in &mut packs {
+        for file in [&mut pack.pack, &mut pack.index] {
+            let to = pack_dir.join(file.file_name().context("missing Git pack filename")?);
+            rename_exclusive(file, &to)?;
+            *file = to;
+        }
+    }
+    Ok(Some((packs, objects, reuse)))
+}
 
 pub(in crate::workspace) fn needs_tip_proof(state: &Path, base: &str) -> bool {
     let key = crate::workspace::objects::shallow::cache_key(base, &format!("{base}\n"));

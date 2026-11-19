@@ -66,6 +66,7 @@ fn offsets<'a>(
     index: &'a [u8],
     width: usize,
     wanted: &HashSet<ObjectId>,
+    allow_prefix: bool,
 ) -> Result<(&'a [u8], Vec<OffsetAndIndexRow>)> {
     let mut table = index;
     let count = index_count(&mut table)?;
@@ -80,8 +81,8 @@ fn offsets<'a>(
     );
     let (ids, rest) = table.split_at(count * width);
     let starts = &rest[count * 4..count * 8];
-    // Keeping compressed ranges in place requires the object immediately
-    // after the pack header. Rule out a donor using its index alone.
+    // Most primary history lies outside a single-tip selection. Reject an
+    // ineligible first record cheaply unless inspecting a nearby tip pack.
     let first = starts
         .as_chunks::<4>()
         .0
@@ -89,7 +90,8 @@ fn offsets<'a>(
         .position(|start| *start == 12u32.to_be_bytes())
         .context("missing first pack record")?;
     ensure!(
-        wanted.contains(&object_id(&ids[first * width..(first + 1) * width], width)),
+        allow_prefix
+            || wanted.contains(&object_id(&ids[first * width..(first + 1) * width], width)),
         "first pack record is outside the selected history"
     );
     let mut records = Vec::new();
@@ -164,6 +166,7 @@ fn clear_gap(bytes: &mut [u8]) -> Result<()> {
 
 struct Selection {
     ids: Vec<ObjectId>,
+    first_header: Option<Range<usize>>,
     // Compressed bytes to move right, followed by the end of the removed run.
     gaps: Vec<(Range<usize>, usize)>,
     end: usize,
@@ -175,6 +178,7 @@ fn select(
     records: &[OffsetAndIndexRow],
     width: usize,
     wanted: &HashSet<ObjectId>,
+    allow_prefix: bool,
 ) -> Result<Selection> {
     ensure!(
         bytes.len() >= 12 + width
@@ -195,6 +199,7 @@ fn select(
     gaps.try_reserve_exact(records.len() / 2)?;
     let mut previous = 12..12;
     let mut rewrite = 0;
+    let mut first_header = None;
     for (i, &(start, row)) in records.iter().enumerate() {
         let end = records.get(i + 1).map_or(payload_end, |next| next.0);
         ensure!(
@@ -209,17 +214,29 @@ fn select(
         };
         if previous.end != start {
             ensure!(
-                count > 0,
-                "first pack record is outside the selected history"
-            );
-            ensure!(
                 start - previous.end <= MAX_ALIGNMENT_BYTES,
                 "mixed pack requires excessive alignment"
             );
-            rewrite += start - previous.start;
-            gaps.push((previous.clone(), start));
+            if count == 0 {
+                ensure!(
+                    allow_prefix,
+                    "first pack record is outside the selected history"
+                );
+                // Move only the first surviving full object's header to byte
+                // 12. Its compressed payload stays in place behind padding.
+                let end = stream + 2;
+                rewrite += end - 12;
+                first_header = Some(start..end);
+            } else {
+                rewrite += start - previous.start;
+                gaps.push((previous.clone(), start));
+            }
         }
-        kept.insert(start);
+        // OFS_DELTA addresses its base by offset. Export deltas referring
+        // to the moved first header separately, including their dependants.
+        if count > 0 || start == 12 {
+            kept.insert(start);
+        }
         selected[row] = true;
         count += 1;
         previous = stream + 2..end;
@@ -239,6 +256,7 @@ fn select(
     }
     Ok(Selection {
         ids,
+        first_header,
         gaps,
         end: previous.end,
     })
@@ -249,6 +267,7 @@ pub(super) fn prepare(
     donor: &Pack,
     wanted: &HashSet<ObjectId>,
     width: usize,
+    allow_prefix: bool,
 ) -> Result<Prepared> {
     let input = open_regular(&donor.pack)?;
     let input_size = input.metadata()?.len();
@@ -256,12 +275,12 @@ pub(super) fn prepare(
     let index_size = index.metadata()?.len();
     check_budget(input_size, index_size, width)?;
     let index = bounded_bytes(index, index_size)?;
-    let (table, records) = offsets(&index, width, wanted)?;
+    let (table, records) = offsets(&index, width, wanted, allow_prefix)?;
     // Keep unfinished transfer artifacts in the primary registry.
     let scratch = cache::private_tempdir_in(state)?;
     let mut file = scratch::create(&input, &donor.pack, scratch.path())?;
     let mut bytes = bounded_bytes(&file, input_size)?;
-    let plan = select(&bytes, table, &records, width, wanted)?;
+    let plan = select(&bytes, table, &records, width, wanted, allow_prefix)?;
     drop(records);
     drop(index);
 
@@ -271,6 +290,15 @@ pub(super) fn prepare(
     file.seek(SeekFrom::Start(8))?;
     file.write_all(&count)?;
     let mut unchanged_bytes = plan.end - 4;
+    if let Some(header) = plan.first_header {
+        let end = header.end;
+        let gap = 12 + header.len()..end;
+        bytes.copy_within(header, 12);
+        clear_gap(&mut bytes[gap])?;
+        file.seek(SeekFrom::Start(12))?;
+        file.write_all(&bytes[12..end])?;
+        unchanged_bytes -= end - 12;
+    }
     for (previous, gap_end) in plan.gaps {
         let length = gap_end - previous.end;
         let start = previous.start;
@@ -339,6 +367,27 @@ mod tests {
     use super::*;
     use crate::workspace::objects::run;
     use std::fs;
+
+    #[test]
+    fn relocated_base_and_its_dependents_are_not_delta_targets() -> Result<()> {
+        // Only the compressed-stream offsets matter to the selection pass.
+        // The small OFS_DELTA records point to the moved blob and each other.
+        let records = [(12, 0), (52, 1), (100, 2), (120, 3), (140, 4)];
+        let mut pack = vec![0; 4096];
+        pack[..12].copy_from_slice(b"PACK\0\0\0\x02\0\0\0\x05");
+        pack[52] = 0x30;
+        pack[100..102].copy_from_slice(&[0x60, 48]);
+        pack[120..122].copy_from_slice(&[0x60, 20]);
+        pack[140] = 0x30;
+        let table: Vec<_> = (0..5).flat_map(|i| [i; 20]).collect();
+        let wanted = (1..5).map(|id| object_id(&[id; 20], 20)).collect();
+        let selection = select(&pack, &table, &records, 20, &wanted, true)?;
+        assert_eq!(selection.first_header, Some(52..55));
+        assert_eq!(selection.ids.len(), 2);
+        assert!(selection.ids.contains(&object_id(&[1; 20], 20)));
+        assert!(selection.ids.contains(&object_id(&[4; 20], 20)));
+        Ok(())
+    }
 
     #[test]
     fn mislabeled_object_stays_unpublished() -> Result<()> {

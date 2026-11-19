@@ -1,5 +1,7 @@
 //! Keep raw donor bytes out of named transfer artifacts.
 
+#[cfg(any(target_os = "macos", all(test, target_os = "linux")))]
+use super::cache::temporary_pack_dir;
 use anyhow::Result;
 use std::{fs::File, path::Path};
 
@@ -27,13 +29,6 @@ pub(super) fn create(source: &File, donor: &Path, _scratch: &Path) -> Result<Fil
     };
 
     let parent = donor.parent().context("missing donor pack directory")?;
-    let directory = fs::symlink_metadata(parent)?;
-    ensure!(
-        directory.is_dir()
-            && directory.uid() == unsafe { libc::geteuid() }
-            && directory.mode() & 0o022 == 0,
-        "donor pack directory is not privately writable"
-    );
     let directory = temporary_pack_dir(parent)?.keep();
     let path = directory.join("donor.pack");
     let result = (|| -> Result<File> {
@@ -64,17 +59,6 @@ pub(super) fn create(source: &File, donor: &Path, _scratch: &Path) -> Result<Fil
     // Only remove an empty directory here. Git prunes interrupted scratch.
     let _ = fs::remove_dir(directory);
     result
-}
-
-#[cfg(target_os = "macos")]
-fn temporary_pack_dir(parent: &Path) -> Result<tempfile::TempDir> {
-    use std::{fs::Permissions, os::unix::fs::PermissionsExt};
-
-    // Git's prune removes stale tmp_* files and directories in objects/pack.
-    Ok(tempfile::Builder::new()
-        .prefix("tmp_pack_graft_")
-        .permissions(Permissions::from_mode(0o700))
-        .tempdir_in(parent)?)
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
@@ -120,7 +104,6 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn git_prunes_expired_scratch_directories() -> Result<()> {
         use crate::workspace::objects::run;
@@ -130,7 +113,8 @@ mod tests {
         run(root.path(), &["init", "-q", "--template="])?;
         let packs = root.path().join(".git/objects/pack");
         let old = temporary_pack_dir(&packs)?.keep();
-        fs::write(old.join("donor.pack"), b"interrupted scratch")?;
+        fs::create_dir(old.join("pack"))?;
+        fs::write(old.join("pack/donor.pack"), b"interrupted parent restore")?;
         File::open(&old)?.set_times(FileTimes::new().set_modified(UNIX_EPOCH))?;
         let fresh = temporary_pack_dir(&packs)?;
 

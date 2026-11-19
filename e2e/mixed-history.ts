@@ -2,10 +2,11 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { objectBootstrap } from './benchmark-receipts.ts';
 import { objectResult, type Context, type Scenario } from './harness.ts';
+import { assertNoRecord, packRecords } from './pack-records.ts';
 
 function fixture(ctx: Context, format: 'sha1' | 'sha256') {
   if (format === 'sha256') {
@@ -105,22 +106,6 @@ export const cases: Scenario[] = (['sha1', 'sha256'] as const).map(format => ({
   name: `mixed primary pack isolation (${format})`,
   run: ctx => run(ctx, format),
 }));
-
-type PackRecord = { id: string; size: number; offset: number; base?: string };
-
-function packRecords(ctx: Context, index: string): PackRecord[] {
-  return ctx.git(['verify-pack', '-v', index]).split('\n').flatMap(line => {
-    const match = line.match(/^([0-9a-f]+)\s+\S+\s+\d+\s+(\d+)\s+(\d+)(?:\s+\d+\s+([0-9a-f]+))?$/);
-    return match ? [{ id: match[1], size: Number(match[2]), offset: Number(match[3]), base: match[4] }] : [];
-  });
-}
-
-function assertNoRecord(workspace: string, excluded: Buffer) {
-  const dir = join(workspace, '.git', 'objects', 'pack');
-  for (const name of readdirSync(dir).filter(name => name.endsWith('.pack'))) {
-    assert.equal(readFileSync(join(dir, name)).includes(excluded), false, 'excluded compressed record leaked into workspace pack');
-  }
-}
 
 function makePack(ctx: Context, entries: string[], delta: boolean): string {
   const prefix = join(ctx.repo, '.git', 'objects', 'pack', 'pack');
