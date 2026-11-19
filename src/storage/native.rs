@@ -64,6 +64,15 @@ impl Root {
         })
     }
 
+    // Each worker keeps its own directory cache while pinning the same root.
+    pub(super) fn fork(&self) -> io::Result<Self> {
+        Ok(Self {
+            directory: self.directory.try_clone()?,
+            device: self.device,
+            parent: RefCell::new(None),
+        })
+    }
+
     fn with_parent<T>(
         &self,
         path: &Path,

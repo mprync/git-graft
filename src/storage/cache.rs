@@ -126,7 +126,7 @@ impl Record {
         Ok(())
     }
 
-    fn clone_into(
+    pub(super) fn clone_into(
         &self,
         root: &Root,
         destination: &Root,
@@ -212,6 +212,10 @@ impl Snapshot {
 
     pub(super) fn records(&self) -> &[Record] {
         &self.manifest.records
+    }
+
+    pub(super) fn fork_root(&self) -> Result<Root> {
+        Ok(self.source.fork()?)
     }
 
     pub(super) fn clone_record(

@@ -813,11 +813,45 @@ fn prepare(checkout: &Checkout<'_>, state: &Path, primary: Option<&Path>) -> Res
     let destination = native::Root::open(&tree)?;
     let mut directory = std::path::PathBuf::new();
     for record in snapshot.records() {
-        let target = tree.join(record.entry.path()?);
-        stage_parent(&target, &mut directory)?;
-        if let Some(size) = snapshot.clone_record(record, &destination, &target, mode)? {
-            receipt.cloned.add(size);
+        stage_parent(&tree.join(record.entry.path()?), &mut directory)?;
+    }
+    // Each worker pins the source and destination roots independently. Files
+    // still pass the same stamp checks before and after every clone.
+    let records = snapshot.records();
+    let workers = if records.len() >= PARALLEL_THRESHOLD {
+        std::thread::available_parallelism().map_or(1, |n| n.get().min(4))
+    } else {
+        1
+    };
+    let chunk_size = records.len().div_ceil(workers).max(1);
+    let counts = std::thread::scope(|scope| -> Result<Vec<Counts>> {
+        let mut tasks = Vec::new();
+        for chunk in records.chunks(chunk_size) {
+            let source = snapshot.fork_root()?;
+            let destination = destination.fork()?;
+            let tree = &tree;
+            tasks.push(scope.spawn(move || -> Result<Counts> {
+                let mut counts = Counts::default();
+                for record in chunk {
+                    let target = tree.join(record.entry.path()?);
+                    if let Some(size) = record.clone_into(&source, &destination, &target, mode)? {
+                        counts.add(size);
+                    }
+                }
+                Ok(counts)
+            }));
         }
+        tasks
+            .into_iter()
+            .map(|task| {
+                task.join()
+                    .map_err(|_| anyhow::anyhow!("source clone worker failed"))?
+            })
+            .collect()
+    })?;
+    for count in counts {
+        receipt.cloned.files += count.files;
+        receipt.cloned.bytes += count.bytes;
     }
     Ok(Prepared { staging, receipt })
 }
