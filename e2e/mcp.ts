@@ -325,6 +325,23 @@ function prepareNpmFixture(ctx: Context): string {
 
 export const cases: Scenario[] = [
   {
+    name: 'restricted manager discovery leaves fresh and foreign project state untouched',
+    async run(ctx) {
+      const state = join(ctx.repo, '.git', 'graft');
+      await withClient(ctx, false, async client => {
+        await initialize(client);
+        assert.deepEqual(await call(client, 'workspace_list_managers'), { managers: [] });
+        assert(!existsSync(state));
+        mkdirSync(state);
+        const foreign = join(state, 'foreign-note');
+        writeFileSync(foreign, 'retain foreign state');
+        await call(client, 'workspace_list_managers', {}, true);
+        assert.equal(readFileSync(foreign, 'utf8'), 'retain foreign state');
+        assert.deepEqual(readdirSync(state), ['foreign-note']);
+      });
+    },
+  },
+  {
     name: 'MCP registered managers expose shared cache and preserve it on removal',
     run: async ctx => withClient(ctx, true, async client => {
       await initialize(client);

@@ -1,6 +1,6 @@
 /** Public registration and reuse contracts, using a local synthetic package manager. */
 import assert from 'node:assert/strict';
-import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { objectResult, type Scenario } from './harness.ts';
 
@@ -52,6 +52,33 @@ function purgeFixture(ctx: Context) {
 }
 
 export const cases: Scenario[] = [{
+  name: 'manager discovery does not create missing state or replace foreign state',
+  run(ctx) {
+    const state = join(ctx.repo, '.git', 'graft');
+    assert.deepEqual(ctx.cli(['list-managers']).managers, []);
+    assert(!existsSync(state));
+    mkdirSync(state);
+    const foreign = join(state, 'foreign-note');
+    writeFileSync(foreign, 'retain foreign state');
+    ctx.fail(['list-managers']);
+    assert.equal(readFileSync(foreign, 'utf8'), 'retain foreign state');
+    assert.deepEqual(readdirSync(state), ['foreign-note']);
+  },
+}, {
+  name: 'manager discovery does not recreate removed cache directories',
+  run(ctx) {
+    ctx.cli(['register-manager', 'cache-only']);
+    const state = join(ctx.repo, '.git', 'graft');
+    const cache = join(state, 'cache');
+    const layers = join(state, 'layers');
+    rmSync(cache, { recursive: true, force: true });
+    rmSync(layers, { recursive: true, force: true });
+    const list = ctx.cli(['list-managers']);
+    assert(Array.isArray(list.managers) && list.managers.some(item => objectResult(item).manager === 'cache-only'));
+    assert(!existsSync(cache));
+    assert(!existsSync(layers));
+  },
+}, {
   name: 'checkout-local donor excludes cannot introduce dependencies into a landed commit',
   run(ctx) {
     writeFileSync(join(ctx.repo, 'fixture.lock'), 'locked\n');
