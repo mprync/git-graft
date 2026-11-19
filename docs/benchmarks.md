@@ -30,6 +30,20 @@ The volume-wide first-checkout space change in the clean timing runs had a media
 
 The APFS local backend waits for writeback of each private object file and child directory, then issues one hardware flush before publishing the snapshot. In four alternating pairs of fresh Homebrew clones, this reduced median first spawn from 0.690 s to 0.623 s. In three pairs on a fixture with 256 newly committed files and 259 loose Git objects, it reduced median first spawn from 1.721 s to 0.317 s. Every run verified the checkout and the primary. [Paired release samples](measurements/macos-arm64/local-snapshot-writeback.json)
 
+## How much does selecting one commit save?
+
+From a full local Homebrew clone, the isolated release created a workspace at the chosen commit and kept its ancestors for Git log and blame. A disposable prototype exported just that commit, its trees and its blobs, and cloned eligible source files directly from the populated checkout. The prototype verified the exact set of readable objects, staged and committed edits independently, landed into the full primary and restored the workspace.
+
+| Clean primary on APFS | Isolated release | Selected-tip prototype |
+| --- | ---: | ---: |
+| First spawn, median | 5.90 s | 0.89 s |
+| Native worktree in the paired timing runs | 0.41 s | 0.33 s |
+| Additional file data, first workspace | 15,482,880 bytes | 5,709,824 bytes |
+| Additional file data, second workspace | 315,392 bytes | 319,488 bytes |
+| Additional working file data, both workspaces | 0 bytes | 0 bytes |
+
+Timing used three fresh primaries for the isolated release and two for the prototype. Disk measurements ran separately. The prototype still needed 5,369,856 bytes of Git packs and pack indexes to hold the selected objects independently. The local-history mode above could share the original packs in full. All three approaches need a private staging index. Path-prefix compression reduced the two isolated staging indexes from 876,544 to 573,440 bytes. [Release and prototype measurements](measurements/macos-arm64/homebrew-selected-history.json)
+
 ## Isolated history on the previous release
 
 Each benchmark starts with one populated primary checkout. “Additional file data” is the increase in unique physical file blocks across the entire fixture. It includes both task checkouts, their private Git files, and Graft’s shared project caches. MB means 1,000,000 bytes.
