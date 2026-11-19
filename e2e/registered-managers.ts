@@ -52,6 +52,26 @@ function purgeFixture(ctx: Context) {
 }
 
 export const cases: Scenario[] = [{
+  name: 'invalid foreign registration data cannot block source spawn or be overwritten',
+  run(ctx) {
+    ctx.cli(['doctor']);
+    const registry = join(ctx.repo, '.git', 'graft', 'registered-managers-v1.json');
+    for (const [index, data] of ['{not json\n', '{"version":999,"managers":{}}\n'].entries()) {
+      writeFileSync(registry, data, { mode: 0o600 });
+      const ws = ctx.spawn(`foreign-registration-${index}`);
+      assert.equal(readFileSync(join(ws.path, 'tracked.txt'), 'utf8'), 'initial\n');
+      assert.deepEqual(objectResult(ws.result.storage).registered_dependencies,
+        [{ manager: null, status: 'unavailable', reason: 'invalid_registration' }]);
+      for (const args of [
+        ['register-manager', 'foreign-fixture', '--cache-env', 'FIXTURE_CACHE'],
+        ['unregister-manager', 'foreign-fixture'],
+      ]) {
+        ctx.fail(args);
+        assert.equal(readFileSync(registry, 'utf8'), data);
+      }
+    }
+  },
+}, {
   name: 'registered install purge previews and retains unverified data while allowing reseed',
   run(ctx) {
     const fixture = purgeFixture(ctx);
