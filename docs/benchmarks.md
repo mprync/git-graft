@@ -36,13 +36,15 @@ From a populated Homebrew clone, `--history isolated` keeps the selected ancestr
 
 | Clean primary on APFS | Isolated ancestry | Single commit |
 | --- | ---: | ---: |
-| First spawn, median | 5.90 s | 0.636 s |
-| Native worktree in the paired timing runs | 0.41 s | 0.366 s |
+| First spawn, median | 5.90 s | 0.589 s |
+| Native worktree in the paired timing runs | 0.41 s | 0.360 s |
 | Additional file data, first workspace | 15,482,880 bytes | 5,693,440 bytes |
 | Additional file data, second workspace | 315,392 bytes | 319,488 bytes |
 | Additional working file data, both workspaces | 0 bytes | 0 bytes |
 
-On a cold tip spawn, Graft can verify the selected commit, trees and Git attributes in a temporary object store while Git builds the complete pack. This lets Graft check and clone eligible source files concurrently. Git finishes verifying the complete pack before native checkout or index publication. Cold spawn improved in all six alternating release pairs, from a median of 0.770 s to 0.636 s. Repeat spawn took 0.473 s versus 0.390 s for Git. Cold spawn plus the first status took 1.075 s versus 0.491 s. The temporary store added no retained file blocks in the measured workspace. [Paired timings, CPU, peak RSS and APFS allocation](measurements/macos-arm64/homebrew-tip-overlap.json)
+On a cold tip spawn, Git reads the selected commit, trees and attributes while Graft reserves the workspace. After reservation, Git verifies this metadata in a private object store. Graft can then clone eligible files while Git builds the complete pack. Git verifies the complete pack before checking out the remaining paths or publishing the index.
+
+Preparing the metadata during reservation reduced median cold startup from 0.646 s to 0.589 s, improving five of six release pairs. Repeat startup took 0.452 s for Graft and 0.380 s for Git. Cold startup plus the first status took 1.017 s for Graft and 0.463 s for Git. All 3,318 regular files shared their existing APFS data blocks. The previous release had already reduced cold startup from 0.770 s to 0.636 s by overlapping checkout and pack creation. [Release timings and allocation](measurements/macos-arm64/homebrew-tip-reservation.json) · [Previous checkout measurements](measurements/macos-arm64/homebrew-tip-overlap.json)
 
 When a shallow export fits in one pack and the primary has no reusable pack, Git uses path names from the selected revision to find similar objects for compression. On the preceding release this reduced median pack transfer from 253 ms to 188 ms. [Pack export measurements](measurements/macos-arm64/homebrew-tip-pack-export.json)
 
