@@ -187,6 +187,28 @@ jobs:
           rustup toolchain install stable --profile minimal --component rustfmt --component clippy --component llvm-tools-preview
           rustup default stable
 
+      - name: Build official Git 2.46.0 for minimum-version verification
+        if: matrix.filesystem == 'ext4'
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=2.46.0
+          archive="$RUNNER_TEMP/git-$version.tar.xz"
+          source_root="$RUNNER_TEMP/git-$version-source"
+          install_root="$RUNNER_TEMP/git-$version-install"
+          curl --fail --location --silent --show-error "https://www.kernel.org/pub/software/scm/git/git-$version.tar.xz" --output "$archive"
+          # SHA-256 from kernel.org's signed sha256sums.asc release manifest.
+          printf '%s  %s\n' 7f123462a28b7ca3ebe2607485f7168554c2b10dfc155c7ec46300666ac27f95 "$archive" | sha256sum --check --status
+          mkdir -p "$source_root"
+          tar -xJf "$archive" --directory "$source_root"
+          make --directory "$source_root/git-$version" -j2 \
+            prefix="$install_root" \
+            NO_GETTEXT=YesPlease NO_TCLTK=YesPlease NO_PERL=YesPlease \
+            NO_PYTHON=YesPlease NO_CURL=YesPlease NO_OPENSSL=YesPlease \
+            all install
+          echo "$install_root/bin" >> "$GITHUB_PATH"
+          test "$("$install_root/bin/git" --version)" = 'git version 2.46.0'
+
       - name: Verify pinned toolchain and Git
         shell: bash
         run: |
