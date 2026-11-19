@@ -32,17 +32,19 @@ The APFS local backend waits for writeback of each private object file and child
 
 ## How much does selecting one commit save?
 
-From a populated Homebrew clone, `--history isolated` keeps the selected ancestry for log and blame. `--history tip` exports one commit, its trees and blobs. The release CLI was timed on three fresh primaries for isolated history and six for tip history. The APFS block measurements ran separately.
+From a populated Homebrew clone, `--history isolated` keeps the selected ancestry for log and blame. `--history tip` exports one commit, its trees and blobs. The table uses three fresh primaries for isolated history and twelve for tip history. The APFS block measurements ran separately.
 
 | Clean primary on APFS | Isolated ancestry | Single commit |
 | --- | ---: | ---: |
-| First spawn, median | 5.90 s | 0.631 s |
-| Native worktree in the paired timing runs | 0.41 s | 0.380 s |
+| First spawn, median | 5.90 s | 0.551 s |
+| Native worktree in the paired timing runs | 0.41 s | 0.344 s |
 | Additional file data, first workspace | 15,482,880 bytes | 5,693,440 bytes |
 | Additional file data, second workspace | 315,392 bytes | 319,488 bytes |
 | Additional working file data, both workspaces | 0 bytes | 0 bytes |
 
 On a cold tip spawn, Git reads the selected commit, trees and attributes while Graft reserves the workspace. After reservation, Git verifies this metadata in a private object store. Graft can then clone eligible files while Git builds the complete pack. Git verifies the complete pack before checking out the remaining paths or publishing the index.
+
+Reading the selected files’ checkout attributes during donor discovery reduced median cold startup from 0.566 s to 0.551 s and won nine of twelve pairs. Repeat checkout took 0.434 s for Graft and 0.345 s for a worktree. First checkout plus first status took 0.929 s and 0.458 s respectively. All 3,318 regular working files shared their data blocks with the primary. [Paired release timings and physical allocation](measurements/macos-arm64/homebrew-tip-parallel-attributes.json)
 
 Preparing the metadata during reservation reduced median cold startup from 0.646 s to 0.589 s, improving five of six release pairs. Repeat startup took 0.452 s for Graft and 0.380 s for Git. Cold startup plus the first status took 1.017 s for Graft and 0.463 s for Git. All 3,318 regular files shared their existing APFS data blocks. The previous release had already reduced cold startup from 0.770 s to 0.636 s by overlapping checkout and pack creation. [Release timings and allocation](measurements/macos-arm64/homebrew-tip-reservation.json) · [Previous checkout measurements](measurements/macos-arm64/homebrew-tip-overlap.json)
 
