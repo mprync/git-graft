@@ -19,6 +19,9 @@ use std::{
 pub(super) const MIN_PACK_BYTES: u64 = 1 << 20;
 const MAX_PACK_BYTES: u64 = 256 << 20;
 const MAX_INDEX_BYTES: u64 = 40 << 20;
+// A large run of empty blocks would make subsequent reads of the preceding
+// object expensive. Let Git export these layouts in its usual compact form.
+const MAX_ALIGNMENT_BYTES: usize = 64 << 10;
 
 pub(super) struct Filtered {
     pub(super) pack: Pack,
@@ -161,6 +164,10 @@ fn select(
             ensure!(
                 !ids.is_empty(),
                 "first pack record is outside the selected history"
+            );
+            ensure!(
+                start - previous.end <= MAX_ALIGNMENT_BYTES,
+                "mixed pack requires excessive alignment"
             );
             rewrite += start - previous.start;
             gaps.push((previous.clone(), start));

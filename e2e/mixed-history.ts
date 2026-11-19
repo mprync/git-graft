@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { objectBootstrap } from './benchmark-receipts.ts';
 import { objectResult, type Context, type Scenario } from './harness.ts';
 
 function fixture(ctx: Context, format: 'sha1' | 'sha256') {
@@ -91,7 +92,7 @@ function run(ctx: Context, format: 'sha1' | 'sha256') {
   assert.deepEqual(readFileSync(join(ctx.repo, 'large.bin')), large);
   assert.deepEqual(readFileSync(index.replace(/\.idx$/, '.pack')), donor, 'primary donor pack changed');
   ctx.git(['fsck', '--full']);
-  ctx.measure('mixed_history', { format, native_clone: probe, objects });
+  ctx.measure('mixed_history', { format, native_clone: probe, objects: objectBootstrap(objects, false) });
 }
 
 export const cases: Scenario[] = (['sha1', 'sha256'] as const).map(format => ({
