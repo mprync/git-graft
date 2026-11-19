@@ -158,7 +158,7 @@ function counters(value: unknown): ObjectResult {
   const enums = {
     backend:['git','native','independent','empty','copy','copy-on-write','mixed','reflink','clonefile'],
     method:['clonefile','reflink','local-pack','none'],
-    source:['primary-pack','cache','local-export','none'],
+    source:['primary-pack','filtered-primary','cache','ancestor-cache','local-export','none'],
     action:['save','restore','land','drop'],
     status:['attached','registered'],
     object_format:['sha1','sha256'],

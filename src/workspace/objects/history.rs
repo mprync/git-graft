@@ -19,6 +19,7 @@ use super::{
 use crate::{git, recovery::rename_exclusive};
 
 pub(super) mod cache;
+mod mixed;
 pub(crate) use cache::{
     DIR as HISTORY_CACHE_DIR, MARKER as HISTORY_CACHE_MARKER, history_cache_root,
     verify_history_cache_generation,
@@ -63,6 +64,13 @@ struct Pack {
     index: PathBuf,
 }
 
+#[derive(Default)]
+struct DonorReuse {
+    whole: usize,
+    filtered: usize,
+    unchanged_bytes: u64,
+}
+
 impl Pack {
     fn at(dir: &Path, hash: &str, width: usize) -> Result<Self> {
         git::checked_oid(hash)?;
@@ -97,6 +105,7 @@ pub(super) fn bootstrap(
     let cached = stage.path().join("cached");
     fs::create_dir(&cached)?;
     let mut ancestor = None;
+    let mut donor_reuse = DonorReuse::default();
     let (packs, source, shared_count) = match cache.restore(&cached, width) {
         Ok(Some(packs)) => {
             timings["cache_seconds"] = json!(started.elapsed().as_secs_f64());
@@ -125,15 +134,17 @@ pub(super) fn bootstrap(
                 ancestor = Some(base);
                 (packs, "ancestor-cache", reused)
             } else {
-                cold_transfer(
-                    primary,
+                let (packs, source, reuse) = cold_transfer(
+                    Source { primary, state },
                     root,
                     stage.path(),
                     oid,
                     width,
                     boundary,
                     &mut timings,
-                )?
+                )?;
+                donor_reuse = reuse;
+                (packs, source, donor_reuse.whole)
             }
         }
     };
@@ -171,7 +182,7 @@ pub(super) fn bootstrap(
     let bytes = pack_bytes + index_bytes;
     timings["total_seconds"] = json!(started.elapsed().as_secs_f64());
     let mut receipt = json!({
-        "method": if shared_count == 0 { "local-pack" } else if cfg!(target_os = "macos") { "clonefile" } else { "reflink" },
+        "method": if shared_count == 0 && donor_reuse.filtered == 0 { "local-pack" } else if cfg!(target_os = "macos") { "clonefile" } else { "reflink" },
         "source": source,
         "bytes": bytes,
         "pack_bytes": pack_bytes,
@@ -189,6 +200,12 @@ pub(super) fn bootstrap(
         receipt["reused_primary_packs"] = json!(shared_count);
         receipt["reused_primary_bytes"] = json!(reused_bytes);
     }
+    if donor_reuse.filtered > 0 {
+        receipt["filtered_primary_packs"] = json!(donor_reuse.filtered);
+        // Logical ranges retained at their original offsets. Physical savings
+        // depend on allocation-block boundaries and are measured separately.
+        receipt["filtered_unchanged_bytes"] = json!(donor_reuse.unchanged_bytes);
+    }
     if !cache_errors
         .as_object()
         .is_none_or(|errors| errors.is_empty())
@@ -198,19 +215,25 @@ pub(super) fn bootstrap(
     Ok(receipt)
 }
 
+#[derive(Clone, Copy)]
+struct Source<'a> {
+    primary: &'a Path,
+    state: &'a Path,
+}
+
 fn cold_transfer(
-    primary: &Path,
+    source: Source<'_>,
     root: &Path,
     stage: &Path,
     oid: &str,
     width: usize,
     boundary: Option<Boundary<'_>>,
     timings: &mut Value,
-) -> Result<(Vec<Pack>, &'static str, usize)> {
+) -> Result<(Vec<Pack>, &'static str, DonorReuse)> {
     let shallow = boundary.as_ref().map(|boundary| boundary.file);
     let mut attempt = |stage: &Path, accelerated: bool| -> Result<_> {
         let reachability = Instant::now();
-        let mut discovery = transfer_git(primary);
+        let mut discovery = transfer_git(source.primary);
         if accelerated {
             discovery.args(["-c", "core.commitGraph=true"]);
         }
@@ -218,7 +241,7 @@ fn cold_transfer(
         timings["reachability_seconds"] = json!(reachability.elapsed().as_secs_f64());
         let transfer = Instant::now();
         let (packs, source, objects, shared) =
-            stage_cold_packs(primary, root, stage, &expected, width)?;
+            stage_cold_packs(source, root, stage, &expected, width)?;
         timings["transfer_seconds"] = json!(transfer.elapsed().as_secs_f64());
         let verify = Instant::now();
         verify_staged_closure(root, &objects, &packs, oid, shallow)?;
@@ -244,21 +267,23 @@ fn cold_transfer(
 }
 
 fn stage_cold_packs(
-    primary: &Path,
+    source: Source<'_>,
     root: &Path,
     stage: &Path,
     expected: &[ObjectId],
     width: usize,
-) -> Result<(Vec<Pack>, &'static str, PathBuf, usize)> {
+) -> Result<(Vec<Pack>, &'static str, PathBuf, DonorReuse)> {
     // Separate staging directories ensure a partial failed attempt cannot
     // interfere with the selective export.
     let donor = stage.join("donor");
     let exported = stage.join("exported");
     fs::create_dir_all(donor.join("pack"))?;
-    match pack_with_donors(primary, root, &donor.join("pack"), expected, width) {
+    match pack_with_donors(source, root, &donor.join("pack"), expected, width) {
         Ok((packs, reused)) => {
-            let source = if reused == packs.len() {
+            let source = if reused.whole == packs.len() {
                 "primary-pack"
+            } else if reused.whole + reused.filtered == packs.len() {
+                "filtered-primary"
             } else {
                 "local-export"
             };
@@ -266,8 +291,14 @@ fn stage_cold_packs(
         }
         Err(_) => {
             fs::create_dir_all(exported.join("pack"))?;
-            let packs = export(primary, root, &exported.join("pack"), expected, width)?;
-            Ok((packs, "local-export", exported, 0))
+            let packs = export(
+                source.primary,
+                root,
+                &exported.join("pack"),
+                expected,
+                width,
+            )?;
+            Ok((packs, "local-export", exported, DonorReuse::default()))
         }
     }
 }
@@ -502,17 +533,17 @@ fn verify_membership(packs: &[Pack], expected: &[ObjectId], width: usize) -> Res
 }
 
 fn pack_with_donors(
-    primary: &Path,
+    source: Source<'_>,
     root: &Path,
     stage: &Path,
     expected: &[ObjectId],
     width: usize,
-) -> Result<(Vec<Pack>, usize)> {
+) -> Result<(Vec<Pack>, DonorReuse)> {
     ensure!(
         cfg!(any(target_os = "macos", target_os = "linux")),
         "CoW unavailable"
     );
-    let objects = repository_path(primary, "objects")?;
+    let objects = repository_path(source.primary, "objects")?;
     let dir = objects.join("pack");
     ensure!(
         fs::symlink_metadata(&objects)?.is_dir() && fs::symlink_metadata(&dir)?.is_dir(),
@@ -525,6 +556,7 @@ fn pack_with_donors(
     candidates.sort_unstable();
     let mut remaining: HashSet<_> = expected.iter().copied().collect();
     let mut packs = Vec::new();
+    let mut candidates_to_filter = Vec::new();
     for path in candidates {
         let hash = path
             .file_stem()
@@ -544,6 +576,9 @@ fn pack_with_donors(
             Ok(())
         });
         if eligible.is_err() || ids.is_empty() {
+            if pack.metadata()?.len() >= mixed::MIN_PACK_BYTES {
+                candidates_to_filter.push(donor);
+            }
             continue;
         }
         let staged = Pack::at(stage, hash, width)?;
@@ -563,9 +598,28 @@ fn pack_with_donors(
         }
         packs.push(staged);
     }
-    let reused = packs.len();
+    let mut reuse = DonorReuse {
+        whole: packs.len(),
+        ..Default::default()
+    };
+    for donor in candidates_to_filter {
+        // A crash before filtering finishes must never leave mixed primary
+        // history in the task or its archive. Stage under the primary registry.
+        let scratch = cache::private_tempdir_in(source.state)?;
+        if let Ok(filtered) = mixed::filter(root, scratch.path(), &donor, &remaining, width) {
+            let pack = Pack::at(stage, &filtered.hash, width)?;
+            rename_exclusive(&filtered.pack.pack, &pack.pack)?;
+            rename_exclusive(&filtered.pack.index, &pack.index)?;
+            for id in filtered.ids {
+                ensure!(remaining.remove(&id), "duplicate filtered Git object");
+            }
+            reuse.filtered += 1;
+            reuse.unchanged_bytes += filtered.unchanged_bytes;
+            packs.push(pack);
+        }
+    }
     ensure!(
-        reused != 0,
+        !packs.is_empty(),
         "no complete primary pack belongs to the requested history"
     );
     let residual: Vec<_> = expected
@@ -578,7 +632,7 @@ fn pack_with_donors(
     // residual export. A failed verification discards this whole staging set.
     let new = thread::scope(|scope| {
         let verify = scope.spawn(|| {
-            for pack in &packs {
+            for pack in &packs[..reuse.whole] {
                 let mut verify = transfer_git(root);
                 verify.args(["index-pack", "--verify"]).arg(&pack.pack);
                 checked(verify).context("verify cloned primary Git pack")?;
@@ -588,7 +642,7 @@ fn pack_with_donors(
         let new = if residual.is_empty() {
             Ok(Vec::new())
         } else {
-            export(primary, root, stage, &residual, width)
+            export(source.primary, root, stage, &residual, width)
         };
         verify
             .join()
@@ -596,7 +650,7 @@ fn pack_with_donors(
         new
     })?;
     packs.extend(new);
-    Ok((packs, reused))
+    Ok((packs, reuse))
 }
 
 fn export(
