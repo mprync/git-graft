@@ -52,7 +52,17 @@ Graft now asks Git which attributes are set before copying source files. On Home
 
 When a shallow export fits in one pack and the primary has no reusable pack, Git uses path names from the selected revision to find similar objects for compression. On the preceding release this reduced median pack transfer from 253 ms to 188 ms. [Pack export measurements](measurements/macos-arm64/homebrew-tip-pack-export.json)
 
-The two grafts shared a selected pack and pack index occupying 5,353,472 bytes. After a one-file commit, a third graft at the new tip allocated 5,672,960 additional bytes for the new selection and workspace. [APFS allocation samples](measurements/macos-arm64/homebrew-tip-pack-export.json) · [Previous tip release](measurements/macos-arm64/homebrew-tip-release.json) · [Isolated release](measurements/macos-arm64/homebrew-selected-history.json)
+### What happens after a one-file commit?
+
+The first two grafts share a selected pack and pack index occupying 5,353,472 bytes. When the primary advances by one file, Graft can share existing blocks from the parent’s cached pack while excluding the parent commit and superseded objects. On Homebrew, the third checkout allocated **458,752 bytes**, down from **5,672,960 bytes** on the previous release. The first two grafts added zero working-file data blocks. These measurements count physical file data across the fixture, including Git indexes and Graft records. They exclude filesystem metadata. [APFS measurements and release samples](measurements/macos-arm64/homebrew-tip-parent-reuse.json)
+
+| Clean Homebrew checkout | Graft spawn | Worktree add | Additional Graft file data | Additional worktree file data |
+| --- | ---: | ---: | ---: | ---: |
+| First at selected commit | 0.673 s | 0.439 s | 5,693,440 bytes | 29,941,760 bytes |
+| Second at same commit | 0.639 s | 0.465 s | 319,488 bytes | 29,941,760 bytes |
+| Third after one-file advance | 0.686 s | 0.436 s | 458,752 bytes | 29,945,856 bytes |
+
+Times are medians from four fresh primaries using the installed release. After the advance, median Git pack transfer fell from 231 ms to 130 ms. The full checkout took 0.743 s on the previous release. Disk observations ran separately and agreed in both rounds. [Timing and allocation samples](measurements/macos-arm64/homebrew-tip-parent-reuse.json)
 
 ## Isolated history on the previous release
 

@@ -1,0 +1,204 @@
+{
+  "fixture": {
+    "head": "bc63375ac3a4d6debb1ceb441ae6e22854f0909a",
+    "tree": "ee570b9dbb122c6b6f0f609b83402c1f8eaca195",
+    "packCount": 4,
+    "packBytes": 130939998,
+    "commits": 53716,
+    "hasUnrelatedSourceCommit": true
+  },
+  "platform": "macOS arm64, APFS, Git 2.56.0",
+  "method": "Four paired release runs alternating the previous and installed binaries on fresh populated Homebrew clones. Each run includes a native worktree control. The first status runs separately. Physical file blocks are measured after status in two separate rounds and exclude filesystem metadata.",
+  "fields": [
+    "spawnSeconds",
+    "firstStatusSeconds",
+    "userSeconds",
+    "systemSeconds",
+    "peakRssBytes",
+    "objectTransferSeconds (graft only)"
+  ],
+  "releases": {
+    "control": {
+      "source": "a26e0b9",
+      "binary": {
+        "bytes": 4182464,
+        "sha256": "de42e0732e31533bb0ec24cd5f4982d61d7e2d1c1c83f5d3d817b05c4d3e4953"
+      },
+      "samples": {
+        "graft": {
+          "cold": [
+            [0.742439, 0.364197, 0.56, 1.04, 77824000, 0.21153],
+            [0.899443, 0.579256, 0.57, 1.04, 77905920, 0.293108],
+            [0.70969, 0.584122, 0.59, 1.18, 79101952, 0.225701],
+            [0.909592, 0.560262, 0.55, 1.4, 77430784, 0.275838]
+          ],
+          "repeat": [
+            [0.529364, 0.364072, 0.1, 0.92, 10076160, null],
+            [0.638618, 0.582052, 0.1, 0.88, 10174464, null],
+            [0.528464, 0.564142, 0.1, 1.11, 10108928, null],
+            [0.565565, 0.540557, 0.1, 0.77, 10158080, null]
+          ],
+          "advanceBase": [
+            [0.764481, 0.5187, 0.56, 1.23, 76955648, 0.210603],
+            [0.832939, 0.570789, 0.55, 1, 77676544, 0.252019],
+            [0.720649, 0.582337, 0.6, 0.88, 78118912, 0.294241],
+            [0.570039, 0.527363, 0.55, 1, 79298560, 0.190714]
+          ]
+        },
+        "native": {
+          "cold": [
+            [0.376091, 0.146924, 0.05, 0.25, 52232192],
+            [0.465817, 0.106606, 0.05, 0.27, 52281344],
+            [0.375077, 0.02732, 0.05, 0.27, 52789248],
+            [0.810901, 0.092333, 0.05, 0.29, 52527104]
+          ],
+          "repeat": [
+            [0.354314, 0.044503, 0.05, 0.26, 52527104],
+            [0.564085, 0.127753, 0.05, 0.29, 52297728],
+            [0.402338, 0.117329, 0.05, 0.27, 52150272],
+            [0.814502, 0.074845, 0.05, 0.29, 52461568]
+          ],
+          "advanceBase": [
+            [0.415303, 0.116971, 0.05, 0.26, 51707904],
+            [0.741768, 0.065313, 0.05, 0.28, 51855360],
+            [0.400879, 0.114736, 0.05, 0.27, 51658752],
+            [0.707287, 0.135201, 0.05, 0.3, 52019200]
+          ]
+        }
+      },
+      "physicalFileBytes": [
+        {
+          "native": {
+            "first": 29941760,
+            "repeat": 29941760,
+            "advanced": 29945856
+          },
+          "graft": {
+            "first": 5693440,
+            "repeat": 319488,
+            "advanced": 5672960,
+            "twoWorkspaceBreakdown": {
+              "historyPacks": 5246976,
+              "historyIndexes": 106496,
+              "checkoutIndexes": 573440,
+              "sourceFiles": 0,
+              "records": 86016,
+              "primaryChange": 0
+            }
+          }
+        },
+        {
+          "native": {
+            "first": 29941760,
+            "repeat": 29941760,
+            "advanced": 29945856
+          },
+          "graft": {
+            "first": 5693440,
+            "repeat": 319488,
+            "advanced": 5672960,
+            "twoWorkspaceBreakdown": {
+              "historyPacks": 5246976,
+              "historyIndexes": 106496,
+              "checkoutIndexes": 573440,
+              "sourceFiles": 0,
+              "records": 86016,
+              "primaryChange": 0
+            }
+          }
+        }
+      ]
+    },
+    "candidate": {
+      "source": "523d7ce",
+      "binary": {
+        "bytes": 4182480,
+        "sha256": "a36cd7ff977f5b8c5fe1b7957f298c3a9fa845fca70257038f2827bf9e9cf6c0"
+      },
+      "samples": {
+        "graft": {
+          "cold": [
+            [0.698265, 0.363706, 0.56, 1.03, 78233600, 0.207226],
+            [0.725923, 0.624426, 0.56, 1.17, 76726272, 0.20392],
+            [0.647396, 0.563254, 0.56, 1.07, 79265792, 0.204392],
+            [0.637227, 0.609556, 0.56, 1.06, 78643200, 0.197642]
+          ],
+          "repeat": [
+            [0.685248, 0.476809, 0.1, 1.09, 10092544, null],
+            [0.59266, 1.037674, 0.12, 0.87, 10092544, null],
+            [0.539575, 0.560718, 0.11, 0.86, 9994240, null],
+            [0.732732, 0.656423, 0.1, 1.07, 10207232, null]
+          ],
+          "advanceBase": [
+            [0.587763, 0.47375, 0.23, 1.05, 36995072, 0.112329],
+            [1.010041, 1.029518, 0.25, 1.26, 36864000, 0.147126],
+            [0.5956, 0.585656, 0.22, 0.98, 36716544, 0.102133],
+            [0.776521, 0.560395, 0.25, 1.01, 36978688, 0.153142]
+          ]
+        },
+        "native": {
+          "cold": [
+            [0.392033, 0.120084, 0.05, 0.26, 52477952],
+            [0.486605, 0.088483, 0.05, 0.27, 52346880],
+            [0.529868, 0.225088, 0.05, 0.34, 52363264],
+            [0.361434, 0.08935, 0.05, 0.27, 52248576]
+          ],
+          "repeat": [
+            [0.3322, 0.106303, 0.05, 0.25, 52117504],
+            [0.577721, 0.145663, 0.05, 0.28, 52477952],
+            [0.55697, 0.120558, 0.05, 0.3, 52346880],
+            [0.372827, 0.117989, 0.05, 0.28, 52330496]
+          ],
+          "advanceBase": [
+            [0.340264, 0.121577, 0.05, 0.25, 51871744],
+            [0.766934, 0.05426, 0.06, 0.32, 52002816],
+            [0.532332, 0.145584, 0.06, 0.3, 52068352],
+            [0.333367, 0.117899, 0.05, 0.25, 51904512]
+          ]
+        }
+      },
+      "physicalFileBytes": [
+        {
+          "native": {
+            "first": 29941760,
+            "repeat": 29941760,
+            "advanced": 29945856
+          },
+          "graft": {
+            "first": 5693440,
+            "repeat": 319488,
+            "advanced": 458752,
+            "twoWorkspaceBreakdown": {
+              "historyPacks": 5246976,
+              "historyIndexes": 106496,
+              "checkoutIndexes": 573440,
+              "sourceFiles": 0,
+              "records": 86016,
+              "primaryChange": 0
+            }
+          }
+        },
+        {
+          "native": {
+            "first": 29941760,
+            "repeat": 29941760,
+            "advanced": 29945856
+          },
+          "graft": {
+            "first": 5693440,
+            "repeat": 319488,
+            "advanced": 458752,
+            "twoWorkspaceBreakdown": {
+              "historyPacks": 5246976,
+              "historyIndexes": 106496,
+              "checkoutIndexes": 573440,
+              "sourceFiles": 0,
+              "records": 86016,
+              "primaryChange": 0
+            }
+          }
+        }
+      ]
+    }
+  }
+}
