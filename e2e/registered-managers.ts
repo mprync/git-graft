@@ -83,6 +83,7 @@ export const cases: Scenario[] = [{
   run(ctx) {
     writeFileSync(join(ctx.repo, 'fixture.lock'), 'locked\n');
     ctx.git(['add', 'fixture.lock']); ctx.git(['commit', '-qm', 'fixture input']);
+    mkdirSync(join(ctx.repo, '.git', 'info'), { recursive: true });
     writeFileSync(join(ctx.repo, '.git', 'info', 'exclude'), '/vendor/\n');
     mkdirSync(join(ctx.repo, 'vendor/bundle'), { recursive: true });
     writeFileSync(join(ctx.repo, 'vendor/bundle/package'), 'dependency payload');
