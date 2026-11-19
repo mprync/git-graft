@@ -17,6 +17,8 @@ use std::io::{self, Read, Write};
 use std::path::{Component, Path};
 use uuid::Uuid;
 
+mod registered;
+pub(crate) use registered::{attach_registered, seed_registered};
 mod shared;
 pub use shared::{check_attached_for_add, inherit_shared, seed_shared};
 
@@ -337,18 +339,22 @@ fn valid_digest(value: &str) -> bool {
 // A layer is deletable only when its complete visible inventory and bytes match
 // our narrowly defined provenance record. Unknown files must be retained.
 fn layer_provenance(layer: &Path, digest: &str) -> Result<Value> {
+    layer_provenance_for(layer, digest, "node_modules")
+}
+
+fn layer_provenance_for(layer: &Path, digest: &str, tree_name: &str) -> Result<Value> {
     let metadata = registry::owned_directory(layer).context("invalid layer directory")?;
     check_cache_metadata(layer, &metadata)?;
     let mut names = fs::read_dir(layer)?
         .map(|entry| entry.map(|e| e.file_name()))
         .collect::<io::Result<Vec<_>>>()?;
     names.sort();
-    if names
-        != [
-            std::ffi::OsString::from("node_modules"),
-            std::ffi::OsString::from("provenance.json"),
-        ]
-    {
+    let mut expected = [
+        std::ffi::OsString::from(tree_name),
+        std::ffi::OsString::from("provenance.json"),
+    ];
+    expected.sort();
+    if names != expected {
         bail!("unexpected files in layer directory");
     }
     let path = layer.join("provenance.json");
@@ -425,7 +431,7 @@ pub(crate) fn verify_layer(layer: &Path, digest: &str) -> Result<Value> {
 struct Transfer {
     cloned_bytes: u64,
     copied_bytes: u64,
-    cloned_file: bool,
+    cloned_files: u64,
 }
 
 impl Transfer {
@@ -486,7 +492,7 @@ fn transfer_file(
         match clone(source, destination) {
             Ok(()) => {
                 transfer.cloned_bytes += size;
-                transfer.cloned_file = true;
+                transfer.cloned_files += 1;
             }
             Err(error) if clone_unsupported(&error) => {
                 return Err(crate::api::fault(
@@ -610,7 +616,7 @@ fn stage_tree(
     let mut transfer = Transfer::default();
     clone_tree(source, &tree, force_copy, check, &mut transfer)?;
     // An empty install has no regular file to exercise the native backend.
-    if !force_copy && !transfer.cloned_file {
+    if !force_copy && transfer.cloned_files == 0 {
         let mut source = tempfile::NamedTempFile::new_in(source_probe_dir)?;
         source.write_all(b"git-graft layer probe")?;
         let probe = tempfile::tempdir_in(staging)?;
