@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { leaveIndexedCheckoutJournal } from './checkout-journal.ts';
@@ -330,6 +330,8 @@ export const cases: Scenario[] = [
       const format = ctx.git(['rev-parse', '--show-object-format']);
       const store = join(admin, 'graft', 'land-plans', `${format}-full`);
       if (existsSync(store)) assert.equal(ctx.git(['for-each-ref', '--format=%(refname)', 'refs/graft/import'], store), '');
+      assert.deepEqual(readdirSync(dirname(store)).filter(name => name.startsWith('.pending-')), [],
+        'repeated ordinary conflicts must release their private landing scratch');
       const details = field(fault.details);
       assert.deepEqual(details.paths, ['tracked.txt']);
       assert.ok(Array.isArray(details.conflicts));
