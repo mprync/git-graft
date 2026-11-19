@@ -114,7 +114,8 @@ export const cases: Scenario[] = [{
       writeFileSync(join(ws.path, '.gitignore'), ignored);
       writeFileSync(join(ws.path, 'tracked.txt'), 'workspace source\n');
       const workspaceHead = ctx.git(['rev-parse', 'HEAD'], ws.path);
-      ctx.fail(['land', name, '--lease', ws.lease, '--commit', 'Land source']);
+      assert.equal(ctx.fail(['land', name, '--lease', ws.lease, '--commit', 'Land source']).code,
+        'registered_install_exposed');
       assert.equal(ctx.git(['rev-parse', 'HEAD']), primary);
       assert.equal(ctx.git(['rev-parse', 'HEAD'], ws.path), workspaceHead);
       assert.equal(readFileSync(join(ctx.repo, 'tracked.txt'), 'utf8'), 'initial\n');
