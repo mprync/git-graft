@@ -1,5 +1,6 @@
 //! Plan an integration using immutable Git objects, then advance the destination.
 mod checkout;
+mod installed;
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs, io,
@@ -203,7 +204,9 @@ fn stage_workspace(workspace: &Path, installations: &[&str]) -> Result<()> {
         }
         command
     };
-    if !installations.is_empty() {
+    let protected = installed::spellings(workspace, installations)?;
+    let literal = |path: &String| format!(":(top,literal,icase){path}");
+    if !protected.is_empty() {
         let changes = staging_git()
             .args([
                 "--no-optional-locks",
@@ -219,21 +222,13 @@ fn stage_workspace(workspace: &Path, installations: &[&str]) -> Result<()> {
                 "--ignore-submodules=none",
                 "--",
             ])
-            .args(
-                installations
-                    .iter()
-                    .map(|path| format!(":(top,literal,icase){path}")),
-            )
+            .args(protected.iter().map(literal))
             .output()?;
         if !changes.status.success() {
             return Err(git_failure("inspect installed dependency paths", &changes));
         }
         if !changes.stdout.is_empty() {
-            return Err(fault(
-                "registered_install_exposed",
-                "Automatic staging would include installed dependencies. Restore their ignore rules or explicitly commit your intended files with Git.",
-                json!({"directories": installations}),
-            ));
+            return Err(installed::exposed(installations));
         }
     }
     let staged = reject_partially_staged(workspace)?;
@@ -261,14 +256,32 @@ fn stage_workspace(workspace: &Path, installations: &[&str]) -> Result<()> {
         .args(["add", "--sparse", "-A", "--", ":/"])
         // An ignore rule can change after the status check. Exclude installed
         // directories from the staging command itself as well.
-        .args(
-            installations
-                .iter()
-                .map(|path| format!(":(top,exclude,literal,icase){path}")),
-        )
+        .args(protected.iter().flat_map(|p| installed::exclusions(p)))
         .output()?;
     if !output.status.success() {
         return Err(git_failure("stage workspace changes", &output));
+    }
+    if !protected.is_empty() {
+        if installed::spellings(workspace, installations)? != protected {
+            return Err(installed::exposed(installations));
+        }
+        let changes = private_index()
+            .args([
+                "diff",
+                "--cached",
+                "--quiet",
+                "--no-ext-diff",
+                "--no-renames",
+                "HEAD",
+                "--",
+            ])
+            .args(protected.iter().map(literal))
+            .output()?;
+        match changes.status.code() {
+            Some(0) => (),
+            Some(1) => return Err(installed::exposed(installations)),
+            _ => return Err(git_failure("verify staged dependency exclusions", &changes)),
+        }
     }
     if !staged.is_empty() {
         let original = index_entries(&before)?;
