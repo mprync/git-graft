@@ -475,11 +475,42 @@ pub(crate) fn atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let parent = path.parent().context("missing state directory")?;
     let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
     tmp.write_all(bytes)?;
+    #[cfg(target_os = "macos")]
+    if apple_sync(tmp.as_file(), libc::F_BARRIERFSYNC)? {
+        // Order the complete contents ahead of the rename even on power loss.
+        // A full flush after the rename makes both durable before returning.
+        let file = tmp.persist(path)?;
+        let directory = File::open(parent)?;
+        if !apple_sync(&directory, libc::F_FULLFSYNC)? {
+            directory.sync_all()?;
+            file.sync_all()?;
+        }
+        return Ok(());
+    }
     tmp.as_file().sync_all()?;
     tmp.persist(path)?;
     #[cfg(unix)]
     File::open(parent)?.sync_all()?;
     Ok(())
+}
+
+/// A filesystem without the Apple barrier/flush commands uses ordinary sync.
+#[cfg(target_os = "macos")]
+fn apple_sync(file: &File, command: libc::c_int) -> io::Result<bool> {
+    use std::os::fd::AsRawFd;
+    loop {
+        if unsafe { libc::fcntl(file.as_raw_fd(), command) } == 0 {
+            return Ok(true);
+        }
+        let error = io::Error::last_os_error();
+        match error.raw_os_error() {
+            Some(libc::EINTR) => continue,
+            Some(libc::EINVAL | libc::ENOTSUP | libc::EOPNOTSUPP | libc::ENOTTY) => {
+                return Ok(false);
+            }
+            _ => return Err(error),
+        }
+    }
 }
 pub(crate) fn regular(path: &Path) -> Result<Vec<u8>> {
     let metadata = fs::symlink_metadata(path)?;
