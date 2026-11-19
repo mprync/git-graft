@@ -530,9 +530,7 @@ pub struct Project {
 }
 
 impl Project {
-    /// The returned file holds the project lock. Long-running child commands
-    /// release it after taking their workspace lock.
-    pub fn open(repo: &Path) -> Result<(Self, File)> {
+    fn paths(repo: &Path) -> Result<(PathBuf, PathBuf, PathBuf, PathBuf)> {
         let invocation = dunce::canonicalize(repo)?;
         let (repo, common) = discover_primary(&invocation)?;
         let name = repo
@@ -542,8 +540,52 @@ impl Project {
         sibling.push(".graft");
         let root = repo.with_file_name(sibling);
         git::path_str(&root)?;
-
         let state = common.join("graft");
+        Ok((repo, common, state, root))
+    }
+
+    /// Open an existing owned project without creating state, locks or caches.
+    /// A present but incomplete state directory is ambiguous and is left alone.
+    pub(crate) fn open_existing(repo: &Path) -> Result<Option<(Self, File)>> {
+        let (repo, common, state, root) = Self::paths(repo)?;
+        if !exists(&state)? {
+            return Ok(None);
+        }
+        let metadata = owned_directory(&state)?;
+        #[cfg(unix)]
+        require_private_mode(&state, &metadata)?;
+        #[cfg(not(unix))]
+        let _ = metadata;
+        let lock_path = state.join("project.lock");
+        let lock_metadata = fs::symlink_metadata(&lock_path)
+            .context("existing project lock is missing or inaccessible")?;
+        ensure!(
+            lock_metadata.is_file() && !is_reparse_point(&lock_metadata),
+            "lock is not a regular file"
+        );
+        let lock = OpenOptions::new().read(true).write(true).open(&lock_path)?;
+        lock.lock().context("lock workspace registry")?;
+        let id = String::from_utf8(regular(&state.join("project-id"))?)?;
+        ensure!(
+            Uuid::parse_str(&id)?.to_string() == id,
+            "invalid project ownership ID"
+        );
+        Ok(Some((
+            Self {
+                repo,
+                common,
+                state,
+                root,
+                id,
+            },
+            lock,
+        )))
+    }
+
+    /// The returned file holds the project lock. Long-running child commands
+    /// release it after taking their workspace lock.
+    pub fn open(repo: &Path) -> Result<(Self, File)> {
+        let (repo, common, state, root) = Self::paths(repo)?;
         dir(&state)?;
         #[cfg(unix)]
         require_private_mode(&state, &owned_directory(&state)?)?;
@@ -693,6 +735,49 @@ impl Project {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn existing_project_discovery_does_not_initialize_or_repair_state() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let repo = temp.path().join("primary");
+        fs::create_dir(&repo)?;
+        git::bytes(&repo, &["init", "-q", "--template="])?;
+        let state = repo.join(".git/graft");
+        assert!(Project::open_existing(&repo)?.is_none());
+        assert!(!state.exists());
+
+        let (project, lock) = Project::open(&repo)?;
+        drop(lock);
+        fs::rename(
+            project.state.join("cache"),
+            project.state.join("cache-saved"),
+        )?;
+        let (existing, lock) = Project::open_existing(&repo)?.expect("existing project");
+        assert_eq!(existing.id(), project.id());
+        assert!(!state.join("cache").exists());
+        drop(lock);
+
+        fs::rename(state.join("project.lock"), state.join("lock-saved"))?;
+        assert!(Project::open_existing(&repo).is_err());
+        assert!(!state.join("project.lock").exists());
+        assert!(state.join("lock-saved").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn existing_project_discovery_refuses_unowned_state() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let repo = temp.path().join("primary");
+        fs::create_dir(&repo)?;
+        git::bytes(&repo, &["init", "-q", "--template="])?;
+        let state = repo.join(".git/graft");
+        create_private_dir(&state)?;
+        fs::write(state.join("foreign"), b"retain")?;
+        assert!(Project::open_existing(&repo).is_err());
+        assert_eq!(fs::read(state.join("foreign"))?, b"retain");
+        assert!(!state.join("project.lock").exists());
+        Ok(())
+    }
 
     #[cfg(target_os = "macos")]
     fn macos_fixture_repo(path: &Path) -> Result<()> {

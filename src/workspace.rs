@@ -455,6 +455,12 @@ pub fn run(repo: &Path, command: Command) -> Result<Value> {
     let primary = location
         .as_ref()
         .map_or(repo, |where_| where_.project.as_path());
+    if matches!(command, Command::ListManagers) {
+        return match Project::open_existing(primary)? {
+            Some((project, _lock)) => crate::package_manager::list(&project),
+            None => Ok(json!({"managers": []})),
+        };
+    }
     let (p, lock) = Project::open(primary)?;
     let p = &p;
     match &command {
