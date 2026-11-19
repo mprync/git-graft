@@ -293,15 +293,22 @@ mod direct {
             return Ok(Err("native clone unavailable"));
         }
 
-        // The read-only donor lookup and destination config probes can run
-        // independently. Keep Git subprocess startup off the clone workers.
-        let (tracked, reason) = std::thread::scope(|scope| -> Result<_> {
+        // These read-only queries use independent Git processes. Join all
+        // workers before using their results to select donor files.
+        let (tracked, reason, conversions) = std::thread::scope(|scope| -> Result<_> {
             let config = scope.spawn(|| native_reason(checkout.worktree));
+            let attributes = files.iter().any(Entry::attributes).then(|| {
+                scope.spawn(|| checkout_conversions(checkout.proof_command(), oid, files))
+            });
             let tracked = donor_index(&primary)?;
             let reason = config
                 .join()
                 .map_err(|_| anyhow::anyhow!("checkout configuration worker failed"))??;
-            Ok((tracked, reason))
+            let conversions = attributes
+                .map(|task| task.join())
+                .transpose()
+                .map_err(|_| anyhow::anyhow!("checkout attribute worker failed"))?;
+            Ok((tracked, reason, conversions))
         })?;
         if let Some(reason) = reason {
             return Ok(Err(reason));
@@ -326,8 +333,8 @@ mod direct {
             return Ok(Err("no eligible local donor files"));
         }
 
-        if files.iter().any(Entry::attributes) {
-            let Ok(conversions) = checkout_conversions(checkout.proof_command(), oid, files) else {
+        if let Some(result) = conversions {
+            let Ok(conversions) = result else {
                 return Ok(Err("cannot inspect committed attributes"));
             };
             for (eligible, conversion) in candidates.iter_mut().zip(conversions) {
