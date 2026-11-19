@@ -11,19 +11,72 @@ pub(crate) fn materialize_local(
     primary: &Path,
 ) -> Result<Value> {
     let workspace = dunce::canonicalize(workspace)?;
-    let oid = checkout_identity(&workspace, oid)?;
+    materialize(&workspace, state, oid, sparse, primary, None, || Ok(()))
+}
+
+/// Prepare verified donor files while the complete tip pack is installed.
+/// Git uses the proof store only for planning, never for file checkout.
+pub(crate) fn materialize_tip<F: FnOnce() -> Result<()>>(
+    workspace: &Path,
+    state: &Path,
+    oid: &str,
+    primary: &Path,
+    proof_objects: &Path,
+    ready: F,
+) -> Result<Value> {
+    let mut ready = Some(ready);
+    let result = (|| {
+        let workspace = dunce::canonicalize(workspace)?;
+        materialize(
+            &workspace,
+            state,
+            oid,
+            &[],
+            primary,
+            Some(proof_objects),
+            || {
+                ready.take().expect("checkout readiness called once")()?;
+                checkout_identity(&workspace, oid)?;
+                Ok(())
+            },
+        )
+    })();
+    // Always join the pack installation, including when planning fails early.
+    if let Some(ready) = ready {
+        let joined = ready();
+        if result.is_ok() {
+            joined?;
+        }
+    }
+    result
+}
+
+fn materialize<F: FnOnce() -> Result<()>>(
+    workspace: &Path,
+    state: &Path,
+    oid: &str,
+    sparse: &[String],
+    primary: &Path,
+    proof_objects: Option<&Path>,
+    ready: F,
+) -> Result<Value> {
+    let oid = checkout_identity_with_objects(workspace, oid, proof_objects)?;
     validate_sparse(&workspace, &oid, sparse)?;
-    let files = entries(&workspace, &oid)?;
-    let checkout = LocalCheckout::reserve(&workspace)?;
+    let files = entries_with_objects(workspace, &oid, proof_objects)?;
+    let checkout = LocalCheckout::reserve(workspace, proof_objects)?;
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     let receipt = match direct::plan(&checkout, &oid, sparse, &files, state, primary)? {
-        Ok(plan) => direct::install(&checkout, &oid, &files, plan)?,
-        Err(reason) => checkout.native(&oid, sparse, &files, reason)?,
+        Ok(plan) => direct::install(&checkout, &oid, &files, plan, ready)?,
+        Err(reason) => {
+            ready()?;
+            checkout.native(&oid, sparse, &files, reason)?
+        }
     };
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let receipt = {
         let _ = (state, primary);
+        ready()?;
         checkout.native(&oid, sparse, &files, "native clone unavailable")?
     };
     checkout.publish()?;
@@ -35,10 +88,11 @@ struct LocalCheckout<'a> {
     scratch: tempfile::TempDir,
     index: PathBuf,
     index_lock: tempfile::TempPath,
+    proof_objects: Option<&'a Path>,
 }
 
 impl<'a> LocalCheckout<'a> {
-    fn reserve(worktree: &'a Path) -> Result<Self> {
+    fn reserve(worktree: &'a Path, proof_objects: Option<&'a Path>) -> Result<Self> {
         ensure_empty(worktree)?;
         let admin = worktree.join(".git");
         let index_lock = admin.join("index.lock");
@@ -61,7 +115,16 @@ impl<'a> LocalCheckout<'a> {
             scratch,
             index,
             index_lock,
+            proof_objects,
         })
+    }
+
+    fn proof_command(&self) -> Command {
+        let mut command = self.command();
+        if let Some(objects) = self.proof_objects {
+            command.env("GIT_OBJECT_DIRECTORY", objects);
+        }
+        command
     }
 
     fn command(&self) -> Command {
@@ -414,7 +477,7 @@ mod direct {
         ];
         let input = path_input(files.iter())?;
         let output = checkout
-            .command()
+            .proof_command()
             .env("GIT_NO_REPLACE_OBJECTS", "1")
             .args(["check-attr", &format!("--source={oid}"), "-z", "--stdin"])
             .args(attrs)
@@ -442,13 +505,14 @@ mod direct {
         Ok(())
     }
 
-    pub(super) fn install(
+    pub(super) fn install<F: FnOnce() -> Result<()>>(
         checkout: &LocalCheckout<'_>,
         oid: &str,
         files: &[Entry],
         plan: Plan,
+        ready: F,
     ) -> Result<Value> {
-        let mut command = checkout.command();
+        let mut command = checkout.proof_command();
         command.env("GIT_NO_REPLACE_OBJECTS", "1").args([
             "-c",
             "core.protectHFS=true",
@@ -500,6 +564,9 @@ mod direct {
             receipt.cloned.merge(cloned);
             missing.extend(paths);
         }
+        // The private index is not published and Git cannot materialize any
+        // missing paths until the full pack and live workspace are verified.
+        ready()?;
         if !missing.is_empty() {
             let mut command = parallel_checkout(checkout.command());
             command

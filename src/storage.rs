@@ -24,7 +24,7 @@ mod local;
 mod native;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod verify;
-pub(crate) use local::materialize_local;
+pub(crate) use local::{materialize_local, materialize_tip};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub(crate) use native::Root as NoFollowRoot;
 
@@ -46,10 +46,21 @@ fn git(worktree: &Path, args: &[&str]) -> Result<Output> {
 }
 
 fn checkout_identity(worktree: &Path, oid: &str) -> Result<String> {
+    checkout_identity_with_objects(worktree, oid, None)
+}
+
+fn checkout_identity_with_objects(
+    worktree: &Path,
+    oid: &str,
+    objects: Option<&Path>,
+) -> Result<String> {
     crate::git::checked_oid(oid)?;
-    let identity = crate::git::text(
-        worktree,
-        &[
+    let mut command = git_command(worktree);
+    if let Some(objects) = objects {
+        command.env("GIT_OBJECT_DIRECTORY", objects);
+    }
+    let output = command
+        .args([
             "rev-parse",
             "--verify",
             "--path-format=absolute",
@@ -57,8 +68,21 @@ fn checkout_identity(worktree: &Path, oid: &str) -> Result<String> {
             "--absolute-git-dir",
             "--show-toplevel",
             "HEAD^{commit}",
-        ],
-    )?;
+        ])
+        .output()?;
+    ensure!(
+        output.status.success(),
+        "Git checkout: {}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+    let mut identity =
+        String::from_utf8(output.stdout).context("Git returned a non-UTF-8 path or revision")?;
+    if identity.ends_with('\n') {
+        identity.pop();
+    }
+    if cfg!(windows) && identity.ends_with('\r') {
+        identity.pop();
+    }
     // The last line is the OID. Fall back to separate Git queries for
     // newlines in directory names or differently spelled canonical paths.
     let (paths, head) = identity
@@ -206,7 +230,15 @@ impl Entry {
 }
 
 fn entries(worktree: &Path, oid: &str) -> Result<Vec<Entry>> {
-    let tree = git_command(worktree)
+    entries_with_objects(worktree, oid, None)
+}
+
+fn entries_with_objects(worktree: &Path, oid: &str, objects: Option<&Path>) -> Result<Vec<Entry>> {
+    let mut command = git_command(worktree);
+    if let Some(objects) = objects {
+        command.env("GIT_OBJECT_DIRECTORY", objects);
+    }
+    let tree = command
         .env("GIT_NO_REPLACE_OBJECTS", "1")
         .args(["ls-tree", "-r", "-z", oid])
         .output()?;
@@ -1218,6 +1250,74 @@ mod tests {
     }
     fn fixture() -> (tempfile::TempDir, PathBuf, String) {
         fixture_with_format("sha1")
+    }
+
+    #[test]
+    fn tip_checkout_waits_before_native_fallback_and_index_publication() {
+        let (temp, repo, oid) = fixture();
+        let workspace = temp.path().join("tip");
+        fs::create_dir(&workspace).unwrap();
+        command(&workspace, &["init", "-q"]);
+        fs::write(workspace.join(".git/HEAD"), format!("{oid}\n")).unwrap();
+        // Force the native path regardless of filesystem cloning support.
+        command(&workspace, &["config", "core.autocrlf", "true"]);
+        let mut calls = 0;
+        let result = materialize_tip(
+            &workspace,
+            &temp.path().join("state"),
+            &oid,
+            &repo,
+            &repo.join(".git/objects"),
+            || {
+                calls += 1;
+                assert!(!workspace.join(".git/index").exists());
+                assert!(!workspace.join("sub/file").exists());
+                bail!("pack verification failed")
+            },
+        );
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("pack verification failed")
+        );
+        assert_eq!(calls, 1);
+        assert!(!workspace.join(".git/index").exists());
+        assert!(!workspace.join("sub/file").exists());
+    }
+
+    #[test]
+    fn tip_checkout_uses_installed_objects_after_readiness() {
+        let (temp, repo, oid) = fixture();
+        let workspace = temp.path().join("tip");
+        fs::create_dir(&workspace).unwrap();
+        command(&workspace, &["init", "-q"]);
+        command(&workspace, &["config", "core.autocrlf", "false"]);
+        fs::write(workspace.join(".git/HEAD"), format!("{oid}\n")).unwrap();
+        let mut calls = 0;
+        materialize_tip(
+            &workspace,
+            &temp.path().join("state"),
+            &oid,
+            &repo,
+            &repo.join(".git/objects"),
+            || {
+                calls += 1;
+                assert!(!workspace.join(".git/index").exists());
+                command(
+                    &workspace,
+                    &["fetch", "-q", "--no-tags", repo.to_str().unwrap(), &oid],
+                );
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(calls, 1);
+        assert_eq!(
+            fs::read(workspace.join("sub/file")).unwrap(),
+            b"committed\n"
+        );
+        assert_eq!(command(&workspace, &["status", "--porcelain"]), "");
     }
 
     fn fixture_with_format(object_format: &str) -> (tempfile::TempDir, PathBuf, String) {
