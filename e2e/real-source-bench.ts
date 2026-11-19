@@ -66,10 +66,10 @@ try {
   const copiedPacks = readdirSync(join(template,'.git','objects','pack')).filter(name => name.endsWith('.pack')).sort();
   assert.deepEqual(copiedPacks,packs,'Local clone did not retain the primary pack layout');
   const free = () => { const fs = statfsSync(fixture.root,{bigint:true}); return fs.bfree*fs.bsize; };
-  const observe = (root: string, calibrate = false): {available?: unknown; bytes?: unknown; reason?: unknown; observerSeconds:number} => {
+  const observe = (root: string, calibrate = false, groups = false): {available?: unknown; bytes?: unknown; reason?: unknown; groups?: Record<string,string>; observerSeconds:number} => {
     const start = performance.now();
     const result = fixture.command('python3',['-I','-B',join(import.meta.dirname,'apfs-file-data.py'),
-      ...(calibrate ? ['--calibrate',root] : [root])]);
+      ...(calibrate ? ['--calibrate'] : []), ...(groups ? ['--checkout-groups'] : []), root]);
     const observerSeconds = (performance.now()-start)/1000;
     if (result.status !== 0) return {available:false,reason:'observer-failed',observerSeconds};
     try { return {...objectResult(JSON.parse(result.stdout)),observerSeconds}; }
@@ -170,12 +170,19 @@ try {
     for (const [file,bytes] of metadata) assert.deepEqual(readFileSync(join(primary,'.git',file)),bytes,`Primary Git metadata changed: ${file}`);
     for (const [file,expected] of [[staged,'unstaged data\n'],[untracked,'untracked data\n'],[ignored,'ignored data\n']])
       assert.equal(readFileSync(join(primary,file),'utf8'),expected,`Primary data changed: ${file}`);
-    const afterApfs = beforeApfs?.available === true ? observe(root) : undefined;
+    const afterApfs = beforeApfs?.available === true ? observe(root,false,arm === 'graft') : undefined;
+    let fileDataByPurpose;
+    if (afterApfs?.groups && typeof beforeApfs?.bytes === 'string' && typeof afterApfs.bytes === 'string') {
+      const {primary,...added} = afterApfs.groups;
+      fileDataByPurpose = {...added,primaryChange:(BigInt(primary)-BigInt(beforeApfs.bytes)).toString()};
+      assert.equal(Object.values(fileDataByPurpose).reduce((sum,value)=>sum+BigInt(value),0n),
+        BigInt(afterApfs.bytes)-BigInt(beforeApfs.bytes),'APFS attribution must reconcile to the measured delta');
+    }
     const apfs = typeof beforeApfs?.bytes === 'string' && typeof firstApfs?.bytes === 'string' && typeof afterApfs?.bytes === 'string'
       ? {bytesSincePopulatedCheckout:(BigInt(afterApfs.bytes)-BigInt(beforeApfs.bytes)).toString(),
         firstCheckoutBytes:(BigInt(firstApfs.bytes)-BigInt(beforeApfs.bytes)).toString(),
         additionalSecondCheckoutBytes:(BigInt(afterApfs.bytes)-BigInt(firstApfs.bytes)).toString(),
-        observerSeconds:beforeApfs.observerSeconds+firstApfs.observerSeconds+afterApfs.observerSeconds}
+        fileDataByPurpose,observerSeconds:beforeApfs.observerSeconds+firstApfs.observerSeconds+afterApfs.observerSeconds}
       : values['apfs-file-data'] ? {unavailable:calibration?.reason ?? beforeApfs?.reason ?? firstApfs?.reason ?? afterApfs?.reason ?? 'observer-failed'} : undefined;
     let advanceBase;
     if (values['advance-base']) {

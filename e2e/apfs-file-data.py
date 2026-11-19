@@ -92,7 +92,34 @@ def union_size(ranges):
     return count
 
 
-def measure(root):
+# Assign each physical block once. A block shared with the existing primary
+# belongs to that baseline, even when several new files also reference it.
+GROUPS = ("primary", "historyPacks", "historyIndexes", "checkoutIndexes", "sourceFiles", "records")
+
+
+def checkout_group(root, path):
+    parts = Path(path).relative_to(root).parts
+    in_registry = parts[:3] == ("primary", ".git", "graft")
+    if parts[0] == "primary" and not in_registry:
+        return "primary"
+    in_history_cache = in_registry and parts[3:4] == ("independent-packs-v2",)
+    workspace_pack = parts[-4:-1] == (".git", "objects", "pack")
+    if in_history_cache or workspace_pack:
+        if parts[-1].endswith(".pack"):
+            return "historyPacks"
+        if parts[-1].endswith(".idx"):
+            return "historyIndexes"
+    if not in_registry and parts[-2:] == (".git", "index"):
+        return "checkoutIndexes"
+    snapshot_file = in_registry and parts[3:4] == ("bases",) and parts[6:7] == ("tree",)
+    # The namespace itself also contains a project ownership record.
+    workspace_file = parts[0] == "primary.graft" and len(parts) >= 3 and ".git" not in parts[2:]
+    if snapshot_file or workspace_file:
+        return "sourceFiles"
+    return "records"
+
+
+def measure(root, breakdown=None):
     def fail_walk(err):
         raise err
 
@@ -106,23 +133,34 @@ def measure(root):
             before = os.lstat(path)
             if not stat.S_ISREG(before.st_mode):
                 continue
+            group = checkout_group(root, path) if breakdown is not None else "all"
             key = before.st_dev, before.st_ino
-            if key in seen:
+            if (key, group) in seen:
                 continue
-            seen.add(key)
+            seen.add((key, group))
             with open_file(path) as fd:
                 info = os.fstat(fd)
                 if not stat.S_ISREG(info.st_mode) or (info.st_dev, info.st_ino) != key:
                     raise Unavailable("file-changed-during-scan")
                 if info.st_dev not in sizes:
                     sizes[info.st_dev] = allocation_block(path)
-                extents[info.st_dev].extend(blocks(fd, info, sizes[info.st_dev]))
+                extents[group, info.st_dev].extend(blocks(fd, info, sizes[info.st_dev]))
                 after = os.fstat(fd)
                 if (info.st_size, info.st_blocks, info.st_mtime_ns, info.st_ctime_ns) != (
                     after.st_size, after.st_blocks, after.st_mtime_ns, after.st_ctime_ns
                 ):
                     raise Unavailable("file-changed-during-scan")
-    return sum(union_size(ranges) * sizes[device] for device, ranges in extents.items())
+    if breakdown is None:
+        return sum(union_size(ranges) * sizes[device] for (_, device), ranges in extents.items())
+    cumulative = defaultdict(list)
+    previous = 0
+    for group in GROUPS:
+        for device in sizes:
+            cumulative[device].extend(extents[group, device])
+        total = sum(union_size(ranges) * sizes[device] for device, ranges in cumulative.items())
+        breakdown[group] = str(total - previous)
+        previous = total
+    return previous
 
 
 def calibrate(volume):
@@ -194,6 +232,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", type=Path)
     parser.add_argument("--calibrate", action="store_true")
+    parser.add_argument("--checkout-groups", action="store_true",
+                        help="attribute blocks in the real-source benchmark fixture")
     args = parser.parse_args()
     try:
         if sys.platform != "darwin":
@@ -201,6 +241,9 @@ def main():
         if args.calibrate:
             calibrate(args.root)
             result = {"available": True}
+        elif args.checkout_groups:
+            breakdown = {}
+            result = {"available": True, "bytes": str(measure(args.root, breakdown)), "groups": breakdown}
         else:
             result = {"available": True, "bytes": str(measure(args.root))}
     except Unavailable as err:
