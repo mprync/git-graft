@@ -116,7 +116,7 @@ fn owner_record(project: &Project, package: &str) -> PathBuf {
         .join(format!("package-cache-{package}-v1.json"))
 }
 
-fn private_file(path: &Path) -> Result<Vec<u8>> {
+pub(crate) fn read_private_file(path: &Path, limit: u64) -> Result<Vec<u8>> {
     let mut options = fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -133,8 +133,8 @@ fn private_file(path: &Path) -> Result<Vec<u8>> {
     let file = options.open(path)?;
     let metadata = file.metadata()?;
     ensure!(
-        metadata.is_file() && !is_reparse_point(&metadata) && metadata.len() <= OWNER_LIMIT,
-        "invalid package cache binding file at {}",
+        metadata.is_file() && !is_reparse_point(&metadata) && metadata.len() <= limit,
+        "invalid private record at {}",
         path.display()
     );
     #[cfg(unix)]
@@ -144,26 +144,31 @@ fn private_file(path: &Path) -> Result<Vec<u8>> {
             metadata.nlink() == 1
                 && metadata.uid() == unsafe { libc::geteuid() }
                 && metadata.mode() & 0o077 == 0,
-            "package cache binding file is not private: {}",
+            "Graft state record is not private: {}",
             path.display()
         );
     }
     let mut bytes = Vec::new();
-    file.take(OWNER_LIMIT + 1).read_to_end(&mut bytes)?;
-    ensure!(
-        bytes.len() as u64 <= OWNER_LIMIT,
-        "invalid cache binding size"
-    );
+    file.take(limit + 1).read_to_end(&mut bytes)?;
+    ensure!(bytes.len() as u64 <= limit, "private record is too large");
     Ok(bytes)
 }
 
 fn read_binding(project: &Project, package: &str) -> Result<PackageBinding> {
     ensure!(
-        PACKAGES.contains(&package),
+        PACKAGES.contains(&package)
+            || package
+                .strip_prefix("registered-")
+                .is_some_and(|id| id.len() == 64
+                    && id
+                        .bytes()
+                        .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())),
         "unrecognized package cache root"
     );
-    let binding: PackageBinding =
-        serde_json::from_slice(&private_file(&owner_record(project, package))?)?;
+    let binding: PackageBinding = serde_json::from_slice(&read_private_file(
+        &owner_record(project, package),
+        OWNER_LIMIT,
+    )?)?;
     ensure!(
         binding.project == project.id()
             && binding.package == package
@@ -184,7 +189,7 @@ pub(crate) fn verify_package(
         private_directory(path)?;
         let expected = read_binding(project, package)?;
         ensure!(
-            private_file(&path.join(OWNER))? == expected.nonce.as_bytes()
+            read_private_file(&path.join(OWNER), OWNER_LIMIT)? == expected.nonce.as_bytes()
                 && directory_identity(path)? == expected.directory,
             "package cache binding does not match this directory"
         );
@@ -201,13 +206,34 @@ pub(crate) fn verify_package(
 /// Pin every package root exported by the runtime. The project lock must be held.
 /// Existing directories are accepted only with their original registry binding.
 pub(crate) fn prepare_package_roots(project: &Project) -> Result<()> {
+    prepare_roots(project, PACKAGES)
+}
+
+pub(crate) fn registered_cache_path(project: &Project, manager: &str) -> PathBuf {
+    project
+        .state
+        .join("cache")
+        .join(format!("registered-{}", blake3::hash(manager.as_bytes())))
+}
+
+pub(crate) fn prepare_registered_cache(project: &Project, manager: &str) -> Result<PathBuf> {
+    let path = registered_cache_path(project, manager);
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("invalid cache identifier")?;
+    prepare_roots(project, &[name])?;
+    Ok(path)
+}
+
+fn prepare_roots(project: &Project, packages: &[&str]) -> Result<()> {
     project.require_private_state()?;
     let cache = project.state.join("cache");
     project.check_cache_owner(&cache)?;
     private_directory(&cache)?;
     let parent = directory_identity(&cache)?;
     let mut absent = Vec::new();
-    for &package in PACKAGES {
+    for &package in packages {
         let path = cache.join(package);
         if exists(&path)? {
             verify_package(project, package, &path)?;

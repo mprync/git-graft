@@ -44,6 +44,7 @@ impl Runtime {
     fn configure(&self, command: &mut Command) -> Result<()> {
         crate::git::clear_location(command);
         command.env_remove("GIT_GRAFT_LEASE");
+        command.env_remove("GRAFT_PACKAGE_CACHE");
         let venv = self.private.join("venv");
         let bin = if cfg!(windows) { "Scripts" } else { "bin" };
         let mut paths = vec![
@@ -82,13 +83,6 @@ impl Runtime {
                 .env("SCCACHE_DIR", self.cache.join("sccache"));
         }
         Ok(())
-    }
-
-    fn run(&self, program: &str, args: &[String]) -> Result<Value> {
-        let mut command = Command::new(program);
-        command.args(args);
-        self.configure(&mut command)?;
-        Self::capture_command(command, program)
     }
 
     fn configure_manager(&self, command: &mut Command) -> Result<()> {
@@ -246,12 +240,25 @@ impl Runtime {
             "python_environment": self.private.join("venv")})
     }
 
-    pub(crate) fn execute(&self, argv: &[String]) -> Result<Value> {
+    pub(crate) fn execute_registered(
+        &self,
+        argv: &[String],
+        profile: Option<&crate::package_manager::ExecutionProfile>,
+    ) -> Result<Value> {
         let (program, args) = argv.split_first().context("command must not be empty")?;
-        if program.is_empty() {
-            bail!("command must not be empty");
+        ensure!(!program.is_empty(), "command must not be empty");
+        let mut command = Command::new(program);
+        self.configure(&mut command)?;
+        if let Some(profile) = profile {
+            profile.configure(&mut command)?;
         }
-        self.run(program, args)
+        command.args(args);
+        Self::capture_command(command, program)
+    }
+
+    #[cfg(test)]
+    fn execute(&self, argv: &[String]) -> Result<Value> {
+        self.execute_registered(argv, None)
     }
 
     pub(crate) fn install(

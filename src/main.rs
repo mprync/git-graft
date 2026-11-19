@@ -6,6 +6,7 @@ mod git;
 mod landing;
 mod layer;
 mod mcp;
+mod package_manager;
 mod reconcile;
 mod recovery;
 mod registry;
