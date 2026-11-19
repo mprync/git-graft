@@ -16,6 +16,9 @@ if (args.length && (args.length !== 2 || !groups.includes(group ?? ''))) {
   throw new Error('Usage: node e2e/run.ts [--group ' + groups.join('|') + ']');
 }
 const rounds = group === 'space' ? Number(process.env.GIT_GRAFT_BENCH_REPEATS ?? 3) : 1;
+const projectHistory = process.env.GIT_GRAFT_TEST_PROJECT_HISTORY;
+assert(projectHistory === undefined || projectHistory === 'local' || projectHistory === 'isolated',
+  'GIT_GRAFT_TEST_PROJECT_HISTORY must be local or isolated');
 assert(Number.isSafeInteger(rounds) && rounds > 0, 'GIT_GRAFT_BENCH_REPEATS must be a positive integer');
 
 function releaseBinary(): string {
@@ -117,6 +120,7 @@ for (const suite of group ? [group] : groups) {
     let failure: unknown;
     try {
       ctx = new Context(binary);
+      if (projectHistory) ctx.git(['config', '--local', 'graft.history', projectHistory]);
       await scenario.run(ctx);
     } catch (error) {
       failure = error;
@@ -162,7 +166,7 @@ const report = {
   binary_version: execFileSync(binary, ['--version'], { encoding: 'utf8' }).trim(),
   binary: binaryIdentity,
   build: process.env.GIT_GRAFT_BUILD_KIND ?? (process.env.GIT_GRAFT_BIN ? 'supplied binary' : 'release'),
-  group: group ?? 'all',
+  group: group ?? 'all', projectHistory,
   ok,
   counts: { passed, failed, unavailable, total: results.length },
   cli, mcp, results,
