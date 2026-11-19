@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { objectBootstrap } from './benchmark-receipts.ts';
 import { objectResult, type Context, type Scenario } from './harness.ts';
@@ -29,7 +29,7 @@ function fixture(ctx: Context, format: 'sha1' | 'sha256') {
   const extra: string[] = [];
   for (let i = 0; i < 3; i++) {
     const file = join(ctx.root, `unrelated-${i}`);
-    writeFileSync(file, `unrelated object ${i}\n`);
+    writeFileSync(file, randomBytes(256));
     const id = ctx.git(['hash-object', '-w', file]);
     ctx.git(['update-ref', `refs/scratch/unrelated-${i}`, id]);
     extra.push(id);
@@ -67,6 +67,12 @@ function run(ctx: Context, format: 'sha1' | 'sha256') {
     assert.equal(objects.source, 'local-export');
   }
   const sibling = ctx.spawn(`mixed-${format}-sibling`);
+  const excludedRecord = packRecords(ctx, index).find(record => record.id === extra[0]);
+  assert(excludedRecord);
+  const excludedBytes = donor.subarray(excludedRecord.offset, excludedRecord.offset + excludedRecord.size);
+  assert(excludedBytes.length > 128);
+  assertNoRecord(first.path, excludedBytes);
+  assertNoRecord(sibling.path, excludedBytes);
   const admin = join(ctx.repo, '.git');
   const parked = join(ctx.repo, '.git-parked');
   renameSync(admin, parked);
@@ -99,3 +105,98 @@ export const cases: Scenario[] = (['sha1', 'sha256'] as const).map(format => ({
   name: `mixed primary pack isolation (${format})`,
   run: ctx => run(ctx, format),
 }));
+
+type PackRecord = { id: string; size: number; offset: number; base?: string };
+
+function packRecords(ctx: Context, index: string): PackRecord[] {
+  return ctx.git(['verify-pack', '-v', index]).split('\n').flatMap(line => {
+    const match = line.match(/^([0-9a-f]+)\s+\S+\s+\d+\s+(\d+)\s+(\d+)(?:\s+\d+\s+([0-9a-f]+))?$/);
+    return match ? [{ id: match[1], size: Number(match[2]), offset: Number(match[3]), base: match[4] }] : [];
+  });
+}
+
+function assertNoRecord(workspace: string, excluded: Buffer) {
+  const dir = join(workspace, '.git', 'objects', 'pack');
+  for (const name of readdirSync(dir).filter(name => name.endsWith('.pack'))) {
+    assert.equal(readFileSync(join(dir, name)).includes(excluded), false, 'excluded compressed record leaked into workspace pack');
+  }
+}
+
+function makePack(ctx: Context, entries: string[], delta: boolean): string {
+  const prefix = join(ctx.repo, '.git', 'objects', 'pack', 'pack');
+  const args = delta ? ['--window=10', '--depth=10'] : ['--no-reuse-delta', '--window=0'];
+  const result = spawnSync('git', ['pack-objects', ...args, prefix], {
+    cwd: ctx.repo, env: ctx.env, input: entries.join('\n') + '\n', encoding: 'utf8', windowsHide: true,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  ctx.git(['prune-packed']);
+  return `${prefix}-${result.stdout.trim()}.idx`;
+}
+
+function verifyIndependent(ctx: Context, workspace: string, selected: string[], data: Buffer) {
+  const admin = join(ctx.repo, '.git');
+  const parked = join(ctx.repo, '.git-parked');
+  renameSync(admin, parked);
+  try {
+    ctx.git(['fsck', '--full'], workspace);
+    assert.deepEqual(ctx.git(['cat-file', '--batch-all-objects', '--batch-check=%(objectname)'], workspace).split('\n').sort(), selected);
+    assert.deepEqual(readFileSync(join(workspace, 'selected.bin')), data);
+  } finally {
+    renameSync(parked, admin);
+  }
+}
+
+function defensiveFixture(ctx: Context, mode: 'delta' | 'compact') {
+  const data = mode === 'delta' ? randomBytes(2 * 1024 * 1024) : randomBytes(8192);
+  writeFileSync(join(ctx.repo, 'selected.bin'), data);
+  ctx.git(['add', 'selected.bin']);
+  ctx.git(['commit', '-qm', 'selected data']);
+  const tip = ctx.git(['rev-parse', 'HEAD']);
+  const selectedBlob = ctx.git(['rev-parse', 'HEAD:selected.bin']);
+  const selected = ctx.git(['rev-list', '--objects', '--no-object-names', tip]).split('\n').sort();
+  const unrelated = mode === 'delta' ? Buffer.concat([data, randomBytes(4096)]) : randomBytes(2 * 1024 * 1024);
+  const input = join(ctx.root, 'unrelated-data');
+  writeFileSync(input, unrelated);
+  const excluded = ctx.git(['hash-object', '-w', input]);
+  ctx.git(['update-ref', 'refs/scratch/unrelated', excluded]);
+  const others = selected.filter(id => id !== selectedBlob);
+  const entries = mode === 'delta'
+    ? [`${excluded} selected.bin`, `${selectedBlob} selected.bin`, ...others]
+    : [others[0], excluded, selectedBlob, ...others.slice(1)];
+  const index = makePack(ctx, entries, mode === 'delta');
+  const records = packRecords(ctx, index);
+  const excludedRecord = records.find(record => record.id === excluded);
+  const selectedRecord = records.find(record => record.id === selectedBlob);
+  assert(excludedRecord && selectedRecord);
+  if (mode === 'delta') {
+    assert.equal(selectedRecord.base, excluded, 'selected object must be a native Git delta against excluded history');
+  } else {
+    assert.ok(excludedRecord.size > 10 * (records.reduce((sum, record) => sum + record.size, 0) - excludedRecord.size));
+    assert.ok(excludedRecord.offset < selectedRecord.offset, 'excluded record must be an interior gap');
+  }
+  const packPath = index.replace(/\.idx$/, '.pack');
+  const donor = readFileSync(packPath);
+  const ws = ctx.spawn(`defensive-${mode}`);
+  const receipt = objectResult(objectResult(ws.result.storage).objects);
+  if (mode === 'compact') {
+    assert.equal(receipt.filtered_primary_packs ?? 0, 0, JSON.stringify(receipt));
+    assert.equal(receipt.filtered_unchanged_bytes ?? 0, 0, JSON.stringify(receipt));
+    assert.equal(receipt.source, 'local-export');
+  } else {
+    const filtered = receipt.filtered_primary_packs ?? 0;
+    const unchanged = receipt.filtered_unchanged_bytes ?? 0;
+    assert.ok(typeof filtered === 'number' && Number.isSafeInteger(filtered) && filtered >= 0);
+    assert.ok(typeof unchanged === 'number' && Number.isSafeInteger(unchanged) && unchanged >= 0);
+    assert.equal(filtered > 0, unchanged > 0, JSON.stringify(receipt));
+  }
+  verifyIndependent(ctx, ws.path, selected, data);
+  assert.deepEqual(readFileSync(packPath), donor);
+  assert.deepEqual(readFileSync(join(ctx.repo, 'selected.bin')), data);
+  ctx.git(['fsck', '--full']);
+  ctx.measure('defensive_history', { mode, objects: objectBootstrap(receipt, false) });
+}
+
+cases.push(...(['delta', 'compact'] as const).map(mode => ({
+  name: `mixed primary pack ${mode} fallback`,
+  run: (ctx: Context) => defensiveFixture(ctx, mode),
+})));
