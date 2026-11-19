@@ -3,13 +3,14 @@
 //! the donor index only suggests which records to keep.
 
 use super::{
-    ObjectId, Pack, checked, clone_file, index_count, open_regular, output_text, transfer_git,
-    verify_membership,
+    ObjectId, Pack, cache, checked, clone_file, index_count, index_ids, open_regular, output_text,
+    rename_exclusive, transfer_git,
 };
 use anyhow::{Context, Result, bail, ensure};
 use sha2::Digest;
 use std::{
     collections::HashSet,
+    fs::File,
     io::{Read, Seek, SeekFrom, Write},
     ops::Range,
     path::Path,
@@ -26,11 +27,11 @@ const MAX_WORKING_BYTES: u64 = 192 << 20;
 // object expensive. Let Git export these layouts in its usual compact form.
 const MAX_ALIGNMENT_BYTES: usize = 64 << 10;
 
-pub(super) struct Filtered {
-    pub(super) pack: Pack,
-    pub(super) hash: String,
+pub(super) struct Prepared {
+    file: File,
+    scratch: tempfile::TempDir,
     pub(super) ids: Vec<ObjectId>,
-    pub(super) unchanged_bytes: u64,
+    unchanged_bytes: u64,
 }
 
 fn check_budget(pack: u64, index: u64, width: usize) -> Result<()> {
@@ -60,7 +61,7 @@ fn bounded_bytes(mut file: impl Read, size: u64) -> Result<Vec<u8>> {
 
 // v2 indexes put sorted IDs, CRCs and 32-bit pack offsets after the fanout
 // table. The size limit makes large-offset entries unnecessary here.
-fn offsets(index: &[u8], width: usize) -> Result<Vec<(usize, ObjectId)>> {
+fn offsets(index: &[u8], width: usize) -> Result<(&[u8], Vec<(usize, usize)>)> {
     let mut table = index;
     let count = index_count(&mut table)?;
     ensure!(
@@ -76,13 +77,17 @@ fn offsets(index: &[u8], width: usize) -> Result<Vec<(usize, ObjectId)>> {
     let starts = &rest[count * 4..count * 8];
     let mut records = Vec::new();
     records.try_reserve_exact(count)?;
-    for (id, start) in ids.chunks_exact(width).zip(starts.as_chunks::<4>().0) {
-        let mut value = ObjectId([0; 32]);
-        value.0[..width].copy_from_slice(id);
-        records.push((u32::from_be_bytes(*start) as usize, value));
+    for (row, start) in starts.as_chunks::<4>().0.iter().enumerate() {
+        records.push((u32::from_be_bytes(*start) as usize, row));
     }
     records.sort_unstable_by_key(|r| r.0);
-    Ok(records)
+    Ok((ids, records))
+}
+
+fn object_id(row: &[u8], width: usize) -> ObjectId {
+    let mut id = ObjectId([0; 32]);
+    id.0[..width].copy_from_slice(row);
+    id
 }
 
 // Return the zlib offset for a full object or a delta whose earlier base
@@ -153,7 +158,7 @@ fn select(
     width: usize,
     wanted: &HashSet<ObjectId>,
 ) -> Result<Selection> {
-    let records = offsets(index, width)?;
+    let (table, records) = offsets(index, width)?;
     ensure!(
         bytes.len() >= 12 + width
             && &bytes[..4] == b"PACK"
@@ -165,19 +170,21 @@ fn select(
     let payload_end = bytes.len() - width;
     let mut kept = HashSet::new();
     kept.try_reserve(records.len())?;
-    let mut ids = Vec::new();
-    ids.try_reserve_exact(records.len())?;
+    let mut selected = Vec::new();
+    selected.try_reserve_exact(records.len())?;
+    selected.resize(records.len(), false);
+    let mut count = 0;
     let mut gaps = Vec::new();
     gaps.try_reserve_exact(records.len() / 2)?;
     let mut previous = 12..12;
     let mut rewrite = 0;
-    for (i, &(start, id)) in records.iter().enumerate() {
+    for (i, &(start, row)) in records.iter().enumerate() {
         let end = records.get(i + 1).map_or(payload_end, |next| next.0);
         ensure!(
             start < end && end <= payload_end,
             "invalid pack record bounds"
         );
-        if !wanted.contains(&id) {
+        if !wanted.contains(&object_id(&table[row * width..(row + 1) * width], width)) {
             continue;
         }
         let Some(stream) = stream_start(&bytes[start..end], start, &kept)? else {
@@ -185,7 +192,7 @@ fn select(
         };
         if previous.end != start {
             ensure!(
-                !ids.is_empty(),
+                count > 0,
                 "first pack record is outside the selected history"
             );
             ensure!(
@@ -196,13 +203,23 @@ fn select(
             gaps.push((previous.clone(), start));
         }
         kept.insert(start);
-        ids.push(id);
+        selected[row] = true;
+        count += 1;
         previous = stream + 2..end;
     }
     ensure!(
-        !ids.is_empty() && ids.len() < records.len() && rewrite < previous.end / 4,
+        count > 0 && count < records.len() && rewrite < previous.end / 4,
         "mixed pack has insufficient reusable data"
     );
+    // Git writes index rows in ID order. Keep the selected rows in that
+    // same order so the rebuilt index can be compared in one pass.
+    let mut ids = Vec::new();
+    ids.try_reserve_exact(count)?;
+    for (row, keep) in table.chunks_exact(width).zip(selected) {
+        if keep {
+            ids.push(object_id(row, width));
+        }
+    }
     Ok(Selection {
         ids,
         gaps,
@@ -210,23 +227,20 @@ fn select(
     })
 }
 
-pub(super) fn filter(
-    root: &Path,
-    scratch: &Path,
+pub(super) fn prepare(
+    state: &Path,
     donor: &Pack,
     wanted: &HashSet<ObjectId>,
     width: usize,
-) -> Result<Filtered> {
+) -> Result<Prepared> {
     let input = open_regular(&donor.pack)?;
     let input_size = input.metadata()?.len();
     let index = open_regular(&donor.index)?;
     let index_size = index.metadata()?.len();
     check_budget(input_size, index_size, width)?;
-    let pack = Pack {
-        pack: scratch.join("filtered.pack"),
-        index: scratch.join("filtered.idx"),
-    };
-    let mut file = scratch::create(&input, &donor.pack, scratch)?;
+    // Keep unfinished transfer artifacts in the primary registry.
+    let scratch = cache::private_tempdir_in(state)?;
+    let mut file = scratch::create(&input, &donor.pack, scratch.path())?;
     let mut bytes = bounded_bytes(&file, input_size)?;
     let index = bounded_bytes(index, index_size)?;
     let plan = select(&bytes, &index, width, wanted)?;
@@ -261,22 +275,88 @@ pub(super) fn filter(
     permissions.set_readonly(true);
     file.set_permissions(permissions)?;
 
-    // Git verifies the anonymous pack as a regular file and writes only the
-    // index in private staging. Name the pack after its membership is proven.
-    file.rewind()?;
-    let mut command = transfer_git(root);
-    command
-        .args(["index-pack", "--index-version=2", "--threads=4", "-o"])
-        .arg(&pack.index)
-        .arg("/dev/fd/0")
-        .stdin(Stdio::from(file.try_clone()?));
-    let output = checked(command).context("index filtered Git pack")?;
-    verify_membership(std::slice::from_ref(&pack), &plan.ids, width)?;
-    clone_file(&file, &pack.pack)?;
-    Ok(Filtered {
-        hash: output_text(&output)?.into(),
-        pack,
+    Ok(Prepared {
+        file,
+        scratch,
         ids: plan.ids,
         unchanged_bytes: unchanged_bytes as u64,
     })
+}
+
+impl Prepared {
+    pub(super) fn verify(mut self, root: &Path, stage: &Path, width: usize) -> Result<(Pack, u64)> {
+        // Git verifies the anonymous pack as a regular file and writes only the
+        // index in private staging. Name the pack after its membership is proven.
+        let index = self.scratch.path().join("filtered.idx");
+        self.file.rewind()?;
+        let mut command = transfer_git(root);
+        command
+            .args(["index-pack", "--index-version=2", "--threads=4", "-o"])
+            .arg(&index)
+            .arg("/dev/fd/0")
+            .stdin(Stdio::from(self.file.try_clone()?));
+        let output = checked(command).context("index filtered Git pack")?;
+        let mut expected = self.ids.iter();
+        index_ids(&index, width, |id| {
+            ensure!(
+                expected.next() == Some(&id),
+                "filtered Git pack contains an unexpected object"
+            );
+            Ok(())
+        })?;
+        ensure!(
+            expected.next().is_none(),
+            "filtered Git pack is missing objects"
+        );
+        let pack = Pack::at(stage, output_text(&output)?, width)?;
+        clone_file(&self.file, &pack.pack)?;
+        rename_exclusive(&index, &pack.index)?;
+        Ok((pack, self.unchanged_bytes))
+    }
+}
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+mod tests {
+    use super::*;
+    use crate::workspace::objects::run;
+    use std::fs;
+
+    #[test]
+    fn mislabeled_object_stays_unpublished() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        run(
+            root.path(),
+            &["init", "-q", "--template=", "--object-format=sha1"],
+        )?;
+        fs::write(root.path().join("object"), b"unrelated object")?;
+        let id = run(root.path(), &["hash-object", "-w", "object"])?;
+        let mut ids = tempfile::tempfile_in(root.path())?;
+        ids.write_all(&id)?;
+        ids.rewind()?;
+        let mut command = transfer_git(root.path());
+        command.args(["pack-objects", "--stdout"]).stdin(ids);
+        let bytes = checked(command)?;
+
+        let mut file = tempfile::tempfile_in(root.path())?;
+        file.write_all(&bytes)?;
+        let scratch = cache::private_tempdir_in(root.path())?;
+        let stage = tempfile::tempdir_in(root.path())?;
+        let prepared = Prepared {
+            file,
+            scratch,
+            // Model a donor index mapping a wanted ID to an unrelated record.
+            ids: vec![ObjectId([0; 32])],
+            unchanged_bytes: 0,
+        };
+        let error = prepared
+            .verify(root.path(), stage.path(), 20)
+            .err()
+            .context("mislabeled object was accepted")?;
+        assert_eq!(
+            error.to_string(),
+            "filtered Git pack contains an unexpected object"
+        );
+        assert_eq!(fs::read_dir(stage.path())?.count(), 0);
+        Ok(())
+    }
 }

@@ -625,56 +625,69 @@ fn pack_with_donors(
         whole: packs.len(),
         ..Default::default()
     };
-    for donor in candidates_to_filter {
-        if remaining.is_empty() {
-            break;
-        }
-        // A crash before filtering finishes must never leave mixed primary
-        // history in the task or its archive. Stage under the primary registry.
-        let scratch = cache::private_tempdir_in(source.state)?;
-        if let Ok(filtered) = mixed::filter(root, scratch.path(), &donor, &remaining, width) {
-            let pack = Pack::at(stage, &filtered.hash, width)?;
-            rename_exclusive(&filtered.pack.pack, &pack.pack)?;
-            rename_exclusive(&filtered.pack.index, &pack.index)?;
-            for id in filtered.ids {
-                ensure!(remaining.remove(&id), "duplicate filtered Git object");
+    // Start verifying whole packs while planning the mixed transfers. Source
+    // indexes are hints, so any failed verification discards this staging set.
+    let (filtered, new) =
+        thread::scope(|scope| {
+            let whole = &packs;
+            let verify = scope.spawn(move || {
+                for pack in whole {
+                    let mut verify = transfer_git(root);
+                    verify.args(["index-pack", "--verify"]).arg(&pack.pack);
+                    checked(verify).context("verify cloned primary Git pack")?;
+                }
+                Ok::<_, anyhow::Error>(())
+            });
+
+            let mut filtered = Vec::new();
+            let mut pending = None;
+            for donor in candidates_to_filter {
+                if remaining.is_empty() {
+                    break;
+                }
+                if let Ok(candidate) = mixed::prepare(source.state, &donor, &remaining, width) {
+                    for id in &candidate.ids {
+                        ensure!(remaining.remove(id), "duplicate filtered Git object");
+                    }
+                    // Retain at most one pending verification between candidates.
+                    if let Some(previous) = pending.replace(candidate) {
+                        filtered.push(previous.verify(root, stage, width)?);
+                    }
+                }
             }
-            reuse.filtered += 1;
-            reuse.unchanged_bytes += filtered.unchanged_bytes;
-            packs.push(pack);
-        }
+            ensure!(
+                !whole.is_empty() || pending.is_some(),
+                "no complete primary pack belongs to the requested history"
+            );
+            let pending =
+                pending.map(|candidate| scope.spawn(move || candidate.verify(root, stage, width)));
+            let residual: Vec<_> = expected
+                .iter()
+                .copied()
+                .filter(|id| remaining.contains(id))
+                .collect();
+            // Git can export the remaining objects while it rehashes the last
+            // mixed pack. Use the output only if both operations succeed.
+            let new = if residual.is_empty() {
+                Ok(Vec::new())
+            } else {
+                export(source.primary, root, stage, &residual, width)
+            };
+            if let Some(pending) = pending {
+                filtered.push(pending.join().map_err(|_| {
+                    anyhow::anyhow!("Git mixed pack verification worker panicked")
+                })??);
+            }
+            verify
+                .join()
+                .map_err(|_| anyhow::anyhow!("Git pack verification worker panicked"))??;
+            Ok::<_, anyhow::Error>((filtered, new?))
+        })?;
+    reuse.filtered = filtered.len();
+    for (pack, unchanged_bytes) in filtered {
+        reuse.unchanged_bytes += unchanged_bytes;
+        packs.push(pack);
     }
-    ensure!(
-        !packs.is_empty(),
-        "no complete primary pack belongs to the requested history"
-    );
-    let residual: Vec<_> = expected
-        .iter()
-        .copied()
-        .filter(|id| remaining.contains(id))
-        .collect();
-    // Source indexes describe which packs may be reused. Independently
-    // verify their packed contents and index mappings, in parallel with any
-    // residual export. A failed verification discards this whole staging set.
-    let new = thread::scope(|scope| {
-        let verify = scope.spawn(|| {
-            for pack in &packs[..reuse.whole] {
-                let mut verify = transfer_git(root);
-                verify.args(["index-pack", "--verify"]).arg(&pack.pack);
-                checked(verify).context("verify cloned primary Git pack")?;
-            }
-            Ok::<_, anyhow::Error>(())
-        });
-        let new = if residual.is_empty() {
-            Ok(Vec::new())
-        } else {
-            export(source.primary, root, stage, &residual, width)
-        };
-        verify
-            .join()
-            .map_err(|_| anyhow::anyhow!("Git pack verification worker panicked"))??;
-        new
-    })?;
     packs.extend(new);
     Ok((packs, reuse))
 }
