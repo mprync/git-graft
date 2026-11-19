@@ -52,6 +52,60 @@ function purgeFixture(ctx: Context) {
 }
 
 export const cases: Scenario[] = [{
+  name: 'land commit stages source beside protected top-level and nested installs',
+  run(ctx) {
+    const native = objectResult(ctx.cli(['doctor']).source_storage).native_clone;
+    assert.equal(typeof native, 'boolean');
+    ctx.measure('native_clone', native);
+    if (!native) return;
+    writeFileSync(join(ctx.repo, '.gitignore'), '/node_modules/\n/vendor/bundle/\n');
+    writeFileSync(join(ctx.repo, 'fixture.lock'), 'locked\n');
+    mkdirSync(join(ctx.repo, 'vendor'), { recursive: true });
+    writeFileSync(join(ctx.repo, 'node_modules_notes.txt'), 'original top source\n');
+    writeFileSync(join(ctx.repo, 'vendor/bundle-notes.txt'), 'original nested source\n');
+    ctx.git(['add', '.']); ctx.git(['commit', '-qm', 'fixture source']);
+    const base = ctx.git(['rev-parse', 'HEAD']);
+    for (const [directory, contents] of [
+      ['node_modules', 'top-level dependency payload\n'],
+      ['vendor/bundle', 'nested dependency payload\n'],
+    ]) {
+      mkdirSync(join(ctx.repo, directory), { recursive: true });
+      writeFileSync(join(ctx.repo, directory, 'package'), contents);
+    }
+    const top = registration(ctx, ['--install-dir', 'node_modules', '--input', 'fixture.lock', '--key', 'top']);
+    const nested = registration(ctx, ['--install-dir', 'vendor/bundle', '--input', 'fixture.lock', '--key', 'nested']);
+    nested[1] = 'nested-fixture-manager';
+    ctx.cli(top); ctx.cli(nested);
+    const ws = ctx.spawn('protected-land');
+    const receipts = objectResult(ws.result.storage).registered_dependencies;
+    assert(Array.isArray(receipts));
+    for (const name of [manager, 'nested-fixture-manager']) {
+      assert.equal(receipts.map(objectResult).find(item => item.manager === name)?.status, 'attached');
+    }
+    const paths = ['node_modules/package', 'vendor/bundle/package'];
+    const payloads = paths.map(path => readFileSync(join(ws.path, path), 'utf8'));
+    const blobs = paths.map(path => ctx.git(['hash-object', path], ws.path));
+    for (const [index, path] of paths.entries()) {
+      assert.equal(readFileSync(join(ctx.repo, path), 'utf8'), payloads[index]);
+      assert.equal(ctx.git(['ls-files', '--', path], ws.path), '');
+      assert.notEqual(ctx.command('git', ['cat-file', '-e', blobs[index]]).status, 0);
+    }
+    assert.equal(ctx.git(['show', `${base}:node_modules_notes.txt`]), 'original top source');
+    assert.equal(ctx.git(['show', `${base}:vendor/bundle-notes.txt`]), 'original nested source');
+    writeFileSync(join(ws.path, 'node_modules_notes.txt'), 'updated top source\n');
+    writeFileSync(join(ws.path, 'vendor/bundle-notes.txt'), 'updated nested source\n');
+    const result = ctx.cli(['land', 'protected-land', '--lease', ws.lease,
+      '--commit', 'Land source with installs', '--discard-ignored']);
+    assert.equal(ctx.git(['rev-parse', 'HEAD']), result.commit);
+    assert.equal(ctx.git(['show', 'HEAD:node_modules_notes.txt']), 'updated top source');
+    assert.equal(ctx.git(['show', 'HEAD:vendor/bundle-notes.txt']), 'updated nested source');
+    for (const [index, path] of paths.entries()) {
+      assert.equal(ctx.git(['ls-tree', '-r', '--name-only', 'HEAD', '--', path]), '');
+      assert.notEqual(ctx.command('git', ['cat-file', '-e', blobs[index]]).status, 0);
+      assert.equal(readFileSync(join(ctx.repo, path), 'utf8'), payloads[index]);
+    }
+  },
+}, {
   name: 'manager discovery does not create missing state or replace foreign state',
   run(ctx) {
     const state = join(ctx.repo, '.git', 'graft');
