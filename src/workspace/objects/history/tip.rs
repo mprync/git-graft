@@ -1,8 +1,8 @@
 //! Prepare checkout from a small independently indexed store while Git builds
 //! the complete single-commit pack. Only the complete pack is installed.
 use super::{
-    Boundary, ObjectId, PackInput, bootstrap, cache, checked, export_pack, output_text,
-    transfer_git, verify_membership,
+    Boundary, ObjectId, Pack, bootstrap, cache, checked, output_text, transfer_git,
+    verify_membership,
 };
 use crate::workspace::objects::{Primary, finish_head};
 use anyhow::{Context, Result, ensure};
@@ -19,13 +19,11 @@ use std::{
 // Larger manifests or attribute files take the ordinary verified checkout.
 const PROOF_LIMIT: u64 = 16 * 1024 * 1024;
 
-pub(in crate::workspace::objects) fn eligible(
-    state: &Path,
-    format: &str,
-    boundary: &Boundary<'_>,
-) -> bool {
+pub(in crate::workspace) fn needs_tip_proof(state: &Path, base: &str) -> bool {
+    let key = crate::workspace::objects::shallow::cache_key(base, &format!("{base}\n"));
+    let format = if base.len() == 40 { "sha1" } else { "sha256" };
     cfg!(any(target_os = "macos", target_os = "linux"))
-        && !cache::Cache::new(state, format, boundary.cache_key).has_entry()
+        && !cache::Cache::new(state, format, &key).has_entry()
 }
 
 pub(in crate::workspace::objects) fn checkout(
@@ -35,6 +33,7 @@ pub(in crate::workspace::objects) fn checkout(
     base: &str,
     reference: &str,
     boundary: &Boundary<'_>,
+    bytes: Vec<u8>,
 ) -> Result<(Value, Option<Value>)> {
     thread::scope(|scope| {
         let worker = thread::Builder::new().spawn_scoped(scope, || {
@@ -54,7 +53,7 @@ pub(in crate::workspace::objects) fn checkout(
         };
         // This optional proof may miss when the primary is repacked. A full
         // verified pack is sufficient to use the normal checkout in that case.
-        let Ok(proof) = checkout_proof(source.path, root, base) else {
+        let Ok(proof) = checkout_proof(root, base, &bytes) else {
             let receipt = wait()?;
             finish_head(source.path, root, reference, base, None)?;
             return Ok((receipt, None));
@@ -81,6 +80,26 @@ fn git_objects(repo: &Path, objects: Option<&Path>) -> Command {
     command
 }
 
+fn bounded_output(command: &mut Command) -> Result<Vec<u8>> {
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()?;
+    let mut bytes = Vec::new();
+    let read = child
+        .stdout
+        .take()
+        .context("missing Git metadata output")?
+        .take(PROOF_LIMIT + 1)
+        .read_to_end(&mut bytes);
+    let status = child.wait()?;
+    ensure!(
+        read? as u64 <= PROOF_LIMIT && status.success(),
+        "cannot read bounded Git metadata"
+    );
+    Ok(bytes)
+}
+
 // Trees authenticate the mapping from path to blob. Attribute blobs are the
 // only file contents Git needs before it decides which files can be cloned.
 fn metadata_ids(repo: &Path, objects: Option<&Path>, base: &str) -> Result<Vec<ObjectId>> {
@@ -92,23 +111,8 @@ fn metadata_ids(repo: &Path, objects: Option<&Path>, base: &str) -> Result<Vec<O
         ObjectId::from_hex(base.as_bytes(), width)?,
         ObjectId::from_hex(output_text(&tree)?.as_bytes(), width)?,
     ]);
-    let mut listing = git_objects(repo, objects)
-        .args(["ls-tree", "-r", "-t", "-z", base])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()?;
-    let mut rows = Vec::new();
-    let read = listing
-        .stdout
-        .take()
-        .context("missing Git tree listing")?
-        .take(PROOF_LIMIT + 1)
-        .read_to_end(&mut rows);
-    let status = listing.wait()?;
-    ensure!(
-        read? as u64 <= PROOF_LIMIT && status.success(),
-        "cannot bound checkout tree listing"
-    );
+    let rows =
+        bounded_output(git_objects(repo, objects).args(["ls-tree", "-r", "-t", "-z", base]))?;
     for row in rows.split(|&b| b == 0).filter(|row| !row.is_empty()) {
         let tab = row
             .iter()
@@ -130,23 +134,22 @@ fn metadata_ids(repo: &Path, objects: Option<&Path>, base: &str) -> Result<Vec<O
     Ok(ids.into_iter().collect())
 }
 
-fn checkout_proof(primary: &Path, root: &Path, base: &str) -> Result<tempfile::TempDir> {
+/// Read from the selected donor during reservation. The only named proof
+/// files are created later, under the recorded pending workspace.
+pub(in crate::workspace) fn prepare_tip_proof(primary: &Path, base: &str) -> Result<Vec<u8>> {
     let width = base.len() / 2;
     let hints = metadata_ids(primary, None, base)?;
-    let stage = cache::private_tempdir_in(&root.join(".git"))?;
-    let dir = stage.path().join("pack");
-    fs::create_dir(&dir)?;
     let mut ids = Vec::with_capacity(hints.len() * (2 * width + 1));
     for id in &hints {
         id.write_hex(width, &mut ids);
     }
-    let mut input = tempfile::tempfile_in(stage.path())?;
+    let mut input = tempfile::tempfile()?;
     input.write_all(&ids)?;
     input.rewind()?;
     let mut size = transfer_git(primary);
     size.arg("cat-file")
         .arg("--batch-check=%(objectsize)")
-        .stdin(input);
+        .stdin(input.try_clone()?);
     let sizes = checked(size)?;
     let mut total = 0u64;
     for line in output_text(&sizes)?.lines() {
@@ -156,7 +159,43 @@ fn checkout_proof(primary: &Path, root: &Path, base: &str) -> Result<tempfile::T
             "checkout metadata exceeds proof limit"
         );
     }
-    let pack = export_pack(primary, root, &dir, width, 0, PackInput::Ids(&hints), true)?;
+    input.rewind()?;
+    bounded_output(
+        transfer_git(primary)
+            .args([
+                "pack-objects",
+                "--quiet",
+                "--stdout",
+                "--delta-base-offset",
+                "--window=0",
+            ])
+            .stdin(input),
+    )
+}
+
+fn checkout_proof(root: &Path, base: &str, bytes: &[u8]) -> Result<tempfile::TempDir> {
+    let width = base.len() / 2;
+    let stage = cache::private_tempdir_in(&root.join(".git"))?;
+    let dir = stage.path().join("pack");
+    fs::create_dir(&dir)?;
+    let mut index = git_objects(root, Some(stage.path()))
+        .args(["index-pack", "--stdin", "--index-version=2", "--threads=2"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()?;
+    let write = index
+        .stdin
+        .take()
+        .context("missing metadata pack input")?
+        .write_all(bytes);
+    let output = index.wait_with_output()?;
+    write?;
+    ensure!(output.status.success(), "cannot index metadata pack");
+    let hash = output_text(&output.stdout)?
+        .strip_prefix("pack\t")
+        .context("invalid index-pack receipt")?;
+    let pack = Pack::at(&dir, hash, width)?;
     // Git's index-pack rehashed the objects. Walk the pinned commit in that
     // isolated store, so a dishonest donor index cannot introduce arbitrary
     // path associations or omit a committed attributes file.
@@ -167,6 +206,7 @@ fn checkout_proof(primary: &Path, root: &Path, base: &str) -> Result<tempfile::T
 
 #[cfg(test)]
 mod tests {
+    use super::super::{PackInput, export_pack};
     use super::*;
     use crate::workspace::objects::run;
 
@@ -201,7 +241,8 @@ mod tests {
         };
         let attr = id("HEAD:.gitattributes")?;
         let source = id("HEAD:source")?;
-        let proof = checkout_proof(repo, repo, base)?;
+        let mut bytes = prepare_tip_proof(repo, base)?;
+        let proof = checkout_proof(repo, base, &bytes)?;
         let expected = metadata_ids(repo, Some(proof.path()), base)?;
         assert!(expected.contains(&attr) && !expected.contains(&source));
         // Both malformed packs have a readable selected commit and root tree.
@@ -219,6 +260,10 @@ mod tests {
             let from_tree = metadata_ids(repo, Some(stage.path()), base)?;
             assert!(verify_membership(&[pack], &from_tree, 20).is_err());
         }
+        // Reservation and indexing are separate phases. A truncated export
+        // must never become the object store used for a checkout.
+        bytes.pop();
+        assert!(checkout_proof(repo, base, &bytes).is_err());
         Ok(())
     }
 }

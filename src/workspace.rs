@@ -197,14 +197,31 @@ fn spawn(p: &Project, origin: &Path, mut args: Spawn) -> Result<Value> {
         Some(oid)
     };
     let source = objects::preflight(origin)?;
-    let mut r = registry::reserve(
-        p,
-        &args.name,
-        args.request_id.as_deref(),
-        base.as_deref(),
-        branch.as_deref(),
-        request,
-    )?;
+    let (mut r, proof) = std::thread::scope(|scope| -> Result<_> {
+        let preparation = base
+            .as_deref()
+            .filter(|oid| {
+                history == api::History::Tip
+                    && !args.no_checkout
+                    && args.sparse.is_empty()
+                    && objects::needs_tip_proof(&p.state, oid)
+            })
+            .and_then(|oid| {
+                std::thread::Builder::new()
+                    .spawn_scoped(scope, move || objects::prepare_tip_proof(origin, oid))
+                    .ok()
+            });
+        let record = registry::reserve(
+            p,
+            &args.name,
+            args.request_id.as_deref(),
+            base.as_deref(),
+            branch.as_deref(),
+            request,
+        );
+        let proof = preparation.and_then(|task| task.join().ok()?.ok());
+        Ok((record?, proof))
+    })?;
     if r.status == Status::Active {
         registry::verify(p, &r)?;
         return Ok(with_lease(&r));
@@ -218,7 +235,7 @@ fn spawn(p: &Project, origin: &Path, mut args: Spawn) -> Result<Value> {
             base.as_deref(),
             branch.as_deref(),
             history,
-            !args.no_checkout && args.sparse.is_empty(),
+            proof,
         )?;
         let mut checkout = match (prepared_checkout, &base) {
             (Some(checkout), _) => checkout,

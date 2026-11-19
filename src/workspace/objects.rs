@@ -17,6 +17,7 @@ pub(super) use super::registry::sync_directory;
 use crate::{api::History, git, recovery::rename_exclusive};
 
 mod history;
+pub(super) use history::tip::{needs_tip_proof, prepare_tip_proof};
 pub(crate) use history::{
     HISTORY_CACHE_DIR, HISTORY_CACHE_MARKER, history_cache_root, verify_history_cache_generation,
 };
@@ -325,7 +326,7 @@ pub(super) fn initialize(
     base: Option<&str>,
     branch: Option<&str>,
     history: History,
-    allow_early_checkout: bool,
+    proof: Option<Vec<u8>>,
 ) -> Result<(Value, Option<Value>)> {
     require_pristine(root)?;
     let Primary {
@@ -380,10 +381,9 @@ pub(super) fn initialize(
                 shallow::initialize(primary, root, &base)?
             };
             let boundary = boundary.as_ref().map(shallow::Boundary::history);
-            if allow_early_checkout
+            if let Some(proof) = proof
                 && history == History::Tip
                 && let Some(boundary) = &boundary
-                && history::tip::eligible(state, format, boundary)
             {
                 return history::tip::checkout(
                     source,
@@ -392,6 +392,7 @@ pub(super) fn initialize(
                     &base,
                     branch_ref.as_deref().unwrap_or("HEAD"),
                     boundary,
+                    proof,
                 );
             }
             history::bootstrap(primary, root, state, format, &base, boundary)?
@@ -877,7 +878,7 @@ mod tests {
             base,
             branch,
             History::Isolated,
-            false,
+            None,
         )
         .map(|(objects, _)| objects)
     }

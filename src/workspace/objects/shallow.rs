@@ -99,11 +99,15 @@ pub(super) fn publish(root: &Path, base: &str, contents: String) -> Result<Bound
     staged.as_file().sync_all()?;
     staged.persist_noclobber(&file)?;
     sync_directory(&admin)?;
-    let digest = blake3::hash(contents.as_bytes());
     Ok(Boundary {
         file,
-        cache_key: format!("{base}-shallow-{digest}"),
+        cache_key: cache_key(base, &contents),
     })
+}
+
+pub(super) fn cache_key(base: &str, contents: &str) -> String {
+    let digest = blake3::hash(contents.as_bytes());
+    format!("{base}-shallow-{digest}")
 }
 
 pub(super) struct Quarantine {

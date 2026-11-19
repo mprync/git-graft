@@ -844,7 +844,7 @@ mod tests {
                 Some(&base),
                 Some("topic"),
                 History::Local,
-                false,
+                None,
             )?
             .0;
             assert_eq!(git::oid(&workspace, "HEAD")?, base);
@@ -956,7 +956,7 @@ mod tests {
                 Some(&base),
                 None,
                 History::Local,
-                false,
+                None,
             )?
             .0;
             assert_ne!(receipt["source"], "local-snapshot", "{name}: {receipt}");
