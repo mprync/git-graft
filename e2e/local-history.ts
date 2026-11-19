@@ -47,21 +47,29 @@ function read(path: string, file: string): string {
 
 export const cases: Scenario[] = [
   {
-    name: 'checkout honors a Git filter literally named unspecified',
+    name: 'checkout honors literal filter names that also describe Git attribute states',
     run(ctx) {
-      ctx.git(['config', '--global', 'filter.unspecified.smudge', 'tr a-z A-Z']);
-      ctx.git(['config', '--global', 'filter.unspecified.clean', 'tr A-Z a-z']);
-      const base = commitFile(ctx, ctx.repo, '.gitattributes', 'tracked.txt filter=unspecified\n');
+      for (const filter of ['unspecified', 'unset']) {
+        ctx.git(['config', '--global', `filter.${filter}.smudge`, 'tr a-z A-Z']);
+        ctx.git(['config', '--global', `filter.${filter}.clean`, 'tr A-Z a-z']);
+      }
+      commitFile(ctx, ctx.repo, 'other.txt', 'second\n');
+      const base = commitFile(ctx, ctx.repo, '.gitattributes',
+        'tracked.txt filter=unspecified\nother.txt filter=unset\n');
       const native = join(ctx.root, 'native-filter');
       ctx.git(['worktree', 'add', '--quiet', '--detach', native, base]);
       const expected = read(native, 'tracked.txt');
       assert.equal(expected, 'INITIAL\n');
+      const other = read(native, 'other.txt');
+      assert.equal(other, 'SECOND\n');
       for (const history of ['tip', 'local', 'isolated']) {
         const ws = ctx.spawn('filtered-' + history, ['--history', history, '--base', base]);
         assert.equal(read(ws.path, 'tracked.txt'), expected);
+        assert.equal(read(ws.path, 'other.txt'), other);
         assert.equal(ctx.git(['status', '--porcelain'], ws.path), '');
       }
       assert.equal(read(ctx.repo, 'tracked.txt'), 'initial\n');
+      assert.equal(read(ctx.repo, 'other.txt'), 'second\n');
     },
   },
   {
