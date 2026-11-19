@@ -17,7 +17,15 @@ git graft add-dep task --lease "<lease>" --manager pnpm zod
 git graft env task
 ```
 
-An empty package list requests a locked installation or fetch. Package managers run with project-scoped caches; runtime and build paths are private to the workspace. `--offline` can fail when the cache lacks required artifacts. Package scripts are local programs. MCP execution and dependency tools require the host's `--allow-exec` option.
+An empty package list requests a locked installation or fetch. `git graft add-dep` supports npm, pnpm, Bun, Cargo and uv. Graft configures project-scoped caches for its managed commands. `--offline` requires the requested artifacts to be available locally. Package scripts run with the user's permissions. MCP execution and dependency tools require the host's `--allow-exec` option.
+
+| Package manager | Reuse across grafts | Per-workspace work |
+| --- | --- | --- |
+| npm | A compatible registered installation can attach automatically on a copy-on-write volume. The npm download cache is shared across managed commands. | Each graft has its own manifest, lockfile and writable installation. An addition can change transitive packages and metadata. |
+| Cargo | `git graft exec` and `add-dep` use a project-level `CARGO_HOME` for crate downloads and Git sources. This needs no registration. | Each graft has its own manifests, lockfile, Cargo target and build directories. A build can compile the same crate in two grafts. |
+| NuGet | For SDK-style C# projects using `PackageReference`, run `dotnet restore` in the graft or through `git graft exec`. NuGet uses its configured global packages folder. | Restore generates local `obj/project.assets.json`; builds normally write under `bin/` and `obj/`. Use the .NET CLI to manage references. Legacy `packages.config` projects can also copy packages into a project directory. |
+
+Adding a package in one graft changes the declarations and resolved versions for that workspace. Other grafts use those dependencies when their own project files request them. Graft configures cache paths for its built-in managers when running a managed command. Other tools, including Maven, Gradle and Bundler, use their own cache settings. Programs run directly from a terminal use the environment of that terminal. [Cargo cache](https://doc.rust-lang.org/cargo/guide/cargo-home.html) · [NuGet package storage](https://learn.microsoft.com/en-us/nuget/consume-packages/managing-the-global-packages-and-cache-folders) · [NuGet restore](https://learn.microsoft.com/en-us/nuget/consume-packages/package-restore)
 
 ## Reuse an npm installation
 
