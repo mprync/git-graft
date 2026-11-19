@@ -258,8 +258,14 @@ fn cold_transfer(
         let expected = reachable(discovery, oid, width, None, shallow, accelerated)?;
         timings["reachability_seconds"] = json!(reachability.elapsed().as_secs_f64());
         let transfer = Instant::now();
-        let (packs, source, objects, shared) =
-            stage_cold_packs(source, root, stage, &expected, width)?;
+        let (packs, source, objects, shared) = stage_cold_packs(
+            source,
+            root,
+            stage,
+            &expected,
+            width,
+            shallow.map(|file| (oid, file)),
+        )?;
         timings["transfer_seconds"] = json!(transfer.elapsed().as_secs_f64());
         let verify = Instant::now();
         verify_staged_closure(root, &objects, &packs, oid, shallow)?;
@@ -290,6 +296,7 @@ fn stage_cold_packs(
     stage: &Path,
     expected: &[ObjectId],
     width: usize,
+    shallow_tip: Option<(&str, &Path)>,
 ) -> Result<(Vec<Pack>, &'static str, PathBuf, DonorReuse)> {
     // Separate staging directories ensure a partial failed attempt cannot
     // interfere with the selective export.
@@ -308,6 +315,28 @@ fn stage_cold_packs(
             Ok((packs, source, donor, reused))
         }
         Err(_) => {
+            // Git's revision walk supplies path names to its delta search.
+            // Only use it for a complete single-pack export with a pinned
+            // shallow boundary. A residual set must use its explicit IDs.
+            if let Some((tip, boundary)) = shallow_tip.filter(|_| expected.len() <= 100_000) {
+                let objects = stage.join("revision");
+                let dir = objects.join("pack");
+                fs::create_dir_all(&dir)?;
+                if let Ok(pack) = export_pack(
+                    source.primary,
+                    root,
+                    &dir,
+                    width,
+                    0,
+                    PackInput::Shallow { tip, boundary },
+                    false,
+                ) {
+                    let packs = vec![pack];
+                    if verify_membership(&packs, expected, width).is_ok() {
+                        return Ok((packs, "local-export", objects, DonorReuse::default()));
+                    }
+                }
+            }
             fs::create_dir_all(exported.join("pack"))?;
             let packs = export(
                 source.primary,
@@ -746,7 +775,17 @@ fn export(
             .iter()
             .enumerate()
             .map(|(i, chunk)| {
-                scope.spawn(move || export_pack(primary, root, stage, width, i, chunk, parallel))
+                scope.spawn(move || {
+                    export_pack(
+                        primary,
+                        root,
+                        stage,
+                        width,
+                        i,
+                        PackInput::Ids(chunk),
+                        parallel,
+                    )
+                })
             })
             .collect();
         jobs.into_iter()
@@ -813,25 +852,39 @@ fn ordered_chunks(
     Ok(chunks)
 }
 
+enum PackInput<'a> {
+    Ids(&'a [ObjectId]),
+    Shallow { tip: &'a str, boundary: &'a Path },
+}
+
 fn export_pack(
     primary: &Path,
     root: &Path,
     stage: &Path,
     width: usize,
     shard: usize,
-    objects: &[ObjectId],
+    selection: PackInput<'_>,
     parallel: bool,
 ) -> Result<Pack> {
     let mut input = tempfile::tempfile_in(stage)?;
-    let mut text = Vec::with_capacity(objects.len() * (width * 2 + 1));
-    for id in objects {
-        id.write_hex(width, &mut text);
-    }
-    input.write_all(&text)?;
-    input.rewind()?;
-    let mut errors = tempfile::tempfile_in(stage)?;
     let mut export = transfer_git(primary);
     export.args(["pack-objects", "--quiet", "--stdout", "--delta-base-offset"]);
+    match selection {
+        PackInput::Ids(objects) => {
+            let mut text = Vec::with_capacity(objects.len() * (width * 2 + 1));
+            for id in objects {
+                id.write_hex(width, &mut text);
+            }
+            input.write_all(&text)?;
+        }
+        PackInput::Shallow { tip, boundary } => {
+            set_shallow(&mut export, Some(boundary));
+            export.args(["--revs", "--no-use-bitmap-index"]);
+            writeln!(input, "{tip}")?;
+        }
+    }
+    input.rewind()?;
+    let mut errors = tempfile::tempfile_in(stage)?;
     if parallel {
         export.arg("--window=0");
     }
