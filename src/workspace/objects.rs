@@ -25,7 +25,7 @@ mod local;
 mod plan_cache;
 mod shallow;
 
-const CHECKOUT_CONFIG: &str = r"^(filter\..*|core\.(autocrlf|eol|safecrlf|symlinks|filemode|ignorecase|precomposeunicode|protecthfs|protectntfs|bigfilethreshold)|(user|author|committer)\.(name|email))$";
+const CHECKOUT_CONFIG: &str = r"^(filter\..*|core\.(attributesfile|autocrlf|eol|safecrlf|symlinks|filemode|ignorecase|precomposeunicode|protecthfs|protectntfs|bigfilethreshold)|(user|author|committer)\.(name|email))$";
 const FILTERS: &str = r"^filter\.";
 
 #[cfg(windows)]
@@ -88,7 +88,14 @@ fn output_text(bytes: &[u8]) -> Result<&str> {
 }
 
 fn object_format(path: &Path) -> Result<&'static str> {
-    match output_text(&run(path, &["rev-parse", "--show-object-format"])?)? {
+    parse_format(output_text(&run(
+        path,
+        &["rev-parse", "--show-object-format"],
+    )?)?)
+}
+
+fn parse_format(format: &str) -> Result<&'static str> {
+    match format {
         "sha1" => Ok("sha1"),
         "sha256" => Ok("sha256"),
         format => bail!("unsupported Git object format {format:?}"),
@@ -144,12 +151,24 @@ pub(super) struct Primary<'a> {
 }
 
 pub(super) fn preflight(primary: &Path) -> Result<Primary<'_>> {
-    let format = object_format(primary)?;
+    let discovery = git::text(
+        primary,
+        &[
+            "rev-parse",
+            "--show-object-format",
+            "--path-format=absolute",
+            "--git-path",
+            "info/grafts",
+        ],
+    )?;
+    let (format, grafts) = discovery
+        .split_once('\n')
+        .context("missing legacy grafts location")?;
+    let format = parse_format(format.trim_end_matches('\r'))?;
     ensure!(
         run(primary, &["for-each-ref", "--count=1", "refs/replace/"])?.is_empty(),
         "independent workspaces do not support Git replacement refs"
     );
-    let grafts = repository_path(primary, "info/grafts")?;
     match fs::metadata(grafts) {
         Ok(metadata) => ensure!(
             metadata.is_file() && metadata.len() == 0,
@@ -179,6 +198,7 @@ pub(super) fn preflight(primary: &Path) -> Result<Primary<'_>> {
 struct CheckoutConfig {
     filters: BTreeMap<String, String>,
     settings: BTreeMap<String, (String, bool)>,
+    has_attributes_file: bool,
 }
 
 fn checkout_config(path: &Path) -> Result<CheckoutConfig> {
@@ -198,7 +218,9 @@ fn checkout_config(path: &Path) -> Result<CheckoutConfig> {
         let entry = fields.next().context("missing scoped Git config entry")?;
         let entry = std::str::from_utf8(entry).context("Git configuration must be UTF-8")?;
         let (key, value) = entry.split_once('\n').unwrap_or((entry, "true"));
-        if key.starts_with("filter.") {
+        if key == "core.attributesfile" {
+            values.has_attributes_file = true;
+        } else if key.starts_with("filter.") {
             values.filters.insert(key.into(), value.into());
         } else {
             values
@@ -223,11 +245,14 @@ fn copy_config(primary: &Path, root: &Path) -> Result<()> {
             run(root, &["config", "--local", "--", &key, &value])?;
         }
     }
-    let raw = optional_config(git::raw(
-        primary,
-        &["config", "--path", "--null", "--get", "core.attributesFile"],
-    )?)?;
-    if let Some(raw) = raw.strip_suffix(b"\0") {
+    if source.has_attributes_file {
+        let raw = git::bytes(
+            primary,
+            &["config", "--path", "--null", "--get", "core.attributesFile"],
+        )?;
+        let raw = raw
+            .strip_suffix(b"\0")
+            .context("invalid Git attributes file path")?;
         let path = primary.join(std::str::from_utf8(raw)?);
         let target = root.join(".git/graft-global-attributes");
         copy_attributes(&path, &target)?;
@@ -333,10 +358,10 @@ fn initialize_with(
     } = *source;
     let base = base.map(|oid| exact_commit(primary, oid)).transpose()?;
     let branch_ref = branch.map(|branch| format!("refs/heads/{branch}"));
-    if let Some(reference) = &branch_ref {
-        run(primary, &["check-ref-format", reference])?;
+    if let Some(name) = branch {
+        // Git init validates the full refname when it creates HEAD.
         ensure!(
-            branch.is_some_and(|name| !name.starts_with('-') && name != "HEAD"),
+            !name.starts_with('-') && name != "HEAD",
             "invalid Git branch name"
         );
     }
