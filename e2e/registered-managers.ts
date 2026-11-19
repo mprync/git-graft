@@ -52,6 +52,56 @@ function purgeFixture(ctx: Context) {
 }
 
 export const cases: Scenario[] = [{
+  name: 'checkout-local donor excludes cannot introduce dependencies into a landed commit',
+  run(ctx) {
+    writeFileSync(join(ctx.repo, 'fixture.lock'), 'locked\n');
+    ctx.git(['add', 'fixture.lock']); ctx.git(['commit', '-qm', 'fixture input']);
+    writeFileSync(join(ctx.repo, '.git', 'info', 'exclude'), '/vendor/\n');
+    mkdirSync(join(ctx.repo, 'vendor/bundle'), { recursive: true });
+    writeFileSync(join(ctx.repo, 'vendor/bundle/package'), 'dependency payload');
+    const args = registration(ctx, ['--install-dir', 'vendor/bundle', '--input', 'fixture.lock', '--key', 'exclude']);
+    ctx.cli(args);
+    const ws = ctx.spawn('local-exclude');
+    const attachment = registered(ws.result);
+    assert(attachment);
+    assert.notEqual(attachment.status, 'attached');
+    assert(!existsSync(join(ws.path, 'vendor/bundle/package')));
+    writeFileSync(join(ws.path, 'tracked.txt'), 'landed source\n');
+    ctx.cli(['land', 'local-exclude', '--lease', ws.lease, '--commit', 'Land source']);
+    assert.equal(readFileSync(join(ctx.repo, 'tracked.txt'), 'utf8'), 'landed source\n');
+    assert.equal(ctx.git(['ls-tree', '-r', '--name-only', 'HEAD', '--', 'vendor']), '');
+    assert.equal(readFileSync(join(ctx.repo, 'vendor/bundle/package'), 'utf8'), 'dependency payload');
+  },
+}, {
+  name: 'land commit protects an attached install after workspace ignore rules change',
+  run(ctx) {
+    const fixture = purgeFixture(ctx);
+    if (!fixture.native) return;
+    const primary = ctx.git(['rev-parse', 'HEAD']);
+    for (const [index, ignored] of ['', 'vendor/*\n!vendor/bundle/\n'].entries()) {
+      const name = `ignore-change-${index}`;
+      const ws = ctx.spawn(name);
+      assert.equal(registered(ws.result)?.status, 'attached');
+      const payload = join(ws.path, 'vendor/bundle/package');
+      assert.equal(readFileSync(payload, 'utf8'), 'original package');
+      writeFileSync(join(ws.path, '.gitignore'), ignored);
+      writeFileSync(join(ws.path, 'tracked.txt'), 'workspace source\n');
+      const workspaceHead = ctx.git(['rev-parse', 'HEAD'], ws.path);
+      ctx.fail(['land', name, '--lease', ws.lease, '--commit', 'Land source']);
+      assert.equal(ctx.git(['rev-parse', 'HEAD']), primary);
+      assert.equal(ctx.git(['rev-parse', 'HEAD'], ws.path), workspaceHead);
+      assert.equal(readFileSync(join(ctx.repo, 'tracked.txt'), 'utf8'), 'initial\n');
+      assert.equal(readFileSync(join(ws.path, 'tracked.txt'), 'utf8'), 'workspace source\n');
+      assert.equal(readFileSync(payload, 'utf8'), 'original package');
+      assert.equal(ctx.git(['ls-files', '--', 'vendor'], ws.path), '');
+      // A user may still choose to stage and commit that payload explicitly.
+      ctx.git(['add', '--', '.gitignore', 'tracked.txt', 'vendor/bundle/package'], ws.path);
+      ctx.git(['commit', '-qm', 'Explicit user commit'], ws.path);
+      assert.equal(ctx.git(['show', 'HEAD:vendor/bundle/package'], ws.path), 'original package');
+      assert.equal(ctx.git(['rev-parse', 'HEAD']), primary);
+    }
+  },
+}, {
   name: 'invalid foreign registration data cannot block source spawn or be overwritten',
   run(ctx) {
     ctx.cli(['doctor']);
