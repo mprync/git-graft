@@ -32,17 +32,17 @@ The APFS local backend waits for writeback of each private object file and child
 
 ## How much does selecting one commit save?
 
-From a full local Homebrew clone, the isolated release created a workspace at the chosen commit and kept its ancestors for Git log and blame. A disposable prototype exported just that commit, its trees and its blobs, and cloned eligible source files directly from the populated checkout. The prototype verified the exact set of readable objects, staged and committed edits independently, landed into the full primary and restored the workspace.
+From a populated Homebrew clone, `--history isolated` keeps the selected ancestry for log and blame. `--history tip` exports one commit, its trees and blobs. The release CLI was timed on three fresh primaries for isolated history and five for tip history. The APFS block measurements ran separately.
 
-| Clean primary on APFS | Isolated release | Selected-tip prototype |
+| Clean primary on APFS | Isolated ancestry | Single commit |
 | --- | ---: | ---: |
-| First spawn, median | 5.90 s | 0.89 s |
-| Native worktree in the paired timing runs | 0.41 s | 0.33 s |
+| First spawn, median | 5.90 s | 0.875 s |
+| Native worktree in the paired timing runs | 0.41 s | 0.445 s |
 | Additional file data, first workspace | 15,482,880 bytes | 5,709,824 bytes |
 | Additional file data, second workspace | 315,392 bytes | 319,488 bytes |
 | Additional working file data, both workspaces | 0 bytes | 0 bytes |
 
-Timing used three fresh primaries for the isolated release and two for the prototype. Disk measurements ran separately. The prototype still needed 5,369,856 bytes of Git packs and pack indexes to hold the selected objects independently. The local-history mode above could share the original packs in full. All three approaches need a private staging index. Path-prefix compression reduced the two isolated staging indexes from 876,544 to 573,440 bytes. [Release and prototype measurements](measurements/macos-arm64/homebrew-selected-history.json)
+Repeat spawns at the same tip took 0.511 s versus 0.407 s for Git. The two grafts shared one selected Git pack and pack index that occupied 5,369,856 bytes. After a one-file commit on a dirty primary, a third graft at the new tip allocated 5,693,440 additional bytes because it needed a different selection of objects. [Single-commit release measurements](measurements/macos-arm64/homebrew-tip-release.json) · [Isolated release measurements](measurements/macos-arm64/homebrew-selected-history.json)
 
 ## Isolated history on the previous release
 

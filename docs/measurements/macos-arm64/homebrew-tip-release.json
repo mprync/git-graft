@@ -1,0 +1,276 @@
+{
+  "platform": "darwin",
+  "architecture": "arm64",
+  "git": "git version 2.56.0",
+  "primaryCheckout": "clean",
+  "history": "tip",
+  "source": {
+    "packCount": 4,
+    "packBytes": 130939998,
+    "commits": 53716,
+    "hasUnrelatedSourceCommit": true
+  },
+  "binary": {
+    "bytes": 4149152,
+    "sha256": "e70078597e25977422278e0f2360e5899d8e36f19b91bae5d64e5a69d4f4f0dc"
+  },
+  "oneFileAdvanceOnDirtyPrimary": {
+    "additionalGraftFileDataBytes": 5693440,
+    "additionalWorktreeFileDataBytes": 29945856,
+    "graftHistorySource": "local-export"
+  },
+  "timings": [
+    {
+      "order": [
+        "native",
+        "graft"
+      ],
+      "native": {
+        "cold": {
+          "seconds": 0.44540300000000027,
+          "firstStatusSeconds": 0.14802133300000014,
+          "resources": {
+            "userSeconds": 0.06,
+            "systemSeconds": 0.32,
+            "peakRssBytes": 52510720
+          }
+        },
+        "repeat": {
+          "seconds": 0.44182045800000014,
+          "firstStatusSeconds": 0.11286258399999997,
+          "resources": {
+            "userSeconds": 0.06,
+            "systemSeconds": 0.32,
+            "peakRssBytes": 52396032
+          }
+        }
+      },
+      "graft": {
+        "cold": {
+          "seconds": 0.8158175000000001,
+          "firstStatusSeconds": 0.3891476670000002,
+          "resources": {
+            "userSeconds": 0.93,
+            "systemSeconds": 1.08,
+            "peakRssBytes": 85360640
+          }
+        },
+        "repeat": {
+          "seconds": 0.49548825000000035,
+          "firstStatusSeconds": 0.4247605829999993,
+          "resources": {
+            "userSeconds": 0.11,
+            "systemSeconds": 1.02,
+            "peakRssBytes": 10108928
+          }
+        }
+      }
+    },
+    {
+      "order": [
+        "graft",
+        "native"
+      ],
+      "native": {
+        "cold": {
+          "seconds": 0.37380166599999937,
+          "firstStatusSeconds": 0.1201593750000011,
+          "resources": {
+            "userSeconds": 0.05,
+            "systemSeconds": 0.29,
+            "peakRssBytes": 52199424
+          }
+        },
+        "repeat": {
+          "seconds": 0.40261420799999903,
+          "firstStatusSeconds": 0.05911804200000006,
+          "resources": {
+            "userSeconds": 0.05,
+            "systemSeconds": 0.31,
+            "peakRssBytes": 52183040
+          }
+        }
+      },
+      "graft": {
+        "cold": {
+          "seconds": 0.9157631250000005,
+          "firstStatusSeconds": 0.3807790420000001,
+          "resources": {
+            "userSeconds": 0.98,
+            "systemSeconds": 1.18,
+            "peakRssBytes": 86589440
+          }
+        },
+        "repeat": {
+          "seconds": 0.614920333,
+          "firstStatusSeconds": 0.4970164160000004,
+          "resources": {
+            "userSeconds": 0.11,
+            "systemSeconds": 1.13,
+            "peakRssBytes": 9977856
+          }
+        }
+      }
+    },
+    {
+      "order": [
+        "native",
+        "graft"
+      ],
+      "native": {
+        "cold": {
+          "seconds": 0.38503841699999974,
+          "firstStatusSeconds": 0.11852366699999947,
+          "resources": {
+            "userSeconds": 0.05,
+            "systemSeconds": 0.26,
+            "peakRssBytes": 52051968
+          }
+        },
+        "repeat": {
+          "seconds": 0.352174500000001,
+          "firstStatusSeconds": 0.18568283300000077,
+          "resources": {
+            "userSeconds": 0.05,
+            "systemSeconds": 0.26,
+            "peakRssBytes": 52297728
+          }
+        }
+      },
+      "graft": {
+        "cold": {
+          "seconds": 0.8681427079999994,
+          "firstStatusSeconds": 0.4360845000000008,
+          "resources": {
+            "userSeconds": 0.97,
+            "systemSeconds": 1,
+            "peakRssBytes": 85753856
+          }
+        },
+        "repeat": {
+          "seconds": 0.5039433750000025,
+          "firstStatusSeconds": 0.46700795899999864,
+          "resources": {
+            "userSeconds": 0.11,
+            "systemSeconds": 1.02,
+            "peakRssBytes": 10141696
+          }
+        }
+      }
+    },
+    {
+      "order": [
+        "graft",
+        "native"
+      ],
+      "native": {
+        "cold": {
+          "seconds": 0.6265150419999991,
+          "firstStatusSeconds": 0.11151450000000114,
+          "resources": {
+            "userSeconds": 0.06,
+            "systemSeconds": 0.43,
+            "peakRssBytes": 52609024
+          }
+        },
+        "repeat": {
+          "seconds": 0.4066778340000019,
+          "firstStatusSeconds": 0.13764341699999932,
+          "resources": {
+            "userSeconds": 0.06,
+            "systemSeconds": 0.3,
+            "peakRssBytes": 52363264
+          }
+        }
+      },
+      "graft": {
+        "cold": {
+          "seconds": 0.8747043750000012,
+          "firstStatusSeconds": 0.4932105420000007,
+          "resources": {
+            "userSeconds": 0.93,
+            "systemSeconds": 1.07,
+            "peakRssBytes": 84918272
+          }
+        },
+        "repeat": {
+          "seconds": 0.511344291999998,
+          "firstStatusSeconds": 0.40883187499999984,
+          "resources": {
+            "userSeconds": 0.11,
+            "systemSeconds": 1.01,
+            "peakRssBytes": 10092544
+          }
+        }
+      }
+    },
+    {
+      "order": [
+        "native",
+        "graft"
+      ],
+      "native": {
+        "cold": {
+          "seconds": 0.7056153750000013,
+          "firstStatusSeconds": 0.05105770800000028,
+          "resources": {
+            "userSeconds": 0.06,
+            "systemSeconds": 0.36,
+            "peakRssBytes": 52445184
+          }
+        },
+        "repeat": {
+          "seconds": 0.4851297079999968,
+          "firstStatusSeconds": 0.23351295799999935,
+          "resources": {
+            "userSeconds": 0.06,
+            "systemSeconds": 0.34,
+            "peakRssBytes": 52756480
+          }
+        }
+      },
+      "graft": {
+        "cold": {
+          "seconds": 1.0059876659999973,
+          "firstStatusSeconds": 0.49826987499999814,
+          "resources": {
+            "userSeconds": 1.03,
+            "systemSeconds": 0.95,
+            "peakRssBytes": 85229568
+          }
+        },
+        "repeat": {
+          "seconds": 0.609278416000001,
+          "firstStatusSeconds": 0.5674238330000008,
+          "resources": {
+            "userSeconds": 0.12,
+            "systemSeconds": 0.92,
+            "peakRssBytes": 9945088
+          }
+        }
+      }
+    }
+  ],
+  "additionalFileData": {
+    "native": {
+      "bytesSincePopulatedCheckout": "59883520",
+      "firstCheckoutBytes": "29941760",
+      "additionalSecondCheckoutBytes": "29941760",
+      "observerSeconds": 1.5557453760000008
+    },
+    "graft": {
+      "bytesSincePopulatedCheckout": "6029312",
+      "firstCheckoutBytes": "5709824",
+      "additionalSecondCheckoutBytes": "319488",
+      "fileDataByPurpose": {
+        "historyPacks": "5263360",
+        "historyIndexes": "106496",
+        "checkoutIndexes": "573440",
+        "sourceFiles": "0",
+        "records": "86016",
+        "primaryChange": "0"
+      },
+      "observerSeconds": 1.8550370839999988
+    }
+  }
+}
