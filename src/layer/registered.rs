@@ -2,12 +2,155 @@
 //! The inputs and compatibility key describe the install. The caller
 //! attests to reproducibility and any settings outside the tracked inputs.
 
-use crate::{package_manager::InstallSpec, registry::Project};
-use anyhow::Result;
+use crate::{
+    git,
+    package_manager::{InstallSpec, validate_relative},
+    registry::Project,
+};
+use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
-use std::path::{Path, PathBuf};
+use std::{
+    fs, io,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 pub(crate) const REGISTERED_INSTALL_DIR: &str = "registered-installs";
+pub(super) const INSTALL_PATH_NOT_IGNORED: &str = "install_path_not_ignored";
+
+fn check_ignore(command: &mut Command, directory: &str) -> Result<bool> {
+    // check-ignore tests this literal pathname against ignore patterns and
+    // rejects literal pathspec magic. Disable inherited pathspec overrides.
+    let output = command
+        .env_remove("GIT_LITERAL_PATHSPECS")
+        .env_remove("GIT_GLOB_PATHSPECS")
+        .env_remove("GIT_NOGLOB_PATHSPECS")
+        .env_remove("GIT_ICASE_PATHSPECS")
+        .args([
+            "check-ignore",
+            "--no-index",
+            "--quiet",
+            "--",
+            &format!("./{directory}"),
+        ])
+        .output()?;
+    match output.status.code() {
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
+        _ => anyhow::bail!("Git could not establish install-directory ignore coverage"),
+    }
+}
+
+fn copy_ignore_file(source: &Path, target: &Path) -> Result<()> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let mut file = options.open(source)?;
+    let metadata = file.metadata()?;
+    ensure!(
+        metadata.is_file() && !crate::registry::is_reparse_point(&metadata),
+        "ignore file changed during inspection"
+    );
+    io::copy(&mut file, &mut fs::File::create_new(target)?)?;
+    Ok(())
+}
+
+pub(super) fn install_path_ignored(checkout: &Path, directory: &str) -> Result<bool> {
+    use crate::registry::{check_unmounted_directory, is_reparse_point};
+
+    validate_relative(directory)?;
+    let path = Path::new(directory);
+    let mut command = git::command(checkout);
+    match fs::symlink_metadata(checkout.join(path)) {
+        Ok(metadata) if metadata.is_dir() && !is_reparse_point(&metadata) => {
+            return check_ignore(&mut command, directory);
+        }
+        Ok(_) => return Ok(false),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => (),
+        Err(error) => return Err(error.into()),
+    }
+
+    // Git needs a real directory to distinguish directory-only rules from
+    // rules about descendants. Older versions can match descendant globs on
+    // a trailing slash. Use this checkout's Git configuration and excludes,
+    // with only the per-directory rules needed to examine the empty path.
+    let mut builder = tempfile::Builder::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        builder.permissions(fs::Permissions::from_mode(0o700));
+    }
+    let preview = builder.prefix("graft-ignore-").tempdir()?;
+    let mut ancestors = path.ancestors().skip(1).collect::<Vec<_>>();
+    ancestors.reverse();
+    for relative in ancestors {
+        let source = checkout.join(relative);
+        match fs::symlink_metadata(&source) {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => break,
+            Err(error) => return Err(error.into()),
+            Ok(_) => check_unmounted_directory(&source, false)?,
+        };
+        let target = preview.path().join(relative);
+        fs::create_dir_all(&target)?;
+        let ignore = source.join(".gitignore");
+        match fs::symlink_metadata(&ignore) {
+            Ok(metadata) if metadata.is_file() && !is_reparse_point(&metadata) => {
+                copy_ignore_file(&ignore, &target.join(".gitignore"))?;
+            }
+            Ok(_) => (),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => (),
+            Err(error) => return Err(error.into()),
+        }
+    }
+    fs::create_dir_all(preview.path().join(path))?;
+    command.arg(format!("--work-tree={}", git::path_str(preview.path())?));
+
+    // Git resolves a relative core.excludesFile from the working directory.
+    // Preserve that resolution when the check runs against the preview.
+    let excludes = git::raw(
+        checkout,
+        &["config", "--path", "--null", "--get", "core.excludesFile"],
+    )?;
+    match excludes.status.code() {
+        Some(0) => {
+            let excludes = String::from_utf8(excludes.stdout)?;
+            let excludes = excludes
+                .strip_suffix('\0')
+                .context("invalid Git excludes path")?;
+            if !excludes.is_empty() {
+                let path = checkout.join(excludes);
+                command
+                    .arg("-c")
+                    .arg(format!("core.excludesFile={}", git::path_str(&path)?));
+            }
+        }
+        Some(1) => (),
+        _ => anyhow::bail!("Git excludes configuration could not be read"),
+    }
+    check_ignore(&mut command, directory)
+}
+
+pub(super) fn require_ignored(checkout: &Path, directory: &str) -> Result<()> {
+    ensure!(
+        install_path_ignored(checkout, directory).unwrap_or(false),
+        crate::api::fault(
+            INSTALL_PATH_NOT_IGNORED,
+            "Git must ignore the entire install directory in the selected checkout",
+            json!({"directory":directory}),
+        )
+    );
+    Ok(())
+}
 
 fn status(spec: &InstallSpec, status: &str, reason: &str) -> Value {
     json!({"manager": spec.manager, "status": status, "reason": reason})
@@ -15,13 +158,14 @@ fn status(spec: &InstallSpec, status: &str, reason: &str) -> Value {
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub(crate) fn seed_registered(_: &Project, checkout: &Path, spec: &InstallSpec) -> Result<Value> {
-    crate::package_manager::validate_relative(&spec.directory)?;
+    validate_relative(&spec.directory)?;
     crate::registry::owned_directory(checkout)?;
     let mut directory = checkout.to_path_buf();
     for name in spec.directory.split('/') {
         directory.push(name);
         crate::registry::check_unmounted_directory(&directory, false)?;
     }
+    require_ignored(checkout, &spec.directory)?;
     Ok(status(spec, "unavailable", "cow_unavailable"))
 }
 
@@ -57,7 +201,7 @@ pub(crate) use native::{
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod native {
     use super::*;
-    use crate::{api::Fault, cache, git, package_manager::validate_relative, registry};
+    use crate::{api::Fault, cache, registry};
     use anyhow::{Context, bail, ensure};
     use serde::{Deserialize, Serialize};
     #[cfg(target_os = "linux")]
@@ -828,6 +972,7 @@ mod native {
         let checkout_root = checkout_dir(checkout)?;
         let before = Inputs::read(checkout, &checkout_root, spec)?;
         let source = checkout_root.path(Path::new(&spec.directory))?;
+        require_ignored(checkout, &spec.directory)?;
         let root = install_root(p)?;
         let root_identity = cache::directory_identity(&root)?;
         let src = checkout.join(&spec.directory);
@@ -887,6 +1032,7 @@ mod native {
                 verified_generation(p, &generation, &before.digest)?.contents == binding.contents,
                 "installed tree differs from the original registered generation"
             );
+            require_ignored(checkout, &spec.directory)?;
             return Ok(receipt(spec, &Transfer::default(), "save", &before.digest));
         }
         let record_path = binding_path(p, &before.digest);
@@ -896,6 +1042,7 @@ mod native {
             read_binding(p, &before.digest)?;
         }
         registry::atomic(&record_path, &serde_json::to_vec(&binding)?)?;
+        require_ignored(checkout, &spec.directory)?;
         crate::recovery::rename_exclusive(stage.path(), &generation)
             .context("publish registered generation")?;
         let _ = stage.keep();
@@ -981,6 +1128,9 @@ mod native {
         let Ok(binding) = generation_record(p, &generation, &before.digest) else {
             return Ok(status(spec, "unavailable", "invalid_generation"));
         };
+        if !install_path_ignored(checkout, &spec.directory).unwrap_or(false) {
+            return Ok(status(spec, "unavailable", INSTALL_PATH_NOT_IGNORED));
+        }
         let result = (|| {
             let stage = private_stage(&root, ".attaching-")?;
             if mount(&destination.parent.0)? != mount(&File::open(stage.path())?)? {
@@ -1014,6 +1164,9 @@ mod native {
                         .is_current(&destination.parent)?,
                 "checkout or destination changed during attachment"
             );
+            if !install_path_ignored(checkout, &spec.directory).unwrap_or(false) {
+                return Ok(status(spec, "unavailable", INSTALL_PATH_NOT_IGNORED));
+            }
             match destination.parent.publish(&first, destination.name) {
                 Ok(()) => Ok(receipt(spec, &transfer, "restore", &before.digest)),
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
@@ -1054,6 +1207,7 @@ mod tests {
             let repo = root.join("primary");
             fs::create_dir(&repo)?;
             git::bytes(&repo, &["init", "-q", "--template="])?;
+            git::bytes(&repo, &["config", "core.excludesFile", "/dev/null"])?;
             fs::write(repo.join("fixture.lock"), "version one")?;
             fs::write(repo.join(".gitignore"), "vendor/\n")?;
             git::bytes(&repo, &["add", ".gitignore", "fixture.lock"])?;
@@ -1082,6 +1236,7 @@ mod tests {
                     git::path_str(&path)?,
                 ],
             )?;
+            git::bytes(&path, &["config", "core.excludesFile", "/dev/null"])?;
             Ok(path)
         }
 
@@ -1119,6 +1274,96 @@ mod tests {
                 "fixture",
             ],
         )?;
+        Ok(())
+    }
+
+    #[test]
+    fn ignore_check_treats_paths_literally_and_requires_the_directory() -> Result<()> {
+        let f = Fixture::new()?;
+        let repo = &f.project.repo;
+        let ignore = repo.join(".gitignore");
+        let unusual = "- [caché] # files/bundle";
+        validate_relative(unusual)?;
+        fs::write(&ignore, "/vendor/\n/- \\[caché] # files/bundle/\n")?;
+        assert!(install_path_ignored(repo, "vendor/bundle")?);
+        assert!(install_path_ignored(repo, unusual)?);
+        assert!(!install_path_ignored(repo, "nested/vendor/bundle")?);
+        assert!(!install_path_ignored(repo, "- c # files/bundle")?);
+        fs::write(&ignore, "/vendor/bundle/*\n/- \\[caché] # files/bundle/*\n")?;
+        assert!(!install_path_ignored(repo, "vendor/bundle")?);
+        assert!(!install_path_ignored(repo, unusual)?);
+        fs::write(&ignore, "/vendor/*\n!/vendor/bundle/\n")?;
+        assert!(!install_path_ignored(repo, "vendor/bundle")?);
+        fs::write(&ignore, "/vendor/\n!/vendor/bundle/package\n")?;
+        assert!(install_path_ignored(repo, "vendor/bundle")?);
+        fs::write(&ignore, "")?;
+        fs::write(repo.join("local-excludes"), "/vendor/bundle/\n")?;
+        git::bytes(repo, &["config", "core.excludesFile", "local-excludes"])?;
+        assert!(install_path_ignored(repo, "vendor/bundle")?);
+        fs::create_dir(repo.join("vendor"))?;
+        fs::write(repo.join("vendor/.gitignore"), "!/bundle/\n")?;
+        assert!(!install_path_ignored(repo, "vendor/bundle")?);
+        Ok(())
+    }
+
+    #[test]
+    fn seed_and_attachment_use_their_own_effective_excludes() -> Result<()> {
+        let f = Fixture::new()?;
+        let p = &f.project;
+        let repo = &p.repo;
+        let spec = f.spec();
+        fs::write(repo.join(".gitignore"), "# No committed install exclude\n")?;
+        git::bytes(repo, &["add", ".gitignore"])?;
+        commit(repo)?;
+        f.write_tree(repo, "source")?;
+
+        let failure = seed_registered(p, repo, &spec).unwrap_err();
+        assert_eq!(
+            failure.downcast_ref::<crate::api::Fault>().map(|f| f.code),
+            Some(INSTALL_PATH_NOT_IGNORED)
+        );
+        assert!(!p.state.join(REGISTERED_INSTALL_DIR).exists());
+        let source_exclude = repo.join(".git/info/exclude");
+        fs::create_dir_all(source_exclude.parent().unwrap())?;
+        fs::write(&source_exclude, "/vendor/\n")?;
+        let seed = seed_registered(p, repo, &spec)?;
+        if seed["reason"] == "cow_unavailable" {
+            return Ok(());
+        }
+        assert_eq!(seed["status"], "registered", "{seed}");
+        let sibling = f.sibling("different-ignore")?;
+        assert_eq!(
+            attach_registered(p, &sibling, &spec)?["reason"],
+            INSTALL_PATH_NOT_IGNORED
+        );
+        assert!(!sibling.join("vendor").exists());
+
+        let local_exclude = sibling.join(".git/info/exclude");
+        fs::create_dir_all(local_exclude.parent().unwrap())?;
+        fs::write(&local_exclude, "/vendor/\n")?;
+        fs::write(sibling.join(".gitignore"), "!/vendor/\n")?;
+        assert_eq!(
+            attach_registered(p, &sibling, &spec)?["reason"],
+            INSTALL_PATH_NOT_IGNORED
+        );
+        assert!(!sibling.join("vendor").exists());
+        fs::write(
+            sibling.join(".gitignore"),
+            "# Use this checkout's local exclude\n",
+        )?;
+        let attached = attach_registered(p, &sibling, &spec)?;
+        assert_eq!(attached["status"], "attached", "{attached}");
+        assert_eq!(
+            fs::read_to_string(sibling.join("vendor/bundle/package"))?,
+            "source"
+        );
+
+        fs::write(&source_exclude, "# Removed local exclude\n")?;
+        let failure = seed_registered(p, repo, &spec).unwrap_err();
+        assert_eq!(
+            failure.downcast_ref::<crate::api::Fault>().map(|f| f.code),
+            Some(INSTALL_PATH_NOT_IGNORED)
+        );
         Ok(())
     }
 
@@ -1205,6 +1450,20 @@ mod tests {
             "generation_missing"
         );
         assert!(!b.join(&changed.directory).exists());
+
+        // Simulate an interrupted publication with a durable receipt but
+        // an omitted cloned payload. A new seed must leave it for inspection.
+        let incomplete = project
+            .state
+            .join(REGISTERED_INSTALL_DIR)
+            .join(second["digest"].as_str().unwrap())
+            .join("tree/package");
+        fs::remove_file(&incomplete)?;
+        let d = f.sibling("missing-payload")?;
+        assert_ne!(attach_registered(project, &d, &spec)?["status"], "attached");
+        assert!(!d.join("vendor").exists());
+        assert!(seed_registered(project, repo, &spec).is_err());
+        assert!(!incomplete.exists());
         Ok(())
     }
 

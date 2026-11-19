@@ -2,6 +2,7 @@
 //! The install must match the lock and be relocatable. The caller accounts for
 //! lifecycle inputs, registry settings outside the checkout, ABI and toolchain.
 
+use super::registered::{INSTALL_PATH_NOT_IGNORED, require_ignored};
 use super::{
     Transfer, check_metadata, entry_exists, exact_digest, field, layer_provenance, restore_layer,
     safe_link, save_layer, source_contents, valid_digest, verify_layer_contents,
@@ -471,6 +472,9 @@ pub fn inherit_shared(checkout: &Path, state: &Path, primary: &Path) -> Result<O
     if inputs.digest != active.inputs {
         return status("inputs_mismatch", "dependency_inputs_changed");
     }
+    if require_ignored(&checkout, "node_modules").is_err() {
+        return status("unavailable", INSTALL_PATH_NOT_IGNORED);
+    }
     let result = restore_layer(
         &checkout,
         &layer,
@@ -482,7 +486,8 @@ pub fn inherit_shared(checkout: &Path, state: &Path, primary: &Path) -> Result<O
                 Active::read(&marker)? == active,
                 "shared layer registration changed during transfer"
             );
-            inputs.recheck(&checkout, state, primary)
+            inputs.recheck(&checkout, state, primary)?;
+            require_ignored(&checkout, "node_modules")
         },
     );
     match result {
@@ -491,14 +496,12 @@ pub fn inherit_shared(checkout: &Path, state: &Path, primary: &Path) -> Result<O
             receipt["manager"] = json!("npm");
             Ok(Some(receipt))
         }
-        Err(error)
-            if error
-                .downcast_ref::<Fault>()
-                .is_some_and(|fault| fault.code == "cow_unavailable") =>
-        {
-            status("unavailable", "cow_unavailable")
-        }
-        Err(_) => status("unavailable", "layer_restore_failed"),
+        Err(error) => match error.downcast_ref::<Fault>().map(|fault| fault.code) {
+            Some(reason @ ("cow_unavailable" | INSTALL_PATH_NOT_IGNORED)) => {
+                status("unavailable", reason)
+            }
+            _ => status("unavailable", "layer_restore_failed"),
+        },
     }
 }
 
@@ -718,6 +721,18 @@ mod tests {
         );
         assert!(!installed.exists());
 
+        git::bytes(&workspace, &["config", "core.excludesFile", "/dev/null"])?;
+        fs::write(workspace.join(".gitignore"), "/node_modules/*\n/.npmrc\n")?;
+        git::bytes(&workspace, &["add", ".gitignore"])?;
+        git::bytes(&workspace, &["commit", "-qm", "ignore children only"])?;
+        let exposed = inherit_shared(&workspace, state, repo)?.unwrap();
+        assert_eq!(exposed["status"], "unavailable");
+        assert_eq!(exposed["reason"], INSTALL_PATH_NOT_IGNORED);
+        assert!(!installed.exists());
+
+        let exclude = workspace.join(".git/info/exclude");
+        fs::create_dir_all(exclude.parent().unwrap())?;
+        fs::write(exclude, "/node_modules/\n")?;
         let receipt = inherit_shared(&workspace, state, repo)?.unwrap();
         assert_eq!(receipt["status"], "attached", "{receipt}");
         assert_eq!(receipt["digest"], registered["digest"]);

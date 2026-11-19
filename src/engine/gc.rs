@@ -231,7 +231,8 @@ mod tests {
         fs::create_dir(&repo)?;
         git::bytes(&repo, &["init", "-q", "--template="])?;
         fs::write(repo.join("fixture.lock"), "locked")?;
-        git::bytes(&repo, &["add", "fixture.lock"])?;
+        fs::write(repo.join(".gitignore"), "/vendor/\n")?;
+        git::bytes(&repo, &["add", "fixture.lock", ".gitignore"])?;
         git::bytes(
             &repo,
             &[
