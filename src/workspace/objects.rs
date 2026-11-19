@@ -25,7 +25,7 @@ mod local;
 mod plan_cache;
 mod shallow;
 
-const SETTINGS: &str = r"^(core\.(autocrlf|eol|safecrlf|symlinks|filemode|ignorecase|precomposeunicode|protecthfs|protectntfs|bigfilethreshold)|(user|author|committer)\.(name|email))$";
+const CHECKOUT_CONFIG: &str = r"^(filter\..*|core\.(autocrlf|eol|safecrlf|symlinks|filemode|ignorecase|precomposeunicode|protecthfs|protectntfs|bigfilethreshold)|(user|author|committer)\.(name|email))$";
 const FILTERS: &str = r"^filter\.";
 
 #[cfg(windows)]
@@ -175,27 +175,53 @@ pub(super) fn preflight(primary: &Path) -> Result<Primary<'_>> {
     })
 }
 
-fn config_values(path: &Path, pattern: &str) -> Result<BTreeMap<String, String>> {
+#[derive(Default)]
+struct CheckoutConfig {
+    filters: BTreeMap<String, String>,
+    settings: BTreeMap<String, (String, bool)>,
+}
+
+fn checkout_config(path: &Path) -> Result<CheckoutConfig> {
     let raw = optional_config(git::raw(
         path,
-        &["config", "--null", "--get-regexp", pattern],
+        &[
+            "config",
+            "--null",
+            "--show-scope",
+            "--get-regexp",
+            CHECKOUT_CONFIG,
+        ],
     )?)?;
-    let mut values = BTreeMap::new();
-    for entry in raw.split(|b| *b == 0).filter(|entry| !entry.is_empty()) {
+    let mut values = CheckoutConfig::default();
+    let mut fields = raw.split(|b| *b == 0).filter(|field| !field.is_empty());
+    while let Some(scope) = fields.next() {
+        let entry = fields.next().context("missing scoped Git config entry")?;
         let entry = std::str::from_utf8(entry).context("Git configuration must be UTF-8")?;
         let (key, value) = entry.split_once('\n').unwrap_or((entry, "true"));
-        values.insert(key.to_string(), value.to_string());
+        if key.starts_with("filter.") {
+            values.filters.insert(key.into(), value.into());
+        } else {
+            values
+                .settings
+                .insert(key.into(), (value.into(), scope == b"local"));
+        }
     }
     Ok(values)
 }
 
 fn copy_config(primary: &Path, root: &Path) -> Result<()> {
+    let source = checkout_config(primary)?;
+    let destination = checkout_config(root)?;
     ensure!(
-        config_values(primary, FILTERS)? == config_values(root, FILTERS)?,
+        source.filters == destination.filters,
         "effective Git filter settings differ in the independent workspace"
     );
-    for (key, value) in config_values(primary, SETTINGS)? {
-        run(root, &["config", "--local", "--", &key, &value])?;
+    for (key, (value, _)) in source.settings {
+        // git init already records filesystem settings such as core.filemode.
+        // Inherited settings still need a private copy for move and recovery.
+        if !matches!(destination.settings.get(&key), Some((local, true)) if local == &value) {
+            run(root, &["config", "--local", "--", &key, &value])?;
+        }
     }
     let raw = optional_config(git::raw(
         primary,
@@ -274,32 +300,6 @@ pub(super) fn initialize(
     base: Option<&str>,
     branch: Option<&str>,
 ) -> Result<Value> {
-    require_pristine(root)?;
-    let Primary {
-        path: primary,
-        format,
-    } = *source;
-    let base = base.map(|oid| exact_commit(primary, oid)).transpose()?;
-    let branch_ref = branch.map(|branch| format!("refs/heads/{branch}"));
-    if let Some(reference) = &branch_ref {
-        run(primary, &["check-ref-format", reference])?;
-        ensure!(
-            branch.is_some_and(|name| !name.starts_with('-') && name != "HEAD"),
-            "invalid Git branch name"
-        );
-    }
-    ensure!(
-        base.is_some() || branch.is_some(),
-        "an unborn workspace requires a branch"
-    );
-    let initial = branch.unwrap_or("graft-unborn");
-    run(
-        root,
-        &[
-            "init",
-            "--quiet",
-            "--template=",
-) -> Result<Value> {
     initialize_with(source, root, state, base, branch, |_, _, _, _| Ok(None))
 }
 
@@ -325,6 +325,32 @@ fn initialize_with(
     base: Option<&str>,
     branch: Option<&str>,
     snapshot: impl FnOnce(&Path, &Path, &str, &str) -> Result<Option<Value>>,
+) -> Result<Value> {
+    require_pristine(root)?;
+    let Primary {
+        path: primary,
+        format,
+    } = *source;
+    let base = base.map(|oid| exact_commit(primary, oid)).transpose()?;
+    let branch_ref = branch.map(|branch| format!("refs/heads/{branch}"));
+    if let Some(reference) = &branch_ref {
+        run(primary, &["check-ref-format", reference])?;
+        ensure!(
+            branch.is_some_and(|name| !name.starts_with('-') && name != "HEAD"),
+            "invalid Git branch name"
+        );
+    }
+    ensure!(
+        base.is_some() || branch.is_some(),
+        "an unborn workspace requires a branch"
+    );
+    let initial = branch.unwrap_or("graft-unborn");
+    run(
+        root,
+        &[
+            "init",
+            "--quiet",
+            "--template=",
             &format!("--object-format={format}"),
             &format!("--initial-branch={initial}"),
         ],
