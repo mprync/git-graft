@@ -54,8 +54,7 @@ function surface(required: string[], advertised: string[], exercised: Set<string
 }
 
 function spaceSummary(samples: Record<string, unknown>[], installed: boolean): string {
-  // Display the entire measured pair from the median-savings round. Keeping the
-  // two methods paired makes its bytes, percentage and timings reproducible.
+  // Keep the timings paired with the volume readings from the same round.
   const signedBytes = (sample: Record<string, unknown>): number => {
     assert(typeof sample.savedBytes === 'string');
     const bytes = Number(sample.savedBytes);
@@ -71,18 +70,18 @@ function spaceSummary(samples: Record<string, unknown>[], installed: boolean): s
     return (Number(bytes) / 1024 ** 2).toFixed(2);
   }
   assert(typeof native.totalSeconds === 'number' && typeof graft.totalSeconds === 'number');
-  const percent = typeof space.savedPercent === 'number' ? ' (' + space.savedPercent.toFixed(2) + '%)' : '';
   return [
     installed ? 'Workspaces with installed npm dependencies' : 'Source checkouts',
     '',
-    '| Method | Observed disk use | Total time |',
+    '| Method | Change in used space on the volume | Total time |',
     '| --- | ---: | ---: |',
     '| ' + (installed ? 'Git + npm ci' : 'git worktree add') + ' | ' + mib(native.freeBytesDelta) + ' MiB | ' + native.totalSeconds.toFixed(3) + ' s |',
     '| ' + (installed ? 'Graft + installed layer' : 'git graft spawn') + ' | ' + mib(graft.freeBytesDelta) + ' MiB | ' + graft.totalSeconds.toFixed(3) + ' s |',
     '',
-    'Observed savings: ' + mib(space.savedBytes) + ' MiB' + percent + '.',
+    'The native volume change minus the Graft volume change was ' + mib(space.savedBytes) + ' MiB.',
+    'These signed readings include other filesystem activity. For checkout storage, see the file-block measurements in docs/benchmarks.md.',
     ...(sorted.length > 1 ? [
-      'Median-savings round of ' + sorted.length + '. Observed range ' +
+      'This pair has the median difference across ' + sorted.length + ' rounds. The differences ranged from ' +
       mib(sorted[0].savedBytes) + ' to ' + mib(sorted[sorted.length - 1].savedBytes) + ' MiB.',
     ] : []),
   ].join('\n');

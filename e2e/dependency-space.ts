@@ -175,7 +175,8 @@ export const dependencySpace: Scenario = {
         freeBytesDelta:graftDelta.toString(),rawFreeBytesDelta:(graftBefore.free-graftAfter.free).toString(),
         cachePreparation:{seconds:cachePrimeSeconds,freeBytesDelta:cachePrimeDelta.toString()},
         firstSpawnSeconds,totalSeconds:graftSeconds,selectedLayerMode:mode,layerTransfers:receipts},
-      savedBytes:saved.toString(), savedPercent:nativeDelta > 0n ? Number(saved)*100/Number(nativeDelta) : null,
+      savedBytes: saved.toString(),
+      savedPercent: nativeDelta > 0n && graftDelta >= 0n ? Number(saved) * 100 / Number(nativeDelta) : null,
       writeIsolation:true,
       caveat:'Signed volume-wide free-space deltas can include unrelated activity, filesystem metadata, snapshots and delayed allocation; no savings threshold is asserted.',
     });

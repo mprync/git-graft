@@ -199,10 +199,10 @@ export const cases: Scenario[] = [{
     assert.equal(nativeStart.typeCode, graftEnd.typeCode, "both methods must use the same filesystem");
     assert.equal(nativeStart.blockSize, graftEnd.blockSize, "filesystem block size changed during run");
 
-    const savedBytes = (nativeStart.freeBytes - nativeEnd.freeBytes)
-      - (graftStart.freeBytes - graftEnd.freeBytes);
     const nativeBytes = nativeStart.freeBytes - nativeEnd.freeBytes;
-    const savedPercent = nativeBytes > 0n
+    const graftBytes = graftStart.freeBytes - graftEnd.freeBytes;
+    const savedBytes = nativeBytes - graftBytes;
+    const savedPercent = nativeBytes > 0n && graftBytes >= 0n
       ? Number(savedBytes) * 100 / Number(nativeBytes)
       : null;
     const isolation = checkWriteIsolation(ctx, graftPaths, nativePaths);
@@ -223,7 +223,7 @@ export const cases: Scenario[] = [{
         totalSeconds: sumSeconds(nativeSamples),
         freeBytesBefore: nativeStart.freeBytes.toString(),
         freeBytesAfter: nativeEnd.freeBytes.toString(),
-        freeBytesDelta: (nativeStart.freeBytes - nativeEnd.freeBytes).toString(),
+        freeBytesDelta: nativeBytes.toString(),
         workspaces: nativeSamples,
       },
       graft: {
@@ -232,12 +232,12 @@ export const cases: Scenario[] = [{
         totalSeconds: sumSeconds(graftSamples),
         freeBytesBefore: graftStart.freeBytes.toString(),
         freeBytesAfter: graftEnd.freeBytes.toString(),
-        freeBytesDelta: (graftStart.freeBytes - graftEnd.freeBytes).toString(),
+        freeBytesDelta: graftBytes.toString(),
         workspaces: graftSamples,
       },
       savedBytes: savedBytes.toString(),
       savedPercent,
-      savedPercentBasis: "savedBytes/native.freeBytesDelta*100; null if the native delta is not positive",
+      savedPercentBasis: "Relative difference in signed volume-wide deltas when the native delta is positive and the Graft delta is nonnegative.",
       writeIsolation: isolation,
       publicationCaveat: "Signed free-space deltas are volume-wide and can be affected by unrelated activity, filesystem metadata, snapshots, and delayed allocation. Logical cloned bytes come from the backend receipt (zero for Git fallback); logicalCheckoutBytes reports full tracked content. No savings threshold is asserted; copy fallback reports its observed result.",
     };
