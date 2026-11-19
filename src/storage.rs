@@ -161,8 +161,6 @@ struct Entry {
     name: Vec<u8>,
     blob: String,
     mode: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    size: Option<u64>,
 }
 
 impl Entry {
@@ -206,7 +204,7 @@ impl Entry {
 fn entries(worktree: &Path, oid: &str) -> Result<Vec<Entry>> {
     let tree = git_command(worktree)
         .env("GIT_NO_REPLACE_OBJECTS", "1")
-        .args(["ls-tree", "-r", "-l", "-z", oid])
+        .args(["ls-tree", "-r", "-z", oid])
         .output()?;
     ensure!(
         tree.status.success(),
@@ -234,11 +232,6 @@ fn entries(worktree: &Path, oid: &str) -> Result<Vec<Entry>> {
             let kind = header.next().context("missing Git tree kind")?;
             let blob = crate::git::checked_oid(header.next().context("missing Git object ID")?)?
                 .to_owned();
-            let size = header.next().context("missing Git object size")?;
-            let size = match size {
-                "-" | "BAD" => None,
-                bytes => Some(bytes.parse()?),
-            };
             ensure!(
                 matches!(
                     (mode, kind),
@@ -250,7 +243,6 @@ fn entries(worktree: &Path, oid: &str) -> Result<Vec<Entry>> {
                 name: name.to_vec(),
                 blob,
                 mode,
-                size,
             })
         })
         .collect()
@@ -445,12 +437,11 @@ impl<'a> Checkout<'a> {
             .iter()
             .any(|entry| entry.attributes() || !entry.name.is_ascii());
         #[cfg(any(target_os = "macos", target_os = "linux"))]
-        let may_convert_eol = inspect_attributes
-            || value(b"core.autocrlf").is_some_and(|value| {
-                ![b"false".as_slice(), b"no", b"off", b"0", b"", b"input"]
-                    .iter()
-                    .any(|raw| value.eq_ignore_ascii_case(raw))
-            });
+        let may_convert_eol = value(b"core.autocrlf").is_some_and(|value| {
+            ![b"false".as_slice(), b"no", b"off", b"0", b"", b"input"]
+                .iter()
+                .any(|raw| value.eq_ignore_ascii_case(raw))
+        });
         Ok(Self {
             worktree,
             oid,
@@ -543,7 +534,7 @@ impl FrozenGit {
 
 // External attributes, replacement blobs and arbitrary filters can change
 // bytes without changing commit or blob IDs. They always use Git.
-fn conversion_reason(checkout: &Checkout<'_>) -> Result<Option<&'static str>> {
+fn conversion_reason(checkout: &mut Checkout<'_>) -> Result<Option<&'static str>> {
     let (worktree, oid, entries) = (checkout.worktree, checkout.oid, checkout.entries);
     for variable in ["GIT_ATTR_SYSTEM", "GIT_ATTR_GLOBAL"] {
         if variable == "GIT_ATTR_SYSTEM"
@@ -587,7 +578,14 @@ fn conversion_reason(checkout: &Checkout<'_>) -> Result<Option<&'static str>> {
     }
     let input = path_input(entries.iter())?;
     let source = format!("--source={oid}");
-    let attrs = ["filter", "ident", "working-tree-encoding"];
+    let attrs = [
+        "filter",
+        "ident",
+        "working-tree-encoding",
+        "text",
+        "eol",
+        "crlf",
+    ];
     let output = checkout
         .command()
         .args(["check-attr", &source, "-z", "--stdin"])
@@ -605,8 +603,16 @@ fn conversion_reason(checkout: &Checkout<'_>) -> Result<Option<&'static str>> {
             {
                 return Ok(Some("cannot inspect committed attributes"));
             }
-            if !matches!(fields.next(), Some(b"unspecified" | b"unset")) {
-                return Ok(Some("path-dependent checkout conversion"));
+            match fields.next() {
+                None => return Ok(Some("cannot inspect committed attributes")),
+                Some(b"unspecified" | b"unset") => (),
+                Some(_) if matches!(attr, "text" | "eol" | "crlf") => {
+                    #[cfg(any(target_os = "macos", target_os = "linux"))]
+                    {
+                        checkout.may_convert_eol = true;
+                    }
+                }
+                Some(_) => return Ok(Some("path-dependent checkout conversion")),
             }
         }
     }
@@ -675,8 +681,8 @@ fn materialize_checkout(
     if entries.is_empty() {
         return native_checkout(worktree, oid, sparse, &entries, "empty tree");
     }
-    let checkout = Checkout::read(worktree, oid, &entries)?;
-    if let Some(reason) = conversion_reason(&checkout)? {
+    let mut checkout = Checkout::read(worktree, oid, &entries)?;
+    if let Some(reason) = conversion_reason(&mut checkout)? {
         return native_checkout(worktree, oid, sparse, &entries, reason);
     }
     #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -1447,8 +1453,9 @@ mod tests {
         let raced = root.join("raced");
         independent(&repo, &raced);
         let entries = entries(&raced, &oid)?;
-        let checkout = Checkout::read(&raced, &oid, &entries)?;
-        assert_eq!(conversion_reason(&checkout)?, None);
+        let mut checkout = Checkout::read(&raced, &oid, &entries)?;
+        assert_eq!(conversion_reason(&mut checkout)?, None);
+        assert!(checkout.may_convert_eol);
 
         // Mutate input after eligibility was checked, but before building and
         // signing the generation. No dependency on process scheduling.

@@ -378,7 +378,6 @@ mod tests {
             name: b"tracked".to_vec(),
             blob: "c".repeat(40),
             mode: 0o100644,
-            size: Some(8),
         };
         fs::write(tree(&staging).join(entry.path()?), b"verified")?;
         Snapshot::publish(
@@ -444,7 +443,6 @@ mod tests {
             name: b"tracked".to_vec(),
             blob: "a".repeat(40),
             mode: 0o100644,
-            size: Some(8),
         };
         let path = tree(&generation).join(entry.path()?);
         fs::write(&path, b"verified")?;
