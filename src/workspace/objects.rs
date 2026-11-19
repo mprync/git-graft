@@ -1,5 +1,6 @@
-//! Object transfer between ordinary repositories. Only the requested commit
-//! and its reachable history are exported, with no refs or object borrowing.
+//! Object transfer between independent repositories. The default exports the
+//! exact requested history. Trusted-local bootstrap can snapshot the complete
+//! object store. Both keep refs private and use an owned object directory.
 
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
@@ -19,6 +20,8 @@ mod history;
 pub(crate) use history::{
     HISTORY_CACHE_DIR, HISTORY_CACHE_MARKER, history_cache_root, verify_history_cache_generation,
 };
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod local;
 mod plan_cache;
 mod shallow;
 
@@ -296,6 +299,32 @@ pub(super) fn initialize(
             "init",
             "--quiet",
             "--template=",
+) -> Result<Value> {
+    initialize_with(source, root, state, base, branch, |_, _, _, _| Ok(None))
+}
+
+/// Opt in to cloning all visible objects from a trusted, ordinary local Git
+/// database. Unsupported sources or filesystems use the exact bootstrap.
+pub(super) fn initialize_local(
+    source: &Primary<'_>,
+    root: &Path,
+    state: &Path,
+    base: Option<&str>,
+    branch: Option<&str>,
+) -> Result<Value> {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    return initialize_with(source, root, state, base, branch, local::bootstrap);
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    initialize(source, root, state, base, branch)
+}
+
+fn initialize_with(
+    source: &Primary<'_>,
+    root: &Path,
+    state: &Path,
+    base: Option<&str>,
+    branch: Option<&str>,
+    snapshot: impl FnOnce(&Path, &Path, &str, &str) -> Result<Option<Value>>,
             &format!("--object-format={format}"),
             &format!("--initial-branch={initial}"),
         ],
@@ -306,15 +335,20 @@ pub(super) fn initialize(
             json!({"method": "none", "source": "none", "bytes": 0, "pack_bytes": 0, "index_bytes": 0, "shared_bytes": 0, "cache_bytes": 0, "object_format": format}),
         );
     };
-    let boundary = shallow::initialize(primary, root, &base)?;
-    let receipt = history::bootstrap(
-        primary,
-        root,
-        state,
-        format,
-        &base,
-        boundary.as_ref().map(shallow::Boundary::history),
-    )?;
+    let receipt = match snapshot(primary, root, format, &base)? {
+        Some(receipt) => receipt,
+        None => {
+            let boundary = shallow::initialize(primary, root, &base)?;
+            history::bootstrap(
+                primary,
+                root,
+                state,
+                format,
+                &base,
+                boundary.as_ref().map(shallow::Boundary::history),
+            )?
+        }
+    };
     let head = branch_ref.as_deref().unwrap_or("HEAD");
     run(root, &["update-ref", "--no-deref", head, &base])?;
     // includeIf.onbranch must observe the final branch or detached HEAD.
