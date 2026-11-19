@@ -326,10 +326,13 @@ mod direct {
             return Ok(Err("no eligible local donor files"));
         }
 
-        if files.iter().any(Entry::attributes)
-            && check_attributes(checkout, oid, files, &mut candidates).is_err()
-        {
-            return Ok(Err("cannot inspect committed attributes"));
+        if files.iter().any(Entry::attributes) {
+            let Ok(conversions) = checkout_conversions(checkout.proof_command(), oid, files) else {
+                return Ok(Err("cannot inspect committed attributes"));
+            };
+            for (eligible, conversion) in candidates.iter_mut().zip(conversions) {
+                *eligible &= conversion == Conversion::Raw;
+            }
         }
         if !candidates.contains(&true) {
             return Ok(Err("path-dependent checkout conversion"));
@@ -464,55 +467,6 @@ mod direct {
             return Ok(Some("Git replacement objects"));
         }
         Ok(None)
-    }
-
-    fn check_attributes(
-        checkout: &LocalCheckout<'_>,
-        oid: &str,
-        files: &[Entry],
-        candidates: &mut [bool],
-    ) -> Result<()> {
-        // Git omits unspecified attributes with --all. An explicit filter
-        // named "unspecified" is therefore distinguishable from no filter.
-        let output = crate::git::bounded_stdout(
-            checkout
-                .proof_command()
-                .env("GIT_NO_REPLACE_OBJECTS", "1")
-                .args([
-                    "check-attr",
-                    &format!("--source={oid}"),
-                    "--all",
-                    "-z",
-                    "--stdin",
-                ])
-                .stdin(Stdio::from(path_input(files.iter())?)),
-            16 * 1024 * 1024,
-        )?;
-        if output.is_empty() {
-            return Ok(());
-        }
-        let mut native = std::collections::HashSet::new();
-        let mut fields = output
-            .strip_suffix(b"\0")
-            .context("truncated checkout attributes")?
-            .split(|&b| b == 0);
-        while let Some(path) = fields.next() {
-            let attr = fields.next().context("missing checkout attribute")?;
-            fields.next().context("missing checkout attribute value")?;
-            if matches!(
-                attr,
-                b"filter" | b"ident" | b"working-tree-encoding" | b"text" | b"eol" | b"crlf"
-            ) {
-                native.insert(path);
-            }
-        }
-        for (entry, eligible) in files.iter().zip(candidates) {
-            if native.remove(entry.name.as_slice()) {
-                *eligible = false;
-            }
-        }
-        ensure!(native.is_empty(), "unexpected path in checkout attributes");
-        Ok(())
     }
 
     pub(super) fn install<F: FnOnce() -> Result<()>>(

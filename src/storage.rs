@@ -618,50 +618,75 @@ fn conversion_reason(checkout: &mut Checkout<'_>) -> Result<Option<&'static str>
     if !checkout.inspect_attributes {
         return Ok(None);
     }
-    let input = path_input(entries.iter())?;
-    let source = format!("--source={oid}");
-    let attrs = [
-        "filter",
-        "ident",
-        "working-tree-encoding",
-        "text",
-        "eol",
-        "crlf",
-    ];
-    let output = checkout
-        .command()
-        .args(["check-attr", &source, "-z", "--stdin"])
-        .args(attrs)
-        .stdin(Stdio::from(input))
-        .output()?;
-    if !output.status.success() {
+    let Ok(conversions) = checkout_conversions(checkout.command(), oid, entries) else {
         return Ok(Some("cannot inspect committed attributes"));
+    };
+    if conversions.contains(&Conversion::Git) {
+        return Ok(Some("path-dependent checkout conversion"));
     }
-    let mut fields = output.stdout.split(|b| *b == 0);
-    for entry in entries {
-        for attr in attrs {
-            if fields.next() != Some(entry.name.as_slice())
-                || fields.next() != Some(attr.as_bytes())
-            {
-                return Ok(Some("cannot inspect committed attributes"));
-            }
-            match fields.next() {
-                None => return Ok(Some("cannot inspect committed attributes")),
-                Some(b"unspecified" | b"unset") => (),
-                Some(_) if matches!(attr, "text" | "eol" | "crlf") => {
-                    #[cfg(any(target_os = "macos", target_os = "linux"))]
-                    {
-                        checkout.may_convert_eol = true;
-                    }
-                }
-                Some(_) => return Ok(Some("path-dependent checkout conversion")),
-            }
-        }
-    }
-    if fields.next() != Some(b"") || fields.next().is_some() {
-        return Ok(Some("cannot inspect committed attributes"));
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        checkout.may_convert_eol |= conversions.contains(&Conversion::Eol);
     }
     Ok(None)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Conversion {
+    Raw,
+    Eol,
+    Git,
+}
+
+// --all omits absent attributes, so a filter literally named "unspecified"
+// still routes the file to Git. Keep names as bytes throughout.
+fn checkout_conversions(
+    mut command: Command,
+    oid: &str,
+    files: &[Entry],
+) -> Result<Vec<Conversion>> {
+    let output = crate::git::bounded_stdout(
+        command
+            .env("GIT_NO_REPLACE_OBJECTS", "1")
+            .args([
+                "check-attr",
+                &format!("--source={oid}"),
+                "--all",
+                "-z",
+                "--stdin",
+            ])
+            .stdin(Stdio::from(path_input(files.iter())?)),
+        16 * 1024 * 1024,
+    )?;
+    if output.is_empty() {
+        return Ok(vec![Conversion::Raw; files.len()]);
+    }
+    let mut paths = std::collections::HashMap::new();
+    let mut fields = output
+        .strip_suffix(b"\0")
+        .context("truncated checkout attributes")?
+        .split(|&b| b == 0);
+    while let Some(path) = fields.next() {
+        let attr = fields.next().context("missing checkout attribute")?;
+        fields.next().context("missing checkout attribute value")?;
+        let conversion = match attr {
+            b"filter" | b"ident" | b"working-tree-encoding" => Conversion::Git,
+            b"text" | b"eol" | b"crlf" => Conversion::Eol,
+            _ => continue,
+        };
+        let current = paths.entry(path).or_insert(Conversion::Raw);
+        *current = conversion.max(*current);
+    }
+    let conversions = files
+        .iter()
+        .map(|entry| {
+            paths
+                .remove(entry.name.as_slice())
+                .unwrap_or(Conversion::Raw)
+        })
+        .collect();
+    ensure!(paths.is_empty(), "unexpected path in checkout attributes");
+    Ok(conversions)
 }
 
 fn external_attributes(output: &[u8]) -> Option<&'static str> {

@@ -56,7 +56,7 @@ export const cases: Scenario[] = [
       ctx.git(['worktree', 'add', '--quiet', '--detach', native, base]);
       const expected = read(native, 'tracked.txt');
       assert.equal(expected, 'INITIAL\n');
-      for (const history of ['tip', 'local']) {
+      for (const history of ['tip', 'local', 'isolated']) {
         const ws = ctx.spawn('filtered-' + history, ['--history', history, '--base', base]);
         assert.equal(read(ws.path, 'tracked.txt'), expected);
         assert.equal(ctx.git(['status', '--porcelain'], ws.path), '');
