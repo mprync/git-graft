@@ -1,10 +1,9 @@
 //! Compare private CoW copies with the exact bytes Git would check out.
-use super::{Entry, git_command};
+use super::{Checkout, Entry};
 use anyhow::{Context, Result, ensure};
 use std::{
     fs::File,
     io::{BufRead, BufReader, Read, Seek, Write},
-    path::Path,
     process::{Child, ChildStdout, Stdio},
 };
 
@@ -20,7 +19,7 @@ struct Batch {
 }
 
 impl Batch {
-    fn start(repo: &Path, oid: &str, files: &[&Entry], filtered: bool) -> Result<Self> {
+    fn start(checkout: &Checkout<'_>, files: &[&Entry], filtered: bool) -> Result<Self> {
         // Feeding a real file avoids blocking on stdout while writing requests.
         let mut input = tempfile::tempfile()?;
         for entry in files {
@@ -32,10 +31,10 @@ impl Batch {
             input.write_all(b"\0")?;
         }
         input.rewind()?;
-        let mut command = git_command(repo);
+        let mut command = checkout.command();
         command.args(["cat-file", "--batch", "-Z"]);
         if filtered {
-            command.arg("--filters").env("GIT_ATTR_SOURCE", oid);
+            command.arg("--filters");
         }
         let mut child = command
             .stdin(Stdio::from(input))
@@ -84,16 +83,14 @@ impl Drop for Batch {
 // conversion. A NUL could be file data. Frame the filtered stream with the raw
 // stream, permitting only the CRLF insertion established by the attr check.
 pub(super) fn checkout_digests(
-    repo: &Path,
-    oid: &str,
+    checkout: &Checkout<'_>,
     files: &[&Entry],
-    may_convert_eol: bool,
 ) -> Result<Vec<blake3::Hash>> {
     if files.is_empty() {
         return Ok(Vec::new());
     }
-    let mut raw = Batch::start(repo, oid, files, false)?;
-    if !may_convert_eol {
+    let mut raw = Batch::start(checkout, files, false)?;
+    if !checkout.may_convert_eol {
         let mut digests = Vec::with_capacity(files.len());
         for entry in files {
             let size = raw.header(entry)?;
@@ -108,7 +105,7 @@ pub(super) fn checkout_digests(
         raw.finish()?;
         return Ok(digests);
     }
-    let mut filtered = Batch::start(repo, oid, files, true)?;
+    let mut filtered = Batch::start(checkout, files, true)?;
     let mut input = vec![0; 64 * 1024];
     let mut expected = Vec::with_capacity(input.len() * 2);
     let mut actual = vec![0; input.len() * 2];

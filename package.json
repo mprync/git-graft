@@ -8,6 +8,9 @@
     "typecheck": "tsc --noEmit",
     "bench": "node e2e/run.ts --group space",
     "bench:workflow": "node e2e/workflow-bench.ts",
+    "bench:agents": "node e2e/agents-bench.ts",
+    "bench:source": "node e2e/source-bench.ts",
+    "bench:source:real": "node e2e/real-source-bench.ts",
     "coverage": "node e2e/coverage.ts"
   },
   "devDependencies": {

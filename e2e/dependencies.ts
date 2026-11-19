@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import type { Context, Scenario } from './harness.ts';
@@ -40,18 +40,22 @@ function commit(ctx: Context, cwd: string): string {
   return ctx.git(['rev-parse', 'HEAD'], cwd);
 }
 function add(ctx: Context, ws: Workspace, manager: string, packages: string[] = [], offline = false): Result {
-  return ctx.cli(['add-dep', ws.path.split(/[\\/]/).at(-1)!, '--lease', ws.lease,
+  return ctx.cli(['add-dep', workspaceName(ws), '--lease', ws.lease,
     '--manager', manager, ...(offline ? ['--offline'] : []), ...packages]);
 }
 function failedAdd(ctx: Context, ws: Workspace, manager: string): Result {
-  return ctx.fail(['add-dep', ws.path.split(/[\\/]/).at(-1)!, '--lease', ws.lease,
+  return ctx.fail(['add-dep', workspaceName(ws), '--lease', ws.lease,
     '--manager', manager, '--offline']);
 }
 function runtime(ctx: Context, ws: Workspace): Result {
-  return ctx.cli(['env', ws.path.split(/[\\/]/).at(-1)!]);
+  return ctx.cli(['env', workspaceName(ws)]);
 }
 function execute(ctx: Context, ws: Workspace, argv: string[]): Result {
-  return ctx.cli(['exec', ws.path.split(/[\\/]/).at(-1)!, '--lease', ws.lease, '--', ...argv]);
+  return ctx.cli(['exec', workspaceName(ws), '--lease', ws.lease, '--', ...argv]);
+}
+function workspaceName(ws: Workspace): string {
+  assert(typeof ws.result.name === 'string');
+  return ws.result.name;
 }
 function bytes(path: string): number {
   if (!existsSync(path)) return 0;
@@ -114,10 +118,12 @@ const jsManagers: Scenario[] = ['npm','pnpm','bun'].map(manager => ({
     const fixture = npmArchive(ctx.root);
     npmProject(ctx, fixture.path);
     const first = ctx.spawn('first');
+    assert(lstatSync(join(first.path, '.git')).isDirectory());
     add(ctx, first, manager, [`file:${fixture.path}`]);
     const revision = commit(ctx, first.path);
-    const second = ctx.spawn('second', ['--base', revision]);
-    const third = ctx.spawn('third', ['--base', revision]);
+    assert.notEqual(ctx.command('git', ['cat-file', '-e', revision]).status, 0);
+    const second = ctx.spawn('second', ['--base', revision], first.path);
+    const third = ctx.spawn('third', ['--base', revision], first.path);
     add(ctx, second, manager, [], true);
     add(ctx, third, manager, [], true);
     const a = join(second.path,'node_modules/graft-fixture/index.js');
@@ -160,8 +166,8 @@ const cargoCase: Scenario = {
     ctx.env.RUSTC_WRAPPER = '';
     add(ctx,first,'cargo',['graft-fixture@1.0.0']);
     const revision = commit(ctx,first.path);
-    const second = ctx.spawn('second',['--base',revision]);
-    const third = ctx.spawn('third',['--base',revision]);
+    const second = ctx.spawn('second',['--base',revision],first.path);
+    const third = ctx.spawn('third',['--base',revision],first.path);
     add(ctx,second,'cargo',[],true); add(ctx,third,'cargo',[],true);
     const a = runtime(ctx,second); const b = runtime(ctx,third);
     assert.equal(a.cache_dir,b.cache_dir); assert.notEqual(a.cargo_target_dir,b.cargo_target_dir);
@@ -223,7 +229,8 @@ const uvCase: Scenario = {
     ctx.git(['add','pyproject.toml']); ctx.git(['commit','-qm','uv fixture']);
     const first=ctx.spawn('first'); add(ctx,first,'uv',[wheelPath]);
     const revision=commit(ctx,first.path);
-    const second=ctx.spawn('second',['--base',revision]); const third=ctx.spawn('third',['--base',revision]);
+    const second=ctx.spawn('second',['--base',revision],first.path);
+    const third=ctx.spawn('third',['--base',revision],first.path);
     add(ctx,second,'uv',[],true); add(ctx,third,'uv',[],true);
     const a=runtime(ctx,second), b=runtime(ctx,third);
     assert.equal(a.cache_dir,b.cache_dir); assert.notEqual(a.python_environment,b.python_environment);
@@ -295,7 +302,7 @@ const layerCase: Scenario = {
     add(ctx,first,'npm',[`file:${fixture.path}`]);
     add(ctx,second,'npm',[],true);
     const layer=(action: string, ws: Workspace, key='node-1', copy=false) =>
-      ['layer',ws.path.split(/[\\/]/).at(-1)!,'--lease',ws.lease,action,'--key',key,...(copy ? ['--copy'] : [])];
+      ['layer',workspaceName(ws),'--lease',ws.lease,action,'--key',key,...(copy ? ['--copy'] : [])];
     const badLink=join(second.path,'node_modules','external');
     try { symlinkSync(ctx.root,badLink,process.platform === 'win32' ? 'junction' : 'dir'); }
     catch (error) {
@@ -304,6 +311,8 @@ const layerCase: Scenario = {
       throw error;
     }
     ctx.fail(layer('save',second)); unlinkSync(badLink);
+    const sourcePackage=join(second.path,'node_modules','graft-fixture','index.js');
+    if (process.platform !== 'win32') chmodSync(sourcePackage,0o751);
     const relativeLink=join(second.path,'node_modules','safe-link');
     try { symlinkSync('graft-fixture/index.js',relativeLink,'file'); }
     catch (error) {
@@ -311,12 +320,21 @@ const layerCase: Scenario = {
         ctx.unavailable('Relative file symlink creation requires Windows Developer Mode or suitable privileges');
       throw error;
     }
-    const normal=ctx.cli(layer('save',second));
-    assert(['copy','copy-on-write','mixed'].includes(String(normal.backend)));
-    assert(Number(normal.logical_bytes)>0);
-    assert.equal(Number(normal.logical_bytes),Number(normal.cloned_bytes)+Number(normal.copied_bytes));
-    ctx.measure('layer_default_backend',normal.backend);
-    ctx.cli(layer('forget',second));
+    const attempt=ctx.command(ctx.bin,['--repo',ctx.repo,'--json',...layer('save',second)]);
+    assert.ifError(attempt.error);
+    if (attempt.status === 0) {
+      const normal=record(JSON.parse(attempt.stdout));
+      assert.equal(normal.backend,'copy-on-write');
+      assert(Number(normal.logical_bytes)>0);
+      assert.equal(normal.copied_bytes,0);
+      assert.equal(normal.logical_bytes,normal.cloned_bytes);
+      ctx.measure('layer_default_backend',normal.backend);
+      ctx.cli(layer('forget',second));
+    } else {
+      const refusal=record(JSON.parse(attempt.stderr || attempt.stdout));
+      assert.equal(refusal.code,'cow_unavailable');
+      ctx.measure('layer_default_backend','refused: cow_unavailable');
+    }
     const saved=ctx.cli(layer('save',second,'node-1',true));
     assert.equal(saved.backend,'copy'); assert(Number(saved.copied_bytes)>0); assert.equal(saved.cloned_bytes,0);
     assert.equal(typeof saved.digest,'string');
@@ -324,17 +342,89 @@ const layerCase: Scenario = {
     const state=dirname(String(runtime(ctx,third).cache_dir));
     const cached=join(state,'layers',String(saved.digest),'node_modules/graft-fixture/index.js');
     const original=readFileSync(cached); writeFileSync(cached,'tampered');
-    ctx.fail(layer('restore',third)); writeFileSync(cached,original);
+    ctx.fail(layer('restore',third,'node-1',true));
+    assert(!existsSync(join(third.path,'node_modules')));
+    ctx.fail(layer('forget',second));
+    assert.equal(readFileSync(cached,'utf8'),'tampered');
+    writeFileSync(cached,original);
+    if (process.platform !== 'win32') {
+      const outside=join(ctx.root,'shared-package-file');
+      linkSync(cached,outside);
+      ctx.fail(layer('restore',third,'node-1',true));
+      ctx.fail(layer('forget',second));
+      assert(!existsSync(join(third.path,'node_modules')));
+      assert.deepEqual(readFileSync(cached),original);
+      assert.deepEqual(readFileSync(outside),original);
+      rmSync(outside);
+      const mode=statSync(cached).mode & 0o777;
+      chmodSync(cached,mode ^ 0o100);
+      ctx.fail(layer('restore',third,'node-1',true));
+      ctx.fail(layer('forget',second));
+      assert.equal(statSync(cached).mode & 0o777,mode ^ 0o100);
+      chmodSync(cached,mode);
+    }
     const restored=ctx.cli(layer('restore',third,'node-1',true));
     assert.equal(restored.backend,'copy'); assert.equal(restored.copied_bytes,saved.copied_bytes);
     assert.equal(readlinkSync(join(third.path,'node_modules','safe-link')).replaceAll('\\','/'),'graft-fixture/index.js');
     ctx.measure('relative_symlink_supported',true);
-    independentFiles(join(second.path,'node_modules/graft-fixture/index.js'),join(third.path,'node_modules/graft-fixture/index.js'));
+    const restoredPackage=join(third.path,'node_modules','graft-fixture','index.js');
+    if (process.platform !== 'win32') {
+      assert.equal(statSync(restoredPackage).mode & 0o777,0o751);
+      chmodSync(restoredPackage,0o644);
+      assert.equal(statSync(sourcePackage).mode & 0o777,0o751);
+      assert.equal(statSync(cached).mode & 0o777,0o751);
+    }
+    independentFiles(sourcePackage,restoredPackage);
     ctx.fail(layer('restore',third));
-    ctx.cli(layer('forget',second));
+    const forgotten=ctx.cli(layer('forget',second));
     assert(!existsSync(join(state,'layers',String(saved.digest))));
+    if (process.platform === 'win32') {
+      assert.equal(forgotten.retained,true);
+      const retained=join(state,'retained-layers');
+      const entry=readdirSync(retained).find(name => name.startsWith(String(saved.digest) + '-'));
+      assert(entry);
+      assert.deepEqual(readFileSync(join(retained,entry,'node_modules/graft-fixture/index.js')),original);
+    }
     ctx.measure('layer_forced_copy_bytes',saved.copied_bytes);
   },
 };
 
-export const cases: Scenario[] = [...jsManagers,cargoCase,uvCase,npmIntegrity,execCase,layerCase];
+const npmRoot: Scenario = {
+  name: 'npm installs in the moved checkout with an empty root and an enclosing package',
+  run(ctx) {
+    required(ctx, 'npm');
+    const fixture = npmArchive(ctx.root);
+    const parent = join(ctx.root, 'enclosing-package');
+    const parentManifest = JSON.stringify({name: 'enclosing', version: '1.0.0', private: true, workspaces: ['*']});
+    put(join(parent, 'package.json'), parentManifest);
+    put(join(parent, 'node_modules', 'sentinel'), 'retained');
+    const names = process.platform === 'win32' ? ['empty', 'declared'] : ['empty', 'declared', 'trailing '];
+    const outside = join(ctx.root, 'external-prefix');
+    ctx.env.npm_config_global = 'true';
+    ctx.env.npm_config_prefix = outside;
+    for (const [index, name] of names.entries()) {
+      const ws = ctx.spawn(`package-${index}`, ['--no-deps']);
+      const path = join(parent, name);
+      ctx.cli(['move', workspaceName(ws), path, '--lease', ws.lease]);
+      if (name === 'declared') {
+        put(join(path, 'package.json'), '{"name":"inside","version":"1.0.0"}');
+      }
+      if (name.endsWith(' ')) {
+        put(join(path.trimEnd(), 'package.json'), '{"name":"sibling","version":"1.0.0"}');
+      }
+      add(ctx, ws, 'npm', [`file:${fixture.path}`], true);
+      assert.equal(readFileSync(join(path, 'node_modules/graft-fixture/index.js'), 'utf8'), 'module.exports = 42;\n');
+      assert(existsSync(join(path, 'package-lock.json')));
+      assert.equal(readFileSync(join(parent, 'package.json'), 'utf8'), parentManifest);
+      assert.deepEqual(readdirSync(join(parent, 'node_modules')), ['sentinel']);
+      assert(!existsSync(join(parent, 'package-lock.json')));
+      assert(!existsSync(outside));
+      if (name.endsWith(' ')) {
+        assert.deepEqual(readdirSync(path.trimEnd()), ['package.json']);
+        assert.equal(readFileSync(join(path.trimEnd(), 'package.json'), 'utf8'), '{"name":"sibling","version":"1.0.0"}');
+      }
+    }
+  },
+};
+
+export const cases: Scenario[] = [...jsManagers,cargoCase,uvCase,npmIntegrity,npmRoot,execCase,layerCase];

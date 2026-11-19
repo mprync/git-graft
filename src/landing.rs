@@ -1,23 +1,24 @@
 //! Plan an integration using immutable Git objects, then advance the destination.
+mod checkout;
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs, io,
     path::{Path, PathBuf},
     process::Output,
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::{
     api::{Land, fault},
-    git::{self, checked_oid, symbolic_ref},
+    git::{self, checked_oid, common_dir, symbolic_ref},
     reconcile, recovery, registry,
 };
 
 /// The caller records this before applying it so a retry uses the same commit.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Plan {
     pub target: String,
     pub old: String,
@@ -102,10 +103,154 @@ fn dirty(path: &Path) -> Result<bool> {
         .any(|change| change.status != "!!"))
 }
 
-fn merged_tree(repo: &Path, state: &Path, old: &str, tip: &str, options: &Land) -> Result<String> {
-    let output = git::raw(
-        repo,
+fn partially_staged(paths: impl IntoIterator<Item = impl AsRef<[u8]>>) -> anyhow::Error {
+    let paths: Vec<_> = paths
+        .into_iter()
+        .map(|path| String::from_utf8_lossy(path.as_ref()).into_owned())
+        .collect();
+    fault(
+        "partially_staged",
+        "Commit or unstage the existing staged version before using land --commit",
+        json!({"paths": paths}),
+    )
+}
+
+fn reject_partially_staged(workspace: &Path) -> Result<BTreeSet<Vec<u8>>> {
+    let status = git::bytes(
+        workspace,
         &[
+            "--no-optional-locks",
+            "-c",
+            "core.fsmonitor=false",
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+            "--no-renames",
+            "--ignore-submodules=none",
+        ],
+    )?;
+    let mut staged = BTreeSet::new();
+    let mut untracked = Vec::new();
+    let mut conflicts = BTreeSet::new();
+    for entry in status
+        .split(|byte| *byte == 0)
+        .filter(|row| !row.is_empty())
+    {
+        let [index, worktree, b' ', path @ ..] = entry else {
+            bail!("malformed Git status record");
+        };
+        match [*index, *worktree] {
+            [b'?', b'?'] => untracked.push(path),
+            [b'!', b'!'] | [b' ', _] => (),
+            [_, b' '] => {
+                staged.insert(path);
+            }
+            _ => {
+                conflicts.insert(path);
+            }
+        }
+    }
+    for path in untracked {
+        if staged.contains(path) {
+            conflicts.insert(path);
+            continue;
+        }
+        for (offset, _) in path.iter().enumerate().filter(|(_, byte)| **byte == b'/') {
+            if staged.contains(&path[..offset]) {
+                conflicts.insert(&path[..offset]);
+            }
+        }
+    }
+    if !conflicts.is_empty() {
+        return Err(partially_staged(conflicts));
+    }
+    Ok(staged.into_iter().map(<[u8]>::to_vec).collect())
+}
+
+fn index_entries(bytes: &[u8]) -> Result<BTreeMap<&[u8], &[u8]>> {
+    bytes
+        .split(|byte| *byte == 0)
+        .filter(|row| !row.is_empty())
+        .map(|row| {
+            let tab = row
+                .iter()
+                .position(|byte| *byte == b'\t')
+                .context("malformed Git index record")?;
+            Ok((&row[tab + 1..], &row[..tab]))
+        })
+        .collect()
+}
+
+fn stage_workspace(workspace: &Path) -> Result<()> {
+    let admin = git::absolute_git_dir(workspace)?;
+    let _lock = checkout::IndexLock::create(
+        admin.join("index.lock"),
+        format!("git-graft staging {}\n", uuid::Uuid::new_v4()),
+    )?;
+    git::check_idle_with_locks(workspace, true, false)?;
+    let staged = reject_partially_staged(workspace)?;
+    let index = admin.join("index");
+    let temporary = tempfile::tempdir_in(&admin)?;
+    let next = temporary.path().join("index");
+    if let Some(original) = checkout::index_bytes(&index)? {
+        registry::atomic(&next, &original)?;
+    }
+    let before = if staged.is_empty() {
+        Vec::new()
+    } else {
+        git::bytes(workspace, &["ls-files", "--stage", "-z"])?
+    };
+    let private_index = || {
+        let mut command = git::command(workspace);
+        command.env("GIT_INDEX_FILE", &next).args([
+            "--no-replace-objects",
+            "-c",
+            "core.splitIndex=false",
+        ]);
+        command
+    };
+    let output = private_index()
+        .args(["add", "--sparse", "-A", "--", ":/"])
+        .output()?;
+    if !output.status.success() {
+        return Err(git_failure("stage workspace changes", &output));
+    }
+    if !staged.is_empty() {
+        let original = index_entries(&before)?;
+        let output = private_index()
+            .args(["ls-files", "--stage", "-z"])
+            .output()?;
+        if !output.status.success() {
+            return Err(git_failure(
+                "verify previously staged workspace paths",
+                &output,
+            ));
+        }
+        let updated = index_entries(&output.stdout)?;
+        let changed: Vec<_> = staged
+            .iter()
+            .filter(|path| original.get(path.as_slice()) != updated.get(path.as_slice()))
+            .collect();
+        if !changed.is_empty() {
+            return Err(partially_staged(changed));
+        }
+    }
+    registry::atomic(&index, &registry::regular(&next)?)
+}
+
+fn merged_tree(
+    repo: &Path,
+    objects: &Path,
+    state: &Path,
+    old: &str,
+    tip: &str,
+    options: &Land,
+) -> Result<String> {
+    let mut command = git::command(repo);
+    git::use_private_objects(&mut command, objects);
+    let output = command
+        .args([
             "--no-replace-objects",
             "merge-tree",
             "--write-tree",
@@ -113,8 +258,8 @@ fn merged_tree(repo: &Path, state: &Path, old: &str, tip: &str, options: &Land) 
             "--name-only",
             old,
             tip,
-        ],
-    )?;
+        ])
+        .output()?;
     if !matches!(output.status.code(), Some(0 | 1)) {
         return Err(git_failure("compute landing tree", &output));
     }
@@ -165,7 +310,7 @@ fn merged_tree(repo: &Path, state: &Path, old: &str, tip: &str, options: &Land) 
             .all(|path| matches!(*path, b"package.json" | b"package-lock.json"));
     let mut details = json!({"target": options.into, "paths": paths, "conflicts": conflicts});
     if options.reconcile && eligible {
-        match reconcile::resolve(repo, state, old, tip, tree, &paths) {
+        match reconcile::resolve(repo, Some(objects), state, old, tip, tree, &paths) {
             Ok(resolved) => return Ok(resolved),
             Err(error) => details["reconcile_error"] = json!(format!("{error:#}")),
         }
@@ -177,16 +322,20 @@ fn merged_tree(repo: &Path, state: &Path, old: &str, tip: &str, options: &Land) 
     ))
 }
 
-/// Stage and commit workspace changes only on explicit request, then plan from the two tips.
-pub fn prepare(repo: &Path, worktree: &Path, state: &Path, options: &Land) -> Result<Plan> {
+/// Prepare the exact landing result in a private object database.
+pub(crate) fn prepare_with_import(
+    repo: &Path,
+    workspace: &Path,
+    state: &Path,
+    options: &Land,
+    objects: &Path,
+    import: impl FnOnce(&str, &str) -> Result<()>,
+) -> Result<Plan> {
     let target = options.into.clone();
     let reference = branch_ref(repo, &target)?;
-    if symbolic_ref(worktree, "HEAD")?.as_deref() == Some(reference.as_str()) {
-        bail!("cannot land a workspace into its own branch");
-    }
     let old = branch_tip(repo, &reference)?;
-    git::check_idle(worktree)?;
-    if dirty(worktree)? {
+    git::check_idle(workspace)?;
+    if dirty(workspace)? {
         let message = options
             .commit
             .as_deref()
@@ -194,22 +343,21 @@ pub fn prepare(repo: &Path, worktree: &Path, state: &Path, options: &Land) -> Re
         if message.trim().is_empty() {
             bail!("--commit requires a nonempty commit message");
         }
-        // Stage from the worktree root. Sparse workspaces retain their out-of-cone files.
-        git::bytes(
-            worktree,
-            &["--no-replace-objects", "add", "--sparse", "-A", "--", ":/"],
+        stage_workspace(workspace)?;
+        let output = git::raw(
+            workspace,
+            &["--no-replace-objects", "commit", "-m", message],
         )?;
-        let output = git::raw(worktree, &["--no-replace-objects", "commit", "-m", message])?;
         if !output.status.success() {
             return Err(git_failure("commit workspace changes", &output));
         }
-        git::check_idle(worktree)?;
-        if dirty(worktree)? {
+        git::check_idle(workspace)?;
+        if dirty(workspace)? {
             bail!("workspace still has uncommitted changes after commit");
         }
     }
     let tip = git::text(
-        worktree,
+        workspace,
         &[
             "--no-replace-objects",
             "rev-parse",
@@ -217,12 +365,14 @@ pub fn prepare(repo: &Path, worktree: &Path, state: &Path, options: &Land) -> Re
             "HEAD^{commit}",
         ],
     )?;
-    let new = if is_ancestor(repo, &tip, &old)? {
+    checked_oid(&tip)?;
+    import(&old, &tip)?;
+    let new = if is_ancestor(objects, &tip, &old)? {
         old.clone()
-    } else if !options.squash && is_ancestor(repo, &old, &tip)? {
+    } else if !options.squash && is_ancestor(objects, &old, &tip)? {
         tip.clone()
     } else {
-        let tree = merged_tree(repo, state, &old, &tip, options)?;
+        let tree = merged_tree(repo, objects, state, &old, &tip, options)?;
         let message = if options.squash {
             format!("Squash graft workspace {} into {target}", options.name)
         } else {
@@ -233,8 +383,16 @@ pub fn prepare(repo: &Path, worktree: &Path, state: &Path, options: &Land) -> Re
             args.extend(["-p", &tip]);
         }
         args.extend(["-m", &message]);
-        git::text(repo, &args)?
+        let mut command = git::command(repo);
+        git::use_private_objects(&mut command, objects);
+        let output = command.args(args).output()?;
+        if !output.status.success() {
+            return Err(git_failure("create landing commit", &output));
+        }
+        let oid = String::from_utf8(output.stdout)?;
+        oid.trim_end().to_owned()
     };
+    checked_oid(&new)?;
     Ok(Plan {
         target,
         old,
@@ -256,14 +414,6 @@ fn config(repo: &Path, args: &[&str]) -> Result<Option<String>> {
     }
 }
 
-fn common_dir(repo: &Path) -> Result<PathBuf> {
-    Ok(Path::new(&git::text(
-        repo,
-        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    )?)
-    .canonicalize()?)
-}
-
 fn marker(admin: &Path, name: &str) -> Result<Option<String>> {
     match fs::read_to_string(admin.join(name)) {
         Ok(value) => Ok(Some(value)),
@@ -272,57 +422,46 @@ fn marker(admin: &Path, name: &str) -> Result<Option<String>> {
     }
 }
 
-fn check_branch_operations(repo: &Path, reference: &str) -> Result<()> {
-    // A rebasing/bisecting worktree can have a detached HEAD. Git still treats
-    // its operation's branch (and rebase --update-refs destinations) as in use.
-    let common = common_dir(repo)?;
-    let mut admins = vec![common.clone()];
-    match fs::read_dir(common.join("worktrees")) {
-        Ok(entries) => {
-            for entry in entries {
-                let entry = entry?;
-                if entry.file_type()?.is_dir() {
-                    admins.push(entry.path());
-                }
-            }
-        }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => (),
-        Err(error) => return Err(error.into()),
-    }
-    for admin in admins {
-        for name in [
-            "rebase-merge/head-name",
-            "rebase-apply/head-name",
-            "BISECT_START",
-        ] {
-            if let Some(value) = marker(&admin, name)? {
+// Rebase and bisect can hold a branch even while the checkout has a detached HEAD.
+pub(crate) fn check_admin_branch_operations(admin: &Path, reference: &str) -> Result<()> {
+    for name in [
+        "rebase-merge/head-name",
+        "rebase-apply/head-name",
+        "BISECT_START",
+    ] {
+        if let Some(value) = marker(admin, name)?
+            && {
                 let value = value.trim_end_matches(['\n', '\r']);
-                if value == reference || reference.strip_prefix("refs/heads/") == Some(value) {
-                    bail!("destination is in use by an unfinished Git operation: {reference}");
-                }
+                value.eq_ignore_ascii_case(reference)
+                    || reference
+                        .strip_prefix("refs/heads/")
+                        .is_some_and(|branch| value.eq_ignore_ascii_case(branch))
             }
-        }
-        if let Some(value) = marker(&admin, "rebase-merge/update-refs")?
-            && value.lines().step_by(3).any(|line| line == reference)
         {
             bail!("destination is in use by an unfinished Git operation: {reference}");
         }
     }
+    if let Some(value) = marker(admin, "rebase-merge/update-refs")?
+        && value
+            .lines()
+            .step_by(3)
+            .any(|line| line.eq_ignore_ascii_case(reference))
+    {
+        bail!("destination is in use by an unfinished Git operation: {reference}");
+    }
     Ok(())
 }
 
-fn check_destination(repo: &Path, path: &Path) -> Result<()> {
+fn check_destination(admin: &Path, path: &Path, locks_held: bool) -> Result<()> {
     registry::owned_directory(path).context("registered destination was replaced")?;
     let root = git::text(path, &["rev-parse", "--show-toplevel"])?;
-    if Path::new(&root).canonicalize()? != path.canonicalize()?
-        || common_dir(path)? != common_dir(repo)?
-    {
+    if dunce::canonicalize(&root)? != path || git::absolute_git_dir(path)? != admin {
         bail!(
             "registered destination no longer points to this repository: {}",
             path.display()
         );
     }
-    git::check_idle(path)?;
+    git::check_idle_with_locks(path, locks_held, locks_held)?;
     if config(
         path,
         &["config", "--type=bool", "--get", "core.sparseCheckout"],
@@ -331,130 +470,274 @@ fn check_destination(repo: &Path, path: &Path) -> Result<()> {
         == Some("true")
     {
         bail!(
-            "refusing to change sparse destination worktree: {}",
+            "refusing to change sparse destination checkout: {}",
             path.display()
         );
     }
-    if dirty(path)? {
-        bail!("destination worktree has local changes: {}", path.display());
-    }
+    ensure!(
+        git::text(path, &["rev-parse", "--shared-index-path"])?.is_empty(),
+        "switch away from the destination branch or disable its split index before retrying"
+    );
     Ok(())
 }
 
-fn apply_in_worktree(repo: &Path, path: &Path, reference: &str, plan: &Plan) -> Result<()> {
-    check_destination(repo, path)?;
-    let mut ref_lock = common_dir(repo)?.join(reference).into_os_string();
-    ref_lock.push(".lock");
-    if registry::exists(Path::new(&ref_lock))? {
-        bail!("destination branch is locked: {}", plan.target);
-    }
-    let key = format!("branch.{}.mergeOptions", plan.target);
-    let override_options = format!("{key}=");
-    let mut args = vec![
-        "--no-replace-objects",
-        "-c",
-        "core.fsmonitor=false",
-        "-c",
-        "maintenance.auto=false",
-    ];
-    // Some branch options can override FF-only, or even request an abort/quit.
-    // The first '=' in '-c name=value' is the separator, so use it only for safe keys.
-    if !key.contains('=') {
-        args.extend(["-c", &override_options]);
-    } else if config(path, &["config", "--get", &key])?
-        .is_some_and(|value| !value.trim().is_empty())
-    {
-        bail!(
-            "cannot suppress custom merge options for destination branch {}",
-            plan.target
-        );
-    }
-    args.extend([
-        "merge",
-        "--ff-only",
-        "--strategy=ort",
-        "--no-overwrite-ignore",
-        "--no-autostash",
-        "--no-edit",
-        "--",
-        &plan.new,
-    ]);
-
-    // The caller serializes graft operations. External Git commands can still change
-    // checkout occupancy or HEAD between these checks and the native Git commands.
-    if symbolic_ref(path, "HEAD")?.as_deref() != Some(reference)
-        || branch_tip(repo, reference)? != plan.old
-    {
-        bail!(
-            "destination branch or tip changed after landing was planned: {}",
-            plan.target
-        );
-    }
-    let output = git::raw(path, &args)?;
-    if !output.status.success() {
-        // Git checks out the new tree before updating the ref. A late ref-lock
-        // failure or rejection from a reference-transaction hook can leave the
-        // destination files/index ahead of its ref. Leave both for inspection.
-        return Err(git_failure("fast-forward destination worktree", &output))
-            .with_context(|| format!("inspect Git status in {} before retrying", path.display()));
-    }
+fn verify_ref_locks(admin: &Path, reference: &str, format: &str) -> Result<()> {
+    let lock_is_file = |path: &Path| -> Result<bool> {
+        let metadata = fs::symlink_metadata(path)?;
+        Ok(metadata.is_file() && !registry::is_reparse_point(&metadata))
+    };
+    let held = match format {
+        "files" => {
+            let mut branch = admin.join(reference).into_os_string();
+            branch.push(".lock");
+            lock_is_file(&admin.join("HEAD.lock"))? && lock_is_file(Path::new(&branch))?
+        }
+        "reftable" => lock_is_file(&admin.join("reftable").join("tables.list.lock"))?,
+        _ => false,
+    };
+    ensure!(
+        held,
+        "Git did not hold the required checkout reference locks"
+    );
     Ok(())
 }
 
-/// Apply a persisted plan, including retries after later commits on the destination.
-pub fn apply(repo: &Path, plan: &Plan) -> Result<()> {
+#[derive(PartialEq, Eq)]
+enum PrimaryHead {
+    Symbolic(String),
+    Detached(String),
+}
+
+impl PrimaryHead {
+    fn read(repo: &Path) -> Result<Option<Self>> {
+        match git::text(repo, &["rev-parse", "--is-bare-repository"])?.as_str() {
+            "true" => Ok(None),
+            "false" => match symbolic_ref(repo, "HEAD")? {
+                Some(reference) => {
+                    git::bytes(repo, &["check-ref-format", &reference])?;
+                    Ok(Some(Self::Symbolic(reference)))
+                }
+                None => Ok(Some(Self::Detached(git::oid(repo, "HEAD")?))),
+            },
+            _ => bail!("cannot determine whether the destination repository is bare"),
+        }
+    }
+
+    fn verification(&self) -> String {
+        match self {
+            Self::Symbolic(reference) => {
+                format!("option no-deref\nsymref-verify HEAD {reference}\n")
+            }
+            Self::Detached(oid) => format!("option no-deref\nverify HEAD {oid}\n"),
+        }
+    }
+}
+
+fn apply_in_checkout(
+    path: &Path,
+    admin: &Path,
+    plan: &Plan,
+    objects: Option<&Path>,
+    pending: Option<checkout::Update>,
+    check_occupancy: impl Fn() -> Result<()>,
+    publish: impl FnOnce() -> Result<()>,
+) -> Result<()> {
+    let reference = format!("refs/heads/{}", plan.target);
+    let format = git::text(path, &["rev-parse", "--show-ref-format"])?;
+    if !matches!(format.as_str(), "files" | "reftable") {
+        return Err(fault(
+            "checkout_update_unsupported",
+            "Switch away from the destination branch and retry the operation",
+            json!({"target":plan.target,"ref_format":format}),
+        ));
+    }
+
+    let retrying = pending.is_some();
+    if !retrying {
+        check_destination(admin, path, false)?;
+    }
+    let mut pending = match pending {
+        Some(update) => update,
+        None => checkout::Update::begin(admin, plan)?,
+    };
+    let result = (|| -> Result<()> {
+        let _index = pending.acquire_index(admin, retrying)?;
+        // Updating through the symbolic reference makes Git hold both HEAD
+        // and its referent. A separate symref-verify and branch update is
+        // rejected as two updates to HEAD by both native ref backends.
+        let edits = format!("update HEAD {} {}\n", plan.new, plan.old);
+        recovery::transaction_with_objects(path, &edits, Some("git graft land"), objects, || {
+            check_occupancy()?;
+            if symbolic_ref(path, "HEAD")?.as_deref() != Some(reference.as_str())
+                || branch_tip(path, &reference)? != plan.old
+            {
+                bail!(
+                    "destination branch or tip changed after landing was planned: {}",
+                    plan.target
+                );
+            }
+            verify_ref_locks(admin, &reference, &format)?;
+            check_destination(admin, path, true)?;
+            pending.update_index_and_files(path, admin, objects, || {
+                publish()?;
+                check_occupancy()
+            })?;
+            check_occupancy()
+        })
+    })();
+    if let Err(error) = result {
+        if pending.has_mutated_checkout() {
+            return Err(pending.recovery_required(format!("{error:#}")));
+        }
+        pending.clear(admin)?;
+        return Err(error);
+    }
+    pending.clear(admin)?;
+
+    // A native fast-forward invokes post-merge after the index and ref are in
+    // place. As with Git, this hook cannot reject or reverse an applied update.
+    let _ = git::raw(
+        path,
+        &["hook", "run", "--ignore-missing", "post-merge", "--", "0"],
+    );
+    Ok(())
+}
+
+pub(crate) fn apply_with_destination(
+    repo: &Path,
+    plan: &Plan,
+    object_repo: &Path,
+    destination: impl Fn(&str, bool) -> Result<Option<PathBuf>>,
+    publish: impl FnOnce() -> Result<()>,
+) -> Result<()> {
     let reference = branch_ref(repo, &plan.target)?;
     checked_oid(&plan.old)?;
     checked_oid(&plan.new)?;
+    let admin = common_dir(repo)?;
+    let pending = checkout::Update::load(&admin)?;
+    if let Some(update) = &pending {
+        update.matches(plan)?;
+    }
     let current = branch_tip(repo, &reference)?;
-    if !is_ancestor(repo, &plan.old, &plan.new)? {
+    if !is_ancestor(object_repo, &plan.old, &plan.new)? {
         bail!("landing plan does not fast-forward {}", plan.target);
     }
-    if is_ancestor(repo, &plan.new, &current)? {
+    if plan.new == plan.old
+        || (current != plan.old
+            && git::oid(repo, &plan.new).is_ok()
+            && is_ancestor(repo, &plan.new, &current)?)
+    {
+        if let Some(update) = pending {
+            ensure!(
+                update.finished_index(),
+                update.recovery_required("the checkout index was not finalized")
+            );
+            update.clear(&admin)?;
+        }
         return Ok(());
     }
     if current != plan.old {
+        if let Some(update) = pending {
+            return Err(
+                update.recovery_required("the destination branch moved during checkout recovery")
+            );
+        }
         bail!(
             "destination tip changed after landing was planned: {}",
             plan.target
         );
     }
 
-    check_branch_operations(repo, &reference)?;
-    let worktrees = git::worktrees(repo)?;
-    let mut destinations = worktrees
-        .iter()
-        .filter(|tree| !tree.bare && tree.branch.as_deref() == Some(reference.as_str()));
-    if let Some(destination) = destinations.next() {
-        if destinations.next().is_some() {
-            bail!(
-                "destination is checked out in multiple worktrees: {}",
-                plan.target
-            );
-        }
-        if destination.locked {
-            bail!(
-                "destination worktree is locked: {}",
-                destination.path.display()
-            );
-        }
-        apply_in_worktree(repo, &destination.path, &reference, plan)?;
+    let objects = if dunce::canonicalize(object_repo)? == dunce::canonicalize(repo)? {
+        None
     } else {
-        // A no-deref CAS can accept a symbolic ref whose referent has the
-        // expected OID. Check the exact branch again under Git's prepared lock.
-        let edits = format!(
-            "option no-deref\nupdate {reference} {} {}\n",
-            plan.new, plan.old
-        );
-        recovery::transaction(repo, &edits, Some("git graft land"), || {
-            if branch_tip(repo, &reference)? != plan.old {
-                bail!(
-                    "destination tip changed after landing was planned: {}",
+        Some(dunce::canonicalize(git::text(
+            object_repo,
+            &[
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-path",
+                "objects",
+            ],
+        )?)?)
+    };
+    if let Some(path) = destination(&reference, false)? {
+        apply_in_checkout(
+            &path,
+            &admin,
+            plan,
+            objects.as_deref(),
+            pending,
+            || {
+                ensure!(
+                    destination(&reference, true)?.as_ref() == Some(&path),
+                    "destination checkout changed after landing was planned: {}",
                     plan.target
                 );
-            }
-            Ok(())
-        })?;
+                Ok(())
+            },
+            publish,
+        )?;
+    } else {
+        if let Some(update) = pending {
+            return Err(
+                update.recovery_required("the destination is no longer checked out in the primary")
+            );
+        }
+        // Hold the primary HEAD as well as the exact destination branch.
+        // Otherwise an unchecked destination could become the primary's
+        // checked-out branch just before the ref-only update commits.
+        let head = PrimaryHead::read(repo)?;
+        let format = if head.is_some() {
+            let format = git::text(repo, &["rev-parse", "--show-ref-format"])?;
+            ensure!(
+                matches!(format.as_str(), "files" | "reftable"),
+                "cannot lock the primary checkout with ref format {format}; retry with current Git"
+            );
+            Some(format)
+        } else {
+            None
+        };
+        let verify = head
+            .as_ref()
+            .map_or_else(String::new, PrimaryHead::verification);
+        let edits = format!(
+            "{verify}option no-deref\nupdate {reference} {} {}\n",
+            plan.new, plan.old
+        );
+        recovery::transaction_with_objects(
+            repo,
+            &edits,
+            Some("git graft land"),
+            objects.as_deref(),
+            || {
+                if let Some(format) = &format {
+                    verify_ref_locks(&admin, &reference, format)?;
+                    ensure!(
+                        PrimaryHead::read(repo)? == head,
+                        "primary checkout HEAD changed after landing was planned"
+                    );
+                }
+                if branch_tip(repo, &reference)? != plan.old {
+                    bail!(
+                        "destination tip changed after landing was planned: {}",
+                        plan.target
+                    );
+                }
+                ensure!(
+                    destination(&reference, head.is_some())?.is_none(),
+                    "destination was checked out after landing was planned: {}",
+                    plan.target
+                );
+                publish()?;
+                ensure!(
+                    destination(&reference, head.is_some())?.is_none(),
+                    "destination was checked out while preparing the landing: {}",
+                    plan.target
+                );
+                Ok(())
+            },
+        )?;
     }
     let current = branch_tip(repo, &reference)?;
     if !is_ancestor(repo, &plan.new, &current)? {
@@ -466,560 +749,31 @@ pub fn apply(repo: &Path, plan: &Plan) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::api::Fault;
-
-    fn run(path: &Path, args: &[&str]) -> String {
-        git::text(path, args).unwrap_or_else(|error| panic!("git {args:?}: {error:#}"))
-    }
-
-    fn commit(path: &Path, message: &str) -> String {
-        run(path, &["add", "-A"]);
-        run(path, &["commit", "-m", message]);
-        run(path, &["rev-parse", "HEAD"])
-    }
-
-    fn write(path: &Path, file: &str, value: &str) {
-        fs::write(path.join(file), value).unwrap();
-    }
-
-    struct Fixture {
-        root: tempfile::TempDir,
-        repo: PathBuf,
-        source: PathBuf,
-        base: String,
-        options: Land,
-    }
-
-    impl Fixture {
-        fn new() -> Self {
-            let root = tempfile::tempdir().unwrap();
-            let repo = root.path().join("repo");
-            let source = root.path().join("workspace with spaces");
-            fs::create_dir(&repo).unwrap();
-            run(&repo, &["init", "-b", "main"]);
-            for (key, value) in [
-                ("user.name", "Test"),
-                ("user.email", "test@example.invalid"),
-                ("core.autocrlf", "false"),
-                ("commit.gpgsign", "false"),
-                (
-                    "core.hooksPath",
-                    root.path().join("hooks").to_str().unwrap(),
-                ),
-            ] {
-                run(&repo, &["config", key, value]);
-            }
-            write(&repo, "base.txt", "base\n");
-            let base = commit(&repo, "initial");
-            run(
-                &repo,
-                &[
-                    "worktree",
-                    "add",
-                    "-b",
-                    "graft/task",
-                    source.to_str().unwrap(),
-                ],
-            );
-            let options = Land {
-                name: "task".into(),
-                lease: "test".into(),
-                into: "main".into(),
-                squash: false,
-                commit: None,
-                discard_ignored: false,
-                reconcile: false,
-            };
-            Self {
-                root,
-                repo,
-                source,
-                base,
-                options,
-            }
-        }
-
-        fn plan(&self) -> Result<Plan> {
-            prepare(
-                &self.repo,
-                &self.source,
-                &self.root.path().join("state"),
-                &self.options,
-            )
-        }
-    }
-
-    #[test]
-    fn applies_fast_forward_and_retries_as_noop() {
-        let fixture = Fixture::new();
-        let no_change = fixture.plan().unwrap();
-        assert_eq!(no_change.old, no_change.new);
-        apply(&fixture.repo, &no_change).unwrap();
-
-        write(&fixture.source, "feature.txt", "feature\n");
-        let tip = commit(&fixture.source, "feature");
-        let plan = fixture.plan().unwrap();
-        assert_eq!(plan.old, fixture.base);
-        assert_eq!(plan.new, tip);
-        assert_eq!(plan.tip, tip);
-        assert!(!fixture.repo.join("feature.txt").exists());
-        apply(&fixture.repo, &plan).unwrap();
-        assert_eq!(
-            fs::read_to_string(fixture.repo.join("feature.txt")).unwrap(),
-            "feature\n"
-        );
-        assert_eq!(run(&fixture.repo, &["rev-parse", "HEAD"]), tip);
-        apply(&fixture.repo, &plan).unwrap();
-
-        write(&fixture.repo, "later.txt", "later\n");
-        let later = commit(&fixture.repo, "later");
-        apply(&fixture.repo, &plan).unwrap();
-        assert_eq!(run(&fixture.repo, &["rev-parse", "HEAD"]), later);
-    }
-
-    #[test]
-    fn creates_real_merge_or_squash_and_resumes_persisted_plan() {
-        for squash in [false, true] {
-            let mut fixture = Fixture::new();
-            fixture.options.squash = squash;
-            write(&fixture.repo, "ours.txt", "ours\n");
-            let old = commit(&fixture.repo, "ours");
-            write(&fixture.source, "theirs.txt", "theirs\n");
-            let tip = commit(&fixture.source, "theirs");
-            let plan = fixture.plan().unwrap();
-            assert_eq!(plan.old, old);
-            assert_eq!(plan.tip, tip);
-            let parents = run(&fixture.repo, &["show", "-s", "--format=%P", &plan.new]);
-            assert_eq!(
-                parents,
-                if squash {
-                    old.clone()
-                } else {
-                    format!("{old} {tip}")
-                }
-            );
-            let persisted = serde_json::to_string(&plan).unwrap();
-            let resumed: Plan = serde_json::from_str(&persisted).unwrap();
-            apply(&fixture.source, &resumed).unwrap();
-            apply(&fixture.source, &resumed).unwrap();
-            assert_eq!(run(&fixture.repo, &["rev-parse", "HEAD"]), plan.new);
-            for file in ["ours.txt", "theirs.txt"] {
-                assert!(fixture.repo.join(file).is_file());
-            }
-            assert_eq!(run(&fixture.repo, &["status", "--porcelain"]), "");
-        }
-    }
-
-    #[test]
-    fn refuses_dirty_and_ignored_collisions_even_with_merge_config() {
-        let fixture = Fixture::new();
-        write(&fixture.source, "collision.txt", "landed\n");
-        commit(&fixture.source, "feature");
-        let plan = fixture.plan().unwrap();
-        run(&fixture.repo, &["config", "merge.autostash", "true"]);
-        run(&fixture.repo, &["config", "merge.ff", "false"]);
-        run(
-            &fixture.repo,
-            &["config", "branch.main.mergeOptions", "--abort"],
-        );
-
-        write(&fixture.repo, "base.txt", "keep tracked edit\n");
-        assert!(
-            apply(&fixture.repo, &plan)
-                .unwrap_err()
-                .to_string()
-                .contains("local changes")
-        );
-        assert_eq!(
-            fs::read_to_string(fixture.repo.join("base.txt")).unwrap(),
-            "keep tracked edit\n"
-        );
-        write(&fixture.repo, "base.txt", "base\n");
-
-        write(&fixture.repo, "collision.txt", "keep untracked file\n");
-        assert!(
-            apply(&fixture.repo, &plan)
-                .unwrap_err()
-                .to_string()
-                .contains("local changes")
-        );
-        write(
-            &fixture.repo,
-            ".git/info/exclude",
-            "collision.txt\nnoncollision.txt\n",
-        );
-        let error = format!("{:#}", apply(&fixture.repo, &plan).unwrap_err());
-        assert!(error.contains("collision.txt"), "{error}");
-        assert_eq!(run(&fixture.repo, &["rev-parse", "HEAD"]), fixture.base);
-        assert_eq!(
-            fs::read_to_string(fixture.repo.join("collision.txt")).unwrap(),
-            "keep untracked file\n"
-        );
-
-        fs::rename(
-            fixture.repo.join("collision.txt"),
-            fixture.repo.join("noncollision.txt"),
-        )
-        .unwrap();
-        apply(&fixture.repo, &plan).unwrap();
-        assert_eq!(
-            fs::read_to_string(fixture.repo.join("noncollision.txt")).unwrap(),
-            "keep untracked file\n"
-        );
-        assert_eq!(
-            fs::read_to_string(fixture.repo.join("collision.txt")).unwrap(),
-            "landed\n"
+pub(crate) fn require_no_pending_checkout(repo: &Path, plan: &Plan) -> Result<()> {
+    if let Some(update) = checkout::Update::load(&common_dir(repo)?)?
+        && update.is_for(plan)
+    {
+        return Err(
+            update.recovery_required("resume the checkout update before dropping the workspace")
         );
     }
+    Ok(())
+}
 
-    #[test]
-    fn finds_locked_sparse_and_busy_destination_in_linked_checkout() {
-        let mut fixture = Fixture::new();
-        fixture.options.into = "target".into();
-        let target = fixture.root.path().join("destination with spaces");
-        let target_arg = target.to_str().unwrap();
-        run(
-            &fixture.repo,
-            &["worktree", "add", "-b", "target", target_arg],
+/// Clear only an indexed journal whose result is already in the branch history.
+pub(crate) fn finish_applied_checkout(repo: &Path, plan: &Plan) -> Result<()> {
+    let admin = common_dir(repo)?;
+    if let Some(update) = checkout::Update::load(&admin)?
+        && update.is_for(plan)
+    {
+        let reference = branch_ref(repo, &plan.target)?;
+        checked_oid(&plan.new)?;
+        let current = branch_tip(repo, &reference)?;
+        ensure!(
+            update.finished_index() && is_ancestor(repo, &plan.new, &current)?,
+            update.recovery_required("the checkout index or destination has not finalized")
         );
-        write(&fixture.source, "feature.txt", "feature\n");
-        commit(&fixture.source, "feature");
-        let plan = fixture.plan().unwrap();
-
-        run(&fixture.repo, &["worktree", "lock", target_arg]);
-        assert!(
-            apply(&fixture.repo, &plan)
-                .unwrap_err()
-                .to_string()
-                .contains("locked")
-        );
-        run(&fixture.repo, &["worktree", "unlock", target_arg]);
-        run(&target, &["sparse-checkout", "set", "subdirectory"]);
-        assert!(
-            apply(&fixture.repo, &plan)
-                .unwrap_err()
-                .to_string()
-                .contains("sparse")
-        );
-        run(&target, &["sparse-checkout", "disable"]);
-
-        let admin = PathBuf::from(run(&target, &["rev-parse", "--absolute-git-dir"]));
-        write(&admin, "MERGE_HEAD", &plan.tip);
-        let error = apply(&fixture.repo, &plan).unwrap_err();
-        assert_eq!(error.downcast_ref::<Fault>().unwrap().code, "git_busy");
-        fs::remove_file(admin.join("MERGE_HEAD")).unwrap();
-        apply(&fixture.repo, &plan).unwrap();
-        assert_eq!(run(&target, &["rev-parse", "HEAD"]), plan.new);
-        assert!(target.join("feature.txt").is_file());
-        assert_eq!(run(&fixture.repo, &["rev-parse", "HEAD"]), fixture.base);
+        update.clear(&admin)?;
     }
-
-    #[test]
-    fn refuses_unexpected_ref_for_unchecked_branch_and_retries_cas() {
-        let mut fixture = Fixture::new();
-        fixture.options.into = "target".into();
-        run(&fixture.repo, &["branch", "target"]);
-        write(&fixture.source, "feature.txt", "feature\n");
-        commit(&fixture.source, "feature");
-        let plan = fixture.plan().unwrap();
-
-        write(&fixture.repo, "other.txt", "other\n");
-        let other = commit(&fixture.repo, "other");
-        run(
-            &fixture.repo,
-            &["update-ref", "refs/heads/target", &other, &plan.old],
-        );
-        assert!(
-            apply(&fixture.source, &plan)
-                .unwrap_err()
-                .to_string()
-                .contains("tip changed")
-        );
-        assert_eq!(
-            run(&fixture.repo, &["rev-parse", "refs/heads/target"]),
-            other
-        );
-
-        let revised = fixture.plan().unwrap();
-        apply(&fixture.source, &revised).unwrap();
-        apply(&fixture.source, &revised).unwrap();
-        assert_eq!(
-            run(&fixture.repo, &["rev-parse", "refs/heads/target"]),
-            revised.new
-        );
-        assert_eq!(run(&fixture.repo, &["rev-parse", "HEAD"]), other);
-        assert!(!fixture.repo.join("feature.txt").exists());
-    }
-
-    #[test]
-    fn bare_invocation_updates_the_registered_checkout() {
-        let fixture = Fixture::new();
-        write(&fixture.source, "feature.txt", "feature\n");
-        let tip = commit(&fixture.source, "feature");
-        let bare = fixture.root.path().join("bare");
-        run(
-            fixture.root.path(),
-            &[
-                "clone",
-                "--bare",
-                fixture.repo.to_str().unwrap(),
-                bare.to_str().unwrap(),
-            ],
-        );
-        let target = fixture.root.path().join("target");
-        let source = fixture.root.path().join("source");
-        run(
-            &bare,
-            &["worktree", "add", target.to_str().unwrap(), "main"],
-        );
-        run(
-            &bare,
-            &["worktree", "add", source.to_str().unwrap(), "graft/task"],
-        );
-        let plan = prepare(
-            &bare,
-            &source,
-            &fixture.root.path().join("state"),
-            &fixture.options,
-        )
-        .unwrap();
-        apply(&bare, &plan).unwrap();
-        assert_eq!(run(&target, &["rev-parse", "HEAD"]), tip);
-        assert!(target.join("feature.txt").is_file());
-        assert_eq!(run(&fixture.repo, &["rev-parse", "HEAD"]), fixture.base);
-    }
-
-    #[test]
-    fn refuses_ref_updates_while_destination_is_detached_for_rebase() {
-        let fixture = Fixture::new();
-        write(&fixture.source, "feature.txt", "feature\n");
-        commit(&fixture.source, "feature");
-        let plan = fixture.plan().unwrap();
-        let admin = PathBuf::from(run(&fixture.repo, &["rev-parse", "--absolute-git-dir"]));
-        run(&fixture.repo, &["switch", "--detach"]);
-        fs::create_dir(admin.join("rebase-merge")).unwrap();
-        write(&admin, "rebase-merge/head-name", "refs/heads/main\n");
-        assert!(
-            apply(&fixture.source, &plan)
-                .unwrap_err()
-                .to_string()
-                .contains("unfinished Git operation")
-        );
-        assert_eq!(
-            run(&fixture.repo, &["rev-parse", "refs/heads/main"]),
-            fixture.base
-        );
-        assert!(!fixture.repo.join("feature.txt").exists());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn preserves_repository_hooks_and_reports_late_git_rejection() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let fixture = Fixture::new();
-        write(&fixture.source, "feature.txt", "feature\n");
-        let tip = commit(&fixture.source, "feature");
-        let plan = fixture.plan().unwrap();
-        let hooks = fixture.root.path().join("hooks");
-        fs::create_dir(&hooks).unwrap();
-        let hook = hooks.join("reference-transaction");
-        fs::write(&hook, "#!/bin/sh\nif [ \"$1\" = prepared ]; then\n  while read -r old new ref; do\n    if [ \"$ref\" = refs/heads/main ]; then\n      echo 'landing fixture rejected the ref transaction' >&2\n      exit 1\n    fi\n  done\nfi\n").unwrap();
-        fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
-        let error = format!("{:#}", apply(&fixture.repo, &plan).unwrap_err());
-        assert!(error.contains("landing fixture rejected the ref transaction"));
-        assert!(error.contains("inspect Git status"));
-        assert_eq!(run(&fixture.repo, &["rev-parse", "HEAD"]), fixture.base);
-        assert_eq!(run(&fixture.source, &["rev-parse", "HEAD"]), tip);
-        assert!(fixture.repo.join("feature.txt").is_file());
-        assert!(
-            apply(&fixture.repo, &plan)
-                .unwrap_err()
-                .to_string()
-                .contains("local changes")
-        );
-    }
-
-    #[test]
-    fn reports_conflict_paths_and_preserves_checkout_and_refs() {
-        let fixture = Fixture::new();
-        let file = "file with spaces.txt";
-        write(&fixture.repo, file, "ours\n");
-        let old = commit(&fixture.repo, "ours");
-        write(&fixture.source, file, "theirs\n");
-        let tip = commit(&fixture.source, "theirs");
-        let error = fixture.plan().unwrap_err();
-        let fault = error.downcast_ref::<Fault>().unwrap();
-        assert_eq!(fault.code, "merge_conflict");
-        assert_eq!(fault.details["paths"], json!([file]));
-        let conflicts = fault.details["conflicts"].as_array().unwrap();
-        assert_eq!(conflicts.len(), 1);
-        assert_eq!(conflicts[0]["type"], "CONFLICT (contents)");
-        assert_eq!(conflicts[0]["paths"], json!([file]));
-        assert_eq!(run(&fixture.repo, &["rev-parse", "HEAD"]), old);
-        assert_eq!(run(&fixture.source, &["rev-parse", "HEAD"]), tip);
-        assert_eq!(
-            fs::read_to_string(fixture.repo.join(file)).unwrap(),
-            "ours\n"
-        );
-        assert_eq!(
-            fs::read_to_string(fixture.source.join(file)).unwrap(),
-            "theirs\n"
-        );
-    }
-
-    #[test]
-    fn commits_workspace_changes_only_on_explicit_request() {
-        let mut fixture = Fixture::new();
-        fs::remove_file(fixture.source.join("base.txt")).unwrap();
-        write(&fixture.source, ".gitignore", "ignored.txt\n");
-        write(&fixture.source, "ignored.txt", "local cache\n");
-        write(&fixture.source, "new.txt", "new workspace file\n");
-        assert!(
-            fixture
-                .plan()
-                .unwrap_err()
-                .to_string()
-                .contains("Commit them first")
-        );
-        assert_eq!(run(&fixture.source, &["rev-parse", "HEAD"]), fixture.base);
-        assert_eq!(
-            run(&fixture.source, &["diff", "--cached", "--name-only"]),
-            ""
-        );
-
-        fixture.options.commit = Some("Workspace changes".into());
-        let plan = fixture.plan().unwrap();
-        assert_eq!(
-            run(&fixture.source, &["show", "-s", "--format=%s", &plan.tip]),
-            "Workspace changes"
-        );
-        assert_eq!(
-            run(&fixture.source, &["ls-tree", "--name-only", "HEAD"]),
-            ".gitignore\nnew.txt"
-        );
-        assert_eq!(
-            fs::read_to_string(fixture.source.join("ignored.txt")).unwrap(),
-            "local cache\n"
-        );
-        assert_eq!(fixture.plan().unwrap().tip, plan.tip);
-    }
-
-    #[test]
-    fn reports_modify_delete_and_rename_delete_without_reconciliation() {
-        for rename in [false, true] {
-            let mut fixture = Fixture::new();
-            fixture.options.reconcile = true;
-            let file = "package.json";
-            let renamed = "renamed.json";
-            write(
-                &fixture.repo,
-                file,
-                "{\"name\":\"fixture\",\"version\":\"1.0.0\"}\n",
-            );
-            let base = commit(&fixture.repo, "add manifest");
-            run(&fixture.source, &["merge", "--ff-only", &base]);
-            fs::remove_file(fixture.repo.join(file)).unwrap();
-            let old = commit(&fixture.repo, "remove manifest");
-            let (kind, paths) = if rename {
-                fs::rename(fixture.source.join(file), fixture.source.join(renamed)).unwrap();
-                ("CONFLICT (rename/delete)", json!([file, renamed]))
-            } else {
-                write(
-                    &fixture.source,
-                    file,
-                    "{\"name\":\"fixture\",\"version\":\"2.0.0\"}\n",
-                );
-                ("CONFLICT (modify/delete)", json!([file]))
-            };
-            let tip = commit(&fixture.source, "change manifest");
-
-            let error = fixture.plan().unwrap_err();
-            let fault = error.downcast_ref::<Fault>().unwrap();
-            assert_eq!(fault.code, "merge_conflict");
-            assert_eq!(fault.details["paths"], paths);
-            let conflicts = fault.details["conflicts"].as_array().unwrap();
-            assert_eq!(conflicts.len(), 1);
-            assert_eq!(conflicts[0]["type"], kind);
-            assert!(conflicts[0]["message"].as_str().unwrap().contains(file));
-            assert!(fault.details.get("reconcile_error").is_none());
-            assert!(!fixture.root.path().join("state").exists());
-            assert_eq!(run(&fixture.repo, &["rev-parse", "HEAD"]), old);
-            assert_eq!(run(&fixture.source, &["rev-parse", "HEAD"]), tip);
-        }
-    }
-
-    #[test]
-    fn reconcile_only_resolves_eligible_conflicts_when_requested() {
-        fn write_packages(path: &Path, package: Option<&str>) {
-            let mut manifest = json!({"name": "fixture", "version": "1.0.0"});
-            let mut lock = json!({
-                "name": "fixture", "version": "1.0.0", "lockfileVersion": 3, "requires": true,
-                "packages": {"": {"name": "fixture", "version": "1.0.0"}}
-            });
-            if let Some(package) = package {
-                let dependencies = json!({package: "1.0.0"});
-                manifest["dependencies"] = dependencies.clone();
-                lock["packages"][""]["dependencies"] = dependencies;
-                lock["packages"][format!("node_modules/{package}")] = json!({
-                    "version": "1.0.0", "resolved": format!("https://registry.npmjs.org/{package}/-/{package}-1.0.0.tgz"),
-                    "integrity": "sha512-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
-                });
-            }
-            write(
-                path,
-                "package.json",
-                &serde_json::to_string_pretty(&manifest).unwrap(),
-            );
-            write(
-                path,
-                "package-lock.json",
-                &serde_json::to_string_pretty(&lock).unwrap(),
-            );
-        }
-
-        let mut fixture = Fixture::new();
-        write_packages(&fixture.repo, None);
-        let base = commit(&fixture.repo, "npm base");
-        run(&fixture.source, &["merge", "--ff-only", &base]);
-        write_packages(&fixture.repo, Some("alpha"));
-        write(&fixture.repo, "ours.txt", "ours\n");
-        commit(&fixture.repo, "ours");
-        write_packages(&fixture.source, Some("beta"));
-        write(&fixture.source, "theirs.txt", "theirs\n");
-        commit(&fixture.source, "theirs");
-
-        let error = fixture.plan().unwrap_err();
-        let fault = error.downcast_ref::<Fault>().unwrap();
-        assert_eq!(fault.code, "merge_conflict");
-        assert_eq!(
-            fault.details["paths"],
-            json!(["package-lock.json", "package.json"])
-        );
-        assert!(!fixture.root.path().join("state").exists());
-
-        fixture.options.reconcile = true;
-        let plan = fixture.plan().unwrap_or_else(|error| {
-            panic!(
-                "{error:#} {}",
-                error
-                    .downcast_ref::<Fault>()
-                    .map(|fault| fault.details.to_string())
-                    .unwrap_or_default()
-            )
-        });
-        apply(&fixture.repo, &plan).unwrap();
-        let manifest: serde_json::Value =
-            serde_json::from_slice(&fs::read(fixture.repo.join("package.json")).unwrap()).unwrap();
-        assert_eq!(
-            manifest["dependencies"],
-            json!({"alpha": "1.0.0", "beta": "1.0.0"})
-        );
-        for file in ["ours.txt", "theirs.txt"] {
-            assert!(fixture.repo.join(file).is_file());
-        }
-    }
+    Ok(())
 }

@@ -1,0 +1,682 @@
+{
+  "schemaVersion": 1,
+  "platform": "darwin",
+  "architecture": "arm64",
+  "node": "v24.5.0",
+  "operatingSystem": {
+    "type": "Darwin",
+    "release": "25.5.0",
+    "version": "Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:15 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T6041"
+  },
+  "resourceObserver": {
+    "tool": "/usr/bin/time",
+    "format": "bsd",
+    "scope": "Per CLI command; user and system CPU seconds and peak RSS. Includes the time wrapper; child accounting is OS-specific and is not simultaneous process-tree memory."
+  },
+  "git": "git version 2.56.0",
+  "binary": {
+    "bytes": 3782384,
+    "sha256": "14d7a90df28888562ed5c912d3bef08d1283ce362289c4787b004e89e7d48144"
+  },
+  "source": {
+    "head": "bc63375ac3a4d6debb1ceb441ae6e22854f0909a",
+    "tree": "ee570b9dbb122c6b6f0f609b83402c1f8eaca195",
+    "packCount": 4,
+    "packBytes": 130939998,
+    "commits": 53716,
+    "hasUnrelatedSourceCommit": true
+  },
+  "preparation": {
+    "templateCloneSeconds": 0.599107166,
+    "method": "local clone --no-hardlinks; source pack layout preserved; no source configuration copied"
+  },
+  "summary": {
+    "native": {
+      "coldSeconds": 0.36087900000000084,
+      "repeatSeconds": 0.36357112450000023,
+      "coldBytes": 32452608,
+      "repeatBytes": 64641024,
+      "advanceBaseSeconds": 0.36314979150000004,
+      "advanceBaseDeltaBytes": 31703040
+    },
+    "graft": {
+      "coldSeconds": 3.8596398544999997,
+      "repeatSeconds": 0.5732636670000002,
+      "coldBytes": 175579136,
+      "repeatBytes": 207310848,
+      "advanceBaseSeconds": 1.5697952290000003,
+      "advanceBaseDeltaBytes": 31850496
+    }
+  },
+  "runs": [
+    {
+      "order": [
+        "native",
+        "graft"
+      ],
+      "results": {
+        "native": {
+          "cloneSeconds": 0.5360872919999999,
+          "cold": {
+            "seconds": 0.4142165829999999,
+            "resources": {
+              "userSeconds": 0.06,
+              "systemSeconds": 0.3,
+              "peakRssBytes": 52379648
+            },
+            "bytesSincePopulatedCheckout": "31334400"
+          },
+          "repeat": {
+            "seconds": 0.394486625,
+            "resources": {
+              "userSeconds": 0.05,
+              "systemSeconds": 0.29,
+              "peakRssBytes": 52068352
+            },
+            "bytesSincePopulatedCheckout": "65130496"
+          },
+          "advanceBase": {
+            "head": "73a700d99706046b1e36786b8014bf7ae16d5209",
+            "tree": "4441712f94eca9b2dc47a82c3959a0e4c696034a",
+            "preparationSeconds": 0.20324862500000018,
+            "seconds": 0.690434334,
+            "resources": {
+              "userSeconds": 0.06,
+              "systemSeconds": 0.54,
+              "peakRssBytes": 51953664
+            },
+            "deltaBytes": "33308672"
+          }
+        },
+        "graft": {
+          "cloneSeconds": 0.4912571249999992,
+          "cold": {
+            "seconds": 3.8884741249999997,
+            "resources": {
+              "userSeconds": 8.45,
+              "systemSeconds": 1.26,
+              "peakRssBytes": 301826048
+            },
+            "bytesSincePopulatedCheckout": "199688192",
+            "sourceStorage": {
+              "backend": "git",
+              "cloned_files": 0,
+              "cloned_bytes": 0,
+              "private_files": 3318,
+              "private_bytes": 20536136,
+              "primary_reused_files": 0,
+              "primary_reused_bytes": 0,
+              "snapshot_reused": false
+            },
+            "objectBootstrap": {
+              "method": "clonefile",
+              "source": "local-export",
+              "object_format": "sha1",
+              "bytes": 157536599,
+              "pack_bytes": 147119655,
+              "index_bytes": 10416944,
+              "shared_bytes": 157536599,
+              "cache_bytes": 157536599,
+              "pack_count": 6,
+              "reused_primary_packs": 2,
+              "reused_primary_bytes": 16063956,
+              "timings": {
+                "cache_publish_seconds": 0.193748125,
+                "reachability_seconds": 0.763581,
+                "transfer_seconds": 1.42162525,
+                "verify_seconds": 0.87045775,
+                "total_seconds": 3.32260175
+              }
+            }
+          },
+          "repeat": {
+            "seconds": 0.59897775,
+            "resources": {
+              "userSeconds": 0.2,
+              "systemSeconds": 0.61,
+              "peakRssBytes": 26411008
+            },
+            "bytesSincePopulatedCheckout": "211394560",
+            "sourceStorage": {
+              "backend": "git",
+              "cloned_files": 0,
+              "cloned_bytes": 0,
+              "private_files": 3318,
+              "private_bytes": 20536136,
+              "primary_reused_files": 0,
+              "primary_reused_bytes": 0,
+              "snapshot_reused": false
+            },
+            "objectBootstrap": {
+              "method": "clonefile",
+              "source": "cache",
+              "object_format": "sha1",
+              "bytes": 157536599,
+              "pack_bytes": 147119655,
+              "index_bytes": 10416944,
+              "shared_bytes": 157536599,
+              "cache_bytes": 0,
+              "pack_count": 6,
+              "timings": {
+                "cache_seconds": 0.041520667,
+                "total_seconds": 0.121896709
+              }
+            }
+          },
+          "advanceBase": {
+            "head": "73a700d99706046b1e36786b8014bf7ae16d5209",
+            "tree": "4441712f94eca9b2dc47a82c3959a0e4c696034a",
+            "preparationSeconds": 0.176157416,
+            "seconds": 1.5609232079999984,
+            "resources": {
+              "userSeconds": 1.02,
+              "systemSeconds": 0.64,
+              "peakRssBytes": 102285312
+            },
+            "deltaBytes": "32641024",
+            "sourceStorage": {
+              "backend": "git",
+              "cloned_files": 0,
+              "cloned_bytes": 0,
+              "private_files": 3319,
+              "private_bytes": 20536157,
+              "primary_reused_files": 0,
+              "primary_reused_bytes": 0,
+              "snapshot_reused": false
+            },
+            "objectBootstrap": {
+              "method": "clonefile",
+              "source": "ancestor-cache",
+              "object_format": "sha1",
+              "bytes": 157538954,
+              "pack_bytes": 147120854,
+              "index_bytes": 10418100,
+              "shared_bytes": 157538954,
+              "cache_bytes": 157538954,
+              "pack_count": 7,
+              "new_pack_count": 1,
+              "ancestor": "bc63375ac3a4d6debb1ceb441ae6e22854f0909a",
+              "timings": {
+                "ancestor_seconds": 0.848417042,
+                "cache_publish_seconds": 0.192346292,
+                "total_seconds": 1.11120575
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "order": [
+        "graft",
+        "native"
+      ],
+      "results": {
+        "graft": {
+          "cloneSeconds": 0.5831871250000004,
+          "cold": {
+            "seconds": 3.8308055839999997,
+            "resources": {
+              "userSeconds": 8.35,
+              "systemSeconds": 1.19,
+              "peakRssBytes": 301957120
+            },
+            "bytesSincePopulatedCheckout": "170872832",
+            "sourceStorage": {
+              "backend": "git",
+              "cloned_files": 0,
+              "cloned_bytes": 0,
+              "private_files": 3318,
+              "private_bytes": 20536136,
+              "primary_reused_files": 0,
+              "primary_reused_bytes": 0,
+              "snapshot_reused": false
+            },
+            "objectBootstrap": {
+              "method": "clonefile",
+              "source": "local-export",
+              "object_format": "sha1",
+              "bytes": 157536599,
+              "pack_bytes": 147119655,
+              "index_bytes": 10416944,
+              "shared_bytes": 157536599,
+              "cache_bytes": 157536599,
+              "pack_count": 6,
+              "reused_primary_packs": 2,
+              "reused_primary_bytes": 16063956,
+              "timings": {
+                "cache_publish_seconds": 0.184220167,
+                "reachability_seconds": 0.74173975,
+                "transfer_seconds": 1.419574791,
+                "verify_seconds": 0.879132667,
+                "total_seconds": 3.288901667
+              }
+            }
+          },
+          "repeat": {
+            "seconds": 0.6610059999999975,
+            "resources": {
+              "userSeconds": 0.21,
+              "systemSeconds": 0.9,
+              "peakRssBytes": 26361856
+            },
+            "bytesSincePopulatedCheckout": "199344128",
+            "sourceStorage": {
+              "backend": "git",
+              "cloned_files": 0,
+              "cloned_bytes": 0,
+              "private_files": 3318,
+              "private_bytes": 20536136,
+              "primary_reused_files": 0,
+              "primary_reused_bytes": 0,
+              "snapshot_reused": false
+            },
+            "objectBootstrap": {
+              "method": "clonefile",
+              "source": "cache",
+              "object_format": "sha1",
+              "bytes": 157536599,
+              "pack_bytes": 147119655,
+              "index_bytes": 10416944,
+              "shared_bytes": 157536599,
+              "cache_bytes": 0,
+              "pack_count": 6,
+              "timings": {
+                "cache_seconds": 0.037518375,
+                "total_seconds": 0.11133775
+              }
+            }
+          },
+          "advanceBase": {
+            "head": "73a700d99706046b1e36786b8014bf7ae16d5209",
+            "tree": "4441712f94eca9b2dc47a82c3959a0e4c696034a",
+            "preparationSeconds": 0.10129691699999967,
+            "seconds": 1.5786672500000023,
+            "resources": {
+              "userSeconds": 1.02,
+              "systemSeconds": 0.64,
+              "peakRssBytes": 101580800
+            },
+            "deltaBytes": "31617024",
+            "sourceStorage": {
+              "backend": "git",
+              "cloned_files": 0,
+              "cloned_bytes": 0,
+              "private_files": 3319,
+              "private_bytes": 20536157,
+              "primary_reused_files": 0,
+              "primary_reused_bytes": 0,
+              "snapshot_reused": false
+            },
+            "objectBootstrap": {
+              "method": "clonefile",
+              "source": "ancestor-cache",
+              "object_format": "sha1",
+              "bytes": 157538954,
+              "pack_bytes": 147120854,
+              "index_bytes": 10418100,
+              "shared_bytes": 157538954,
+              "cache_bytes": 157538954,
+              "pack_count": 7,
+              "new_pack_count": 1,
+              "ancestor": "bc63375ac3a4d6debb1ceb441ae6e22854f0909a",
+              "timings": {
+                "ancestor_seconds": 0.838136791,
+                "cache_publish_seconds": 0.193795,
+                "total_seconds": 1.118958208
+              }
+            }
+          }
+        },
+        "native": {
+          "cloneSeconds": 0.4817334579999988,
+          "cold": {
+            "seconds": 0.38540429199999926,
+            "resources": {
+              "userSeconds": 0.05,
+              "systemSeconds": 0.26,
+              "peakRssBytes": 52248576
+            },
+            "bytesSincePopulatedCheckout": "32161792"
+          },
+          "repeat": {
+            "seconds": 0.36088633299999856,
+            "resources": {
+              "userSeconds": 0.05,
+              "systemSeconds": 0.26,
+              "peakRssBytes": 52477952
+            },
+            "bytesSincePopulatedCheckout": "63401984"
+          },
+          "advanceBase": {
+            "head": "73a700d99706046b1e36786b8014bf7ae16d5209",
+            "tree": "4441712f94eca9b2dc47a82c3959a0e4c696034a",
+            "preparationSeconds": 0.18189337499999966,
+            "seconds": 0.36095195799999785,
+            "resources": {
+              "userSeconds": 0.05,
+              "systemSeconds": 0.27,
+              "peakRssBytes": 51855360
+            },
+            "deltaBytes": "31772672"
+          }
+        }
+      }
+    },
+    {
+      "order": [
+        "native",
+        "graft"
+      ],
+      "results": {
+        "native": {
+          "cloneSeconds": 0.45646416699999826,
+          "cold": {
+            "seconds": 0.333619749999998,
+            "resources": {
+              "userSeconds": 0.05,
+              "systemSeconds": 0.25,
+              "peakRssBytes": 52477952
+            },
+            "bytesSincePopulatedCheckout": "32743424"
+          },
+          "repeat": {
+            "seconds": 0.3662559160000019,
+            "resources": {
+              "userSeconds": 0.05,
+              "systemSeconds": 0.26,
+              "peakRssBytes": 52232192
+            },
+            "bytesSincePopulatedCheckout": "64536576"
+          },
+          "advanceBase": {
+            "head": "73a700d99706046b1e36786b8014bf7ae16d5209",
+            "tree": "4441712f94eca9b2dc47a82c3959a0e4c696034a",
+            "preparationSeconds": 0.18478345900000204,
+            "seconds": 0.32505820799999857,
+            "resources": {
+              "userSeconds": 0.05,
+              "systemSeconds": 0.25,
+              "peakRssBytes": 51740672
+            },
+            "deltaBytes": "27148288"
+          }
+        },
+        "graft": {
+          "cloneSeconds": 0.5240772079999988,
+          "cold": {
+            "seconds": 3.7727859590000006,
+            "resources": {
+              "userSeconds": 8.29,
+              "systemSeconds": 1.2,
+              "peakRssBytes": 301940736
+            },
+            "bytesSincePopulatedCheckout": "174546944",
+            "sourceStorage": {
+              "backend": "git",
+              "cloned_files": 0,
+              "cloned_bytes": 0,
+              "private_files": 3318,
+              "private_bytes": 20536136,
+              "primary_reused_files": 0,
+              "primary_reused_bytes": 0,
+              "snapshot_reused": false
+            },
+            "objectBootstrap": {
+              "method": "clonefile",
+              "source": "local-export",
+              "object_format": "sha1",
+              "bytes": 157536599,
+              "pack_bytes": 147119655,
+              "index_bytes": 10416944,
+              "shared_bytes": 157536599,
+              "cache_bytes": 157536599,
+              "pack_count": 6,
+              "reused_primary_packs": 2,
+              "reused_primary_bytes": 16063956,
+              "timings": {
+                "cache_publish_seconds": 0.190990375,
+                "reachability_seconds": 0.750863125,
+                "transfer_seconds": 1.362284625,
+                "verify_seconds": 0.873629375,
+                "total_seconds": 3.233909375
+              }
+            }
+          },
+          "repeat": {
+            "seconds": 0.521197750000003,
+            "resources": {
+              "userSeconds": 0.2,
+              "systemSeconds": 0.57,
+              "peakRssBytes": 26411008
+            },
+            "bytesSincePopulatedCheckout": "206200832",
+            "sourceStorage": {
+              "backend": "git",
+              "cloned_files": 0,
+              "cloned_bytes": 0,
+              "private_files": 3318,
+              "private_bytes": 20536136,
+              "primary_reused_files": 0,
+              "primary_reused_bytes": 0,
+              "snapshot_reused": false
+            },
+            "objectBootstrap": {
+              "method": "clonefile",
+              "source": "cache",
+              "object_format": "sha1",
+              "bytes": 157536599,
+              "pack_bytes": 147119655,
+              "index_bytes": 10416944,
+              "shared_bytes": 157536599,
+              "cache_bytes": 0,
+              "pack_count": 6,
+              "timings": {
+                "cache_seconds": 0.036724542,
+                "total_seconds": 0.10343975
+              }
+            }
+          },
+          "advanceBase": {
+            "head": "73a700d99706046b1e36786b8014bf7ae16d5209",
+            "tree": "4441712f94eca9b2dc47a82c3959a0e4c696034a",
+            "preparationSeconds": 0.08068349999999919,
+            "seconds": 1.5387277079999986,
+            "resources": {
+              "userSeconds": 1.02,
+              "systemSeconds": 0.67,
+              "peakRssBytes": 101498880
+            },
+            "deltaBytes": "31698944",
+            "sourceStorage": {
+              "backend": "git",
+              "cloned_files": 0,
+              "cloned_bytes": 0,
+              "private_files": 3319,
+              "private_bytes": 20536157,
+              "primary_reused_files": 0,
+              "primary_reused_bytes": 0,
+              "snapshot_reused": false
+            },
+            "objectBootstrap": {
+              "method": "clonefile",
+              "source": "ancestor-cache",
+              "object_format": "sha1",
+              "bytes": 157538954,
+              "pack_bytes": 147120854,
+              "index_bytes": 10418100,
+              "shared_bytes": 157538954,
+              "cache_bytes": 157538954,
+              "pack_count": 7,
+              "new_pack_count": 1,
+              "ancestor": "bc63375ac3a4d6debb1ceb441ae6e22854f0909a",
+              "timings": {
+                "ancestor_seconds": 0.845019667,
+                "cache_publish_seconds": 0.183641584,
+                "total_seconds": 1.095534084
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "order": [
+        "graft",
+        "native"
+      ],
+      "results": {
+        "graft": {
+          "cloneSeconds": 0.4701190410000054,
+          "cold": {
+            "seconds": 3.8954863750000004,
+            "resources": {
+              "userSeconds": 8.36,
+              "systemSeconds": 1.19,
+              "peakRssBytes": 301907968
+            },
+            "bytesSincePopulatedCheckout": "176611328",
+            "sourceStorage": {
+              "backend": "git",
+              "cloned_files": 0,
+              "cloned_bytes": 0,
+              "private_files": 3318,
+              "private_bytes": 20536136,
+              "primary_reused_files": 0,
+              "primary_reused_bytes": 0,
+              "snapshot_reused": false
+            },
+            "objectBootstrap": {
+              "method": "clonefile",
+              "source": "local-export",
+              "object_format": "sha1",
+              "bytes": 157536599,
+              "pack_bytes": 147119655,
+              "index_bytes": 10416944,
+              "shared_bytes": 157536599,
+              "cache_bytes": 157536599,
+              "pack_count": 6,
+              "reused_primary_packs": 2,
+              "reused_primary_bytes": 16063956,
+              "timings": {
+                "cache_publish_seconds": 0.223804917,
+                "reachability_seconds": 0.751200375,
+                "transfer_seconds": 1.440070583,
+                "verify_seconds": 0.881469042,
+                "total_seconds": 3.364599541
+              }
+            }
+          },
+          "repeat": {
+            "seconds": 0.5475495840000003,
+            "resources": {
+              "userSeconds": 0.2,
+              "systemSeconds": 0.58,
+              "peakRssBytes": 26427392
+            },
+            "bytesSincePopulatedCheckout": "208420864",
+            "sourceStorage": {
+              "backend": "git",
+              "cloned_files": 0,
+              "cloned_bytes": 0,
+              "private_files": 3318,
+              "private_bytes": 20536136,
+              "primary_reused_files": 0,
+              "primary_reused_bytes": 0,
+              "snapshot_reused": false
+            },
+            "objectBootstrap": {
+              "method": "clonefile",
+              "source": "cache",
+              "object_format": "sha1",
+              "bytes": 157536599,
+              "pack_bytes": 147119655,
+              "index_bytes": 10416944,
+              "shared_bytes": 157536599,
+              "cache_bytes": 0,
+              "pack_count": 6,
+              "timings": {
+                "cache_seconds": 0.036294667,
+                "total_seconds": 0.1089685
+              }
+            }
+          },
+          "advanceBase": {
+            "head": "73a700d99706046b1e36786b8014bf7ae16d5209",
+            "tree": "4441712f94eca9b2dc47a82c3959a0e4c696034a",
+            "preparationSeconds": 0.08314716699999554,
+            "seconds": 1.6015106250000026,
+            "resources": {
+              "userSeconds": 1.02,
+              "systemSeconds": 0.77,
+              "peakRssBytes": 102121472
+            },
+            "deltaBytes": "32002048",
+            "sourceStorage": {
+              "backend": "git",
+              "cloned_files": 0,
+              "cloned_bytes": 0,
+              "private_files": 3319,
+              "private_bytes": 20536157,
+              "primary_reused_files": 0,
+              "primary_reused_bytes": 0,
+              "snapshot_reused": false
+            },
+            "objectBootstrap": {
+              "method": "clonefile",
+              "source": "ancestor-cache",
+              "object_format": "sha1",
+              "bytes": 157538954,
+              "pack_bytes": 147120854,
+              "index_bytes": 10418100,
+              "shared_bytes": 157538954,
+              "cache_bytes": 157538954,
+              "pack_count": 7,
+              "new_pack_count": 1,
+              "ancestor": "bc63375ac3a4d6debb1ceb441ae6e22854f0909a",
+              "timings": {
+                "ancestor_seconds": 0.841609083,
+                "cache_publish_seconds": 0.193190292,
+                "total_seconds": 1.110818584
+              }
+            }
+          }
+        },
+        "native": {
+          "cloneSeconds": 0.46380399999999644,
+          "cold": {
+            "seconds": 0.33635370800000236,
+            "resources": {
+              "userSeconds": 0.05,
+              "systemSeconds": 0.25,
+              "peakRssBytes": 52232192
+            },
+            "bytesSincePopulatedCheckout": "33382400"
+          },
+          "repeat": {
+            "seconds": 0.33626933299999656,
+            "resources": {
+              "userSeconds": 0.05,
+              "systemSeconds": 0.27,
+              "peakRssBytes": 52363264
+            },
+            "bytesSincePopulatedCheckout": "64745472"
+          },
+          "advanceBase": {
+            "head": "73a700d99706046b1e36786b8014bf7ae16d5209",
+            "tree": "4441712f94eca9b2dc47a82c3959a0e4c696034a",
+            "preparationSeconds": 0.13206708399999478,
+            "seconds": 0.3653476250000022,
+            "resources": {
+              "userSeconds": 0.05,
+              "systemSeconds": 0.27,
+              "peakRssBytes": 51937280
+            },
+            "deltaBytes": "31633408"
+          }
+        }
+      }
+    }
+  ],
+  "scope": "Each round starts from a fresh sanitized populated clone with a cold Graft object cache. First and repeat time the full CLI process including object bootstrap; clone preparation is separate. With --advance-base, a one-file descendant commit advances the disposable primary branch and HEAD; third-workspace timing and commit preparation are reported separately. Signed statfs deltas are volume-wide. Optional APFS scans are separately timed and can warm caches; run without scans for timing. APFS excludes metadata, forks and xattrs. Unrelated commit refusal is checked outside timing. No fixed performance threshold."
+}

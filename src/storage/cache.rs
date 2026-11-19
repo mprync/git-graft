@@ -52,7 +52,7 @@ pub(super) fn key(state: &Path, create: bool) -> Result<Key> {
 /// Git owns the tracked mode. A cached inode also has size and change-time
 /// constraints, so an edit, rename, chmod, xattr or hardlink invalidates it.
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct Stamp {
+pub(super) struct Stamp {
     device: u64,
     inode: u64,
     size: u64,
@@ -169,6 +169,7 @@ struct Manifest {
 pub(super) struct Snapshot {
     source: Root,
     manifest: Manifest,
+    signature: [u8; 32],
 }
 
 impl Snapshot {
@@ -195,7 +196,11 @@ impl Snapshot {
         );
         let source = root.nested(Path::new(TREE))?;
         check_inventory(&source, manifest.records.iter().map(|record| &record.entry))?;
-        Ok(Self { source, manifest })
+        Ok(Self {
+            source,
+            manifest,
+            signature,
+        })
     }
 
     pub(super) fn verify(&self) -> Result<()> {
@@ -222,16 +227,27 @@ impl Snapshot {
     pub(super) fn publish(
         temporary: &Path,
         base: &Path,
-        entries: &[Entry],
+        entries: &[&Entry],
+        verified_primary: &BTreeMap<&[u8], Stamp>,
         secret: &Key,
         oid: &str,
         settings: &str,
     ) -> Result<Self> {
         let root = Root::open(&temporary.join(TREE))?;
-        check_inventory(&root, entries.iter())?;
+        check_inventory(&root, entries.iter().copied())?;
         let records = entries
             .iter()
-            .map(|entry| Record::capture(&root, entry))
+            .map(|entry| {
+                let record = Record::capture(&root, entry)?;
+                // Sign the same inode and metadata that backed the byte check.
+                if let Some(verified) = verified_primary.get(entry.name.as_slice()) {
+                    ensure!(
+                        matches!(&record.data, Content::Regular(stamp) if stamp == verified),
+                        "primary clone changed after verification"
+                    );
+                }
+                Ok(record)
+            })
             .collect::<Result<Vec<_>>>()?;
         let manifest = Manifest {
             commit: oid.into(),
@@ -243,12 +259,14 @@ impl Snapshot {
             .write(true)
             .create_new(true)
             .open(temporary.join(MANIFEST))?;
-        file.write_all(blake3::keyed_hash(secret, &payload).as_bytes())?;
+        let signature = *blake3::keyed_hash(secret, &payload).as_bytes();
+        file.write_all(&signature)?;
         file.write_all(&payload)?;
         native::rename_new(temporary, base)?;
         Ok(Self {
             source: root,
             manifest,
+            signature,
         })
     }
 }
@@ -281,31 +299,167 @@ fn check_inventory<'a>(root: &Root, entries: impl Iterator<Item = &'a Entry>) ->
 
 /// A whole commit directory can be retired only when every child is a trusted,
 /// unchanged generation. An empty directory carries no ownership evidence.
-pub(super) fn owned_base(path: &Path) -> Result<()> {
-    let oid = path
-        .file_name()
-        .and_then(OsStr::to_str)
-        .context("invalid source snapshot commit")?;
+pub(super) fn verify_base(path: &Path, state: &Path, oid: &str) -> Result<Vec<[u8; 32]>> {
     crate::git::checked_oid(oid)?;
-    let state = path
-        .parent()
-        .and_then(Path::parent)
-        .context("missing source cache state")?;
     let secret = key(state, false)?;
     let root = Root::open(path)?;
+    check_reclaimable_metadata(path)?;
     let names = root.names(Path::new(""))?;
     ensure!(!names.is_empty(), "empty source snapshot");
+    let mut signatures = Vec::with_capacity(names.len());
     for name in names {
         let settings = name.to_str().context("invalid checkout settings key")?;
         ensure!(
             settings.len() == 64 && settings.bytes().all(|b| b.is_ascii_hexdigit()),
             "invalid checkout settings key"
         );
-        Snapshot::load(&path.join(&name), &secret, oid, settings)?.verify()?;
+        let location = path.join(&name);
+        let generation = Snapshot::load(&location, &secret, oid, settings)?;
+        generation.verify()?;
+        check_reclaimable_metadata(&location)?;
+        check_reclaimable_metadata(&location.join(MANIFEST))?;
+        let tree = tree(&location);
+        let mut directories = BTreeSet::from([Path::new("")]);
+        for record in generation.records() {
+            let relative = record.entry.path()?;
+            if !record.entry.regular() {
+                check_reclaimable_metadata(&tree.join(relative))?;
+            }
+            for parent in relative.ancestors().skip(1) {
+                if !directories.insert(parent) {
+                    break;
+                }
+            }
+        }
+        for directory in directories {
+            check_reclaimable_metadata(&tree.join(directory))?;
+        }
+        signatures.push(generation.signature);
     }
+    signatures.sort_unstable();
+    Ok(signatures)
+}
+
+// Recorded regular-file stamps already detect metadata edits. Snapshot
+// directories, manifests and symlinks have no such stamp.
+fn check_reclaimable_metadata(path: &Path) -> Result<()> {
+    ensure!(
+        crate::recovery::no_extended_metadata(path),
+        "source snapshot contains extended metadata at {}",
+        path.display()
+    );
     Ok(())
 }
 
 pub(super) fn tree(path: &Path) -> PathBuf {
     path.join(TREE)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detached_snapshot_is_verified_against_its_original_key_and_commit() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let state = dunce::canonicalize(temp.path())?;
+        let secret = key(&state, true)?;
+        let oid = "a".repeat(40);
+        let settings = "b".repeat(64);
+        let commit_dir = state.join("bases").join(&oid);
+        fs::create_dir_all(&commit_dir)?;
+        let staging = state.join("generation");
+        fs::create_dir_all(tree(&staging))?;
+        let entry = Entry {
+            name: b"tracked".to_vec(),
+            blob: "c".repeat(40),
+            mode: 0o100644,
+            size: Some(8),
+        };
+        fs::write(tree(&staging).join(entry.path()?), b"verified")?;
+        Snapshot::publish(
+            &staging,
+            &commit_dir.join(&settings),
+            &[&entry],
+            &BTreeMap::new(),
+            &secret,
+            &oid,
+            &settings,
+        )?;
+        let proof = verify_base(&commit_dir, &state, &oid)?;
+        let quarantine = state.join("detached-snapshot");
+        native::rename_new(&commit_dir, &quarantine)?;
+        assert_eq!(verify_base(&quarantine, &state, &oid)?, proof);
+        assert!(verify_base(&quarantine, &state, &"d".repeat(40)).is_err());
+        let directory = std::ffi::CString::new(quarantine.as_os_str().as_encoded_bytes())?;
+        let attribute = c"user.graft.cache-test";
+        let data = b"user metadata";
+        #[cfg(target_os = "macos")]
+        let assigned = unsafe {
+            libc::setxattr(
+                directory.as_ptr(),
+                attribute.as_ptr(),
+                data.as_ptr().cast(),
+                data.len(),
+                0,
+                0,
+            )
+        };
+        #[cfg(target_os = "linux")]
+        let assigned = unsafe {
+            libc::setxattr(
+                directory.as_ptr(),
+                attribute.as_ptr(),
+                data.as_ptr().cast(),
+                data.len(),
+                0,
+            )
+        };
+        if assigned == 0 {
+            assert!(verify_base(&quarantine, &state, &oid).is_err());
+            #[cfg(target_os = "macos")]
+            let removed = unsafe { libc::removexattr(directory.as_ptr(), attribute.as_ptr(), 0) };
+            #[cfg(target_os = "linux")]
+            let removed = unsafe { libc::removexattr(directory.as_ptr(), attribute.as_ptr()) };
+            assert_eq!(removed, 0);
+        }
+        let changed = tree(&quarantine.join(settings)).join(entry.path()?);
+        fs::write(&changed, b"changed!")?;
+        assert!(verify_base(&quarantine, &state, &oid).is_err());
+        assert_eq!(fs::read(changed)?, b"changed!");
+        Ok(())
+    }
+
+    #[test]
+    fn publication_rejects_a_primary_clone_changed_after_verification() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let directory = dunce::canonicalize(temp.path())?;
+        let generation = directory.join("generation");
+        fs::create_dir_all(tree(&generation))?;
+        let entry = Entry {
+            name: b"tracked".to_vec(),
+            blob: "a".repeat(40),
+            mode: 0o100644,
+            size: Some(8),
+        };
+        let path = tree(&generation).join(entry.path()?);
+        fs::write(&path, b"verified")?;
+        let verified = [(entry.name.as_slice(), Stamp::from(&fs::metadata(&path)?))].into();
+        fs::write(&path, b"changed after verification")?;
+        let base = directory.join("base");
+        let result = Snapshot::publish(
+            &generation,
+            &base,
+            &[&entry],
+            &verified,
+            &[1; 32],
+            &"a".repeat(40),
+            "test-settings",
+        );
+        assert!(
+            matches!(result, Err(error) if error.to_string() == "primary clone changed after verification")
+        );
+        assert!(!base.exists());
+        Ok(())
+    }
 }

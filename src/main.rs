@@ -1,5 +1,6 @@
 //! Entry points for the Git subcommand and the stdio MCP server.
 mod api;
+mod cache;
 mod engine;
 mod git;
 mod landing;
@@ -11,6 +12,7 @@ mod registry;
 mod runtime;
 mod storage;
 mod undo;
+mod workspace;
 
 use std::{path::PathBuf, process::ExitCode};
 
@@ -38,10 +40,16 @@ enum Entry {
         allow_exec: bool,
     },
     #[command(flatten)]
-    Workspace(api::Operation),
+    Workspace(workspace::Command),
 }
 
-fn run(repo: PathBuf, command: Entry) -> anyhow::Result<Option<serde_json::Value>> {
+fn run(repo: PathBuf, mut command: Entry) -> anyhow::Result<Option<serde_json::Value>> {
+    if let Entry::Workspace(
+        workspace::Command::Move { path, .. } | workspace::Command::Repair { path, .. },
+    ) = &mut command
+    {
+        *path = std::path::absolute(&*path)?;
+    }
     #[cfg(windows)]
     let repo = {
         // Windows pins a process's working directory for its lifetime. Release
@@ -54,7 +62,7 @@ fn run(repo: PathBuf, command: Entry) -> anyhow::Result<Option<serde_json::Value
     };
     match command {
         Entry::Mcp { allow_exec } => mcp::serve(repo, allow_exec).map(|_| None),
-        Entry::Workspace(op) => engine::run(&repo, op).map(Some),
+        Entry::Workspace(command) => workspace::run(&repo, command).map(Some),
     }
 }
 

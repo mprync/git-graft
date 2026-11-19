@@ -5,17 +5,20 @@ import { delimiter, join } from 'node:path';
 import { npmArchive } from './dependencies.ts';
 import type { Context, Scenario } from './harness.ts';
 
-function npm(ctx: Context, args: string[], cwd = ctx.repo): void {
-  let exe = 'npm';
+function npmCommand(ctx: Context): [string, string[]] {
   if (process.platform === 'win32') {
     const path = Object.entries(ctx.env).find(([key]) => key.toUpperCase() === 'PATH')?.[1] ?? '';
     const dir = path.split(delimiter).find((entry) =>
       existsSync(join(entry, 'node.exe')) && existsSync(join(entry, 'node_modules/npm/bin/npm-cli.js')));
     if (!dir) ctx.unavailable('npm requires node.exe and adjacent npm-cli.js');
-    exe = join(dir, 'node.exe');
-    args = [join(dir, 'node_modules/npm/bin/npm-cli.js'), ...args];
+    return [join(dir, 'node.exe'), [join(dir, 'node_modules/npm/bin/npm-cli.js')]];
   }
-  const result = ctx.command(exe, args, cwd);
+  return ['npm', []];
+}
+
+function npm(ctx: Context, args: string[], cwd = ctx.repo): void {
+  const [exe, prefix] = npmCommand(ctx);
+  const result = ctx.command(exe, [...prefix,...args], cwd);
   if (result.error && 'code' in result.error && result.error.code === 'ENOENT')
     ctx.unavailable('npm is required for dependency space benchmark');
   assert.equal(result.status, 0, result.error?.message ?? result.stderr);
@@ -74,14 +77,12 @@ export const dependencySpace: Scenario = {
     const nativeCache = join(ctx.root, 'native-cache');
     const graftCache = join(state, 'cache', 'npm');
     mkdirSync(nativeCache, {recursive:true});
-    mkdirSync(graftCache, {recursive:true});
-    // Both variants receive the same content-addressed archive before timing.
+    // Native cache warming is outside the workspace measurement. Graft's cache
+    // is initialized by its runtime after the first measured workspace exists.
     npm(ctx, ['cache','add',fixture.path,'--cache',nativeCache,'--offline']);
-    npm(ctx, ['cache','add',fixture.path,'--cache',graftCache,'--offline']);
     const nativeBlob = cacheBlob(nativeCache, fixture.integrity);
     const graftBlob = cacheBlob(graftCache, fixture.integrity);
-    assert(existsSync(nativeBlob) && existsSync(graftBlob), 'both caches must contain the locked tarball');
-    assert(readFileSync(nativeBlob).equals(readFileSync(graftBlob)), 'warm cache contents differ');
+    assert(existsSync(nativeBlob), 'native cache must contain the locked tarball');
 
     const nativePaths: string[] = [];
     const nativeBefore = disk(ctx);
@@ -98,21 +99,51 @@ export const dependencySpace: Scenario = {
     const graftPaths: string[] = [];
     const receipts: Array<{action:string;backend:unknown;clonedBytes:unknown;copiedBytes:unknown;logicalBytes:unknown}> = [];
     const graftBefore = disk(ctx);
+    const spawnClock = performance.now();
+    const first = ctx.spawn('dependency-graft-0');
+    const firstSpawnSeconds = (performance.now()-spawnClock)/1000;
+    const beforePrime = disk(ctx);
+    const primeClock = performance.now();
+    const [npmExe,npmPrefix] = npmCommand(ctx);
+    const prime = ctx.cli(['exec','dependency-graft-0','--lease',first.lease,'--',npmExe,...npmPrefix,
+      'cache','add',fixture.path,'--offline']);
+    assert.equal(prime.success,true);
+    const cachePrimeSeconds = (performance.now()-primeClock)/1000;
+    const afterPrime = disk(ctx);
+    assert(existsSync(graftBlob), 'Graft cache must contain the locked tarball');
+    assert(readFileSync(nativeBlob).equals(readFileSync(graftBlob)), 'warm cache contents differ');
     const graftClock = performance.now();
+    let mode: 'copy-on-write' | 'copy' = 'copy-on-write';
     for (let i=0; i<count; i++) {
       const name = `dependency-graft-${i}`;
-      const workspace = ctx.spawn(name);
+      const workspace = i === 0 ? first : ctx.spawn(name);
       graftPaths.push(workspace.path);
       if (i === 0) ctx.cli(['add-dep',name,'--lease',workspace.lease,'--manager','npm','--offline']);
       const action = i === 0 ? 'save' : 'restore';
-      const result = ctx.cli(['layer',name,'--lease',workspace.lease,action,'--key','npm-space-fixture-v1']);
-      assert(['copy','copy-on-write','mixed'].includes(String(result.backend)));
+      const args = ['layer',name,'--lease',workspace.lease,action,'--key','npm-space-fixture-v1'];
+      let result: Record<string, unknown>;
+      if (i === 0) {
+        const attempt = ctx.command(ctx.bin, ['--repo',ctx.repo,'--json',...args]);
+        assert.ifError(attempt.error);
+        if (attempt.status === 0) {
+          result = JSON.parse(attempt.stdout);
+          ctx.coverCli('layer');
+        } else {
+          const refusal = JSON.parse(attempt.stderr || attempt.stdout);
+          assert.equal(refusal.code,'cow_unavailable');
+          mode = 'copy';
+          result = ctx.cli([...args,'--copy']);
+        }
+      } else result = ctx.cli([...args,...(mode === 'copy' ? ['--copy'] : [])]);
+      assert.equal(result.backend,mode);
+      if (mode === 'copy-on-write') assert.equal(result.copied_bytes,0);
+      else assert.equal(result.cloned_bytes,0);
       for (const key of ['cloned_bytes','copied_bytes','logical_bytes'])
         assert(typeof result[key] === 'number' && Number.isSafeInteger(result[key]) && result[key] >= 0, `invalid ${key}`);
       assert.equal(Number(result.logical_bytes),Number(result.cloned_bytes)+Number(result.copied_bytes));
       receipts.push({action,backend:result.backend,clonedBytes:result.cloned_bytes,copiedBytes:result.copied_bytes,logicalBytes:result.logical_bytes});
     }
-    const graftSeconds = (performance.now()-graftClock)/1000;
+    const graftSeconds = firstSpawnSeconds+(performance.now()-graftClock)/1000;
     const graftAfter = disk(ctx);
     assert.equal(nativeBefore.filesystem,nativeAfter.filesystem);
     assert.equal(nativeAfter.filesystem,graftAfter.filesystem);
@@ -130,17 +161,20 @@ export const dependencySpace: Scenario = {
       assert.equal(hash(payload(path)),fixture.payloadDigest,'workspace mutation leaked');
 
     const nativeDelta = nativeBefore.free-nativeAfter.free;
-    const graftDelta = graftBefore.free-graftAfter.free;
+    const cachePrimeDelta = beforePrime.free-afterPrime.free;
+    const graftDelta = graftBefore.free-graftAfter.free-cachePrimeDelta;
     const saved = nativeDelta-graftDelta;
     ctx.measure('dependency_space', {
       platform:process.platform, architecture:process.arch,
       filesystem:{typeCode:nativeBefore.filesystem,blockSize:nativeBefore.block.toString(),method:'statfs bfree * bsize'},
       sample:{workspaces:count,fixtureBytes:(mib*1024*1024).toString(),packageDigest:fixture.payloadDigest,
-        caches:'same integrity-verified archive; warmed before either measurement',seedLayerIncluded:true},
+        caches:'same integrity-verified archive; native warmed before measurement, Graft warmed via exec after the charged first spawn; cache preparation time and signed disk delta are excluded from both totals',seedLayerIncluded:true},
       native:{freeBytesBefore:nativeBefore.free.toString(),freeBytesAfter:nativeAfter.free.toString(),
         freeBytesDelta:nativeDelta.toString(),totalSeconds:nativeSeconds},
       graft:{freeBytesBefore:graftBefore.free.toString(),freeBytesAfter:graftAfter.free.toString(),
-        freeBytesDelta:graftDelta.toString(),totalSeconds:graftSeconds,layerTransfers:receipts},
+        freeBytesDelta:graftDelta.toString(),rawFreeBytesDelta:(graftBefore.free-graftAfter.free).toString(),
+        cachePreparation:{seconds:cachePrimeSeconds,freeBytesDelta:cachePrimeDelta.toString()},
+        firstSpawnSeconds,totalSeconds:graftSeconds,selectedLayerMode:mode,layerTransfers:receipts},
       savedBytes:saved.toString(), savedPercent:nativeDelta > 0n ? Number(saved)*100/Number(nativeDelta) : null,
       writeIsolation:true,
       caveat:'Signed volume-wide free-space deltas can include unrelated activity, filesystem metadata, snapshots and delayed allocation; no savings threshold is asserted.',

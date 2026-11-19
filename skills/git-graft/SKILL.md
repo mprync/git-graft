@@ -1,20 +1,13 @@
 ---
 name: git-graft
-description: Work in leased git-graft worktrees through the CLI or MCP server, including retrying a disconnected task, reusing project caches and landing reviewed changes.
+description: Manage an agent task in a Graft workspace through CLI or MCP, including spawn retries, dependency reuse, landing and recovery.
 ---
 
-# Use git-graft for an agent task
+# Use Graft for an agent task
 
-Discover the host's tools. Use `workspace_spawn` with a task name, committed base and a fresh client-generated UUID as `request_id`. Keep that request and its returned lease for retries. Use the returned `worktree_path` for all edits. A reused name can identify a different task instance.
+1. Discover the host's tools. Spawn a workspace at a committed base using a fresh cryptographically random UUIDv4 as `request_id`. The request ID acts as the lease; keep it secret. Keep the request and returned lease for retries; share leases only with trusted local tools and omit them from shared logs. A reused name may identify another task. Use the returned `path` for edits and ordinary Git commands.
+2. Run builds and tests with `workspace_exec` and an argv array when the host enables execution. Check `storage.dependencies.status` before installing packages. An attached shared install is already ready; dependency additions are private to the workspace.
+3. Inspect `workspace_status` and the task's changes before landing. Commit with Git, or supply a commit message only when all nonignored changes belong to the task. Resolve reported conflicts and retry. Ignored files may be user data; use `discard_ignored` only when authorized.
+4. Keep the returned `recovery_lease` private. Archives can retain sensitive user files. Use `workspace_restore` to reopen an archived repository and receive a new active lease. Use `workspace_undo_land` only when asked to reverse the integration; it requires the destination still to point at the recorded landed commit.
 
-Use `workspace_exec` with an argv array for builds and tests. Use `workspace_add_dependency` with an empty package list for a locked installation. The host can choose which execution tools to advertise. Direct commands in the checkout only receive the cache and port settings when run through Graft.
-
-Read `workspace_status` before landing. Inspect both committed path changes and working-tree changes. Supply a commit message to land only when all nonignored local changes belong in the task. An ignored file can be a developer's data. Use `discard_ignored` only when the task permits retirement with these files retained in recovery.
-
-On `merge_conflict`, inspect the reported paths and conflict types. Resolve in the owned worktree and repeat the relevant tests. When the task authorizes landing, pass the original lease and explicit destination. Keep the resulting commit ID. A transport disconnect during land or drop can be retried with the same lease. Verify the filesystem or Git state before repeating an arbitrary child command.
-
-`workspace_busy` means another scoped command holds the lock. A lease mismatch or failed registration check means the name or path no longer proves ownership. Inspect status before proceeding. For long-lived work, renew with `workspace_heartbeat`. Use `workspace_gc` with its preview defaults to inspect eligible cleanup.
-
-Keep each land or drop recovery lease in the task's private state. Use `workspace_restore` to reopen the retired checkout and receive a fresh active lease. Use `workspace_undo_land` only when asked to reverse the integration. It appends a reversal commit if the destination is still at the recorded landed commit. A changed target requires review.
-
-When the host enables `workspace_seed_layer`, seed only an install the user trusts and can attest is relocatable, matches its committed lock and contains no private data. Restore that key through `workspace_layer` in an empty consumer installation path.
+Seed a shared dependency layer only when the user trusts the install and can attest that it is relocatable, matches the committed lockfile, contains no private data and can be reused across source-only edits. Consult [operations](../../docs/operations.md) for dependency and recovery details.

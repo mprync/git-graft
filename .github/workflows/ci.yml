@@ -9,6 +9,18 @@ permissions:
   contents: read
 
 jobs:
+  msrv:
+    name: Rust 1.89 locked build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Rust 1.89
+        run: rustup toolchain install 1.89.0 --profile minimal
+      - name: Build all targets with locked dependencies
+        run: cargo +1.89.0 build --locked --all-targets
+
   verify:
     name: ${{ matrix.id }}
     runs-on: ${{ matrix.runner }}
@@ -47,7 +59,7 @@ jobs:
 
     steps:
       - name: Check out source
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Verify APFS runner volume
         if: matrix.filesystem == 'apfs'
@@ -112,24 +124,24 @@ jobs:
           echo "GIT_GRAFT_TEST_VOLUME=$mount_dir" >> "$GITHUB_ENV"
 
       - name: Set up Node.js 24
-        uses: actions/setup-node@v7.1.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.5.0
           package-manager-cache: false
 
       - name: Set up Python
-        uses: actions/setup-python@v7.1.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: 3.13.0
 
       - name: Set up Bun 1.4.2
-        uses: oven-sh/setup-bun@v2.2.0
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version: 1.4.2
 
       - name: Set up pnpm 11.10.0
         if: matrix.filesystem != 'ntfs'
-        uses: pnpm/action-setup@v6.1.1
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
           version: 11.10.0
           standalone: false
@@ -143,6 +155,10 @@ jobs:
           $archive = Join-Path $env:RUNNER_TEMP 'pnpm-win32-x64.zip'
           $uri = 'https://github.com/pnpm/pnpm/releases/download/v11.10.0/pnpm-win32-x64.zip'
           Invoke-WebRequest -Uri $uri -OutFile $archive
+          # SHA-256 published in the pnpm v11.10.0 GitHub release asset metadata.
+          $expectedHash = 'bb25e88285354cd2510a481859e5695b68f5def16f22e4ffb7aa76a87af4f700'
+          $actualHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash
+          if ($actualHash -ne $expectedHash) { throw "pnpm archive SHA-256 mismatch: $actualHash" }
           Expand-Archive -LiteralPath $archive -DestinationPath $install
           if (-not (Test-Path (Join-Path $install 'pnpm.exe') -PathType Leaf)) { throw 'Archive is missing pnpm.exe' }
           if (-not (Test-Path (Join-Path $install 'dist') -PathType Container)) { throw 'Archive is missing the adjacent dist directory' }
@@ -160,7 +176,7 @@ jobs:
           if ($version -ne '11.10.0') { throw "Expected pnpm 11.10.0; found $version" }
 
       - name: Set up uv 0.11.6
-        uses: astral-sh/setup-uv@v10.3.3
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: 0.11.6
           enable-cache: false
@@ -216,7 +232,12 @@ jobs:
 
       - name: Benchmark two agents starting from one populated checkout
         shell: bash
-        run: npm run bench:workflow
+        run: |
+          if [[ "$GIT_GRAFT_EXPECT_BACKEND" == git ]]; then
+            npm run bench:workflow -- --mode seeded --copy
+          else
+            npm run bench:workflow -- --mode shared --add-package
+          fi
 
       - name: Rust source coverage through the full E2E suite
         shell: bash
@@ -242,7 +263,7 @@ jobs:
 
       - name: Upload this runner's E2E and coverage reports
         if: always()
-        uses: actions/upload-artifact@v7.0.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ matrix.filesystem }}-${{ runner.arch }}-reports
           path: target/e2e/

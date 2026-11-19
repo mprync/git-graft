@@ -1,19 +1,20 @@
 /** Whole-workflow comparison. Run with node e2e/workflow-bench.ts [--bin /path/to/git-graft].
- * Use --mode seeded for releases with seed-layer, or --mode cold for older releases;
+ * Use --mode shared for automatic dependency views, seeded for manual layers,
+ * or cold to include first-workspace dependency installation;
  * --copy forces layer copies. Set GIT_GRAFT_TEST_VOLUME to select the fixture volume.
- * Configure --repeats, --small-files, --large-mib, --dependency-mib and --output.
+ * Configure --repeats, --small-files, --large-mib, --dependency-mib and --output;
+ * --add-package measures an offline additive install in a separate stage.
  * Samples are volume-wide and should be collected on an otherwise quiet volume. */
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, statfsSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, statfsSync, statSync, writeFileSync } from 'node:fs';
 import { basename, delimiter, dirname, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { Context, objectResult } from './harness.ts';
 import { npmArchive } from './dependencies.ts';
+import { objectBootstrap } from './benchmark-receipts.ts';
 
 type Sample = { seconds: number; deltaBytes: string; cumulativeBytes: string; readySeconds?: number; commands: { name: string; seconds: number }[]; receipts: unknown[] };
-type Arm = { stages: Record<string, Sample>; totalSeconds: number; firstReadyIncludingSeedSeconds: number; testOutput: string; validation: string[] };
+type Arm = { stages: Record<string, Sample>; totalSeconds: number; firstReadyIncludingSeedSeconds: number; dependencyMode: string; npmVersion: string; testOutput: string; validation: string[] };
 const args = process.argv.slice(2);
 function option(name: string, fallback?: string): string {
   const index = args.indexOf(`--${name}`);
@@ -26,21 +27,13 @@ function positive(name: string, fallback: string): number {
   assert(Number.isSafeInteger(value) && value > 0, `--${name} must be a positive integer`);
   return value;
 }
-function releaseBinary(): string {
-  const project = fileURLToPath(new URL('../', import.meta.url));
-  const output = execFileSync('cargo',['build','--release','--locked','--bin','git-graft','--message-format=json'],
-    {cwd:project,encoding:'utf8',stdio:['ignore','pipe','inherit']});
-  for (const line of output.trim().split('\n').reverse()) {
-    const entry = objectResult(JSON.parse(line));
-    if (entry.reason === 'compiler-artifact' && typeof entry.executable === 'string') return entry.executable;
-  }
-  throw new Error('Cargo did not report the release executable');
-}
-const bin = resolve(args.includes('--bin') ? option('bin') : process.env.GIT_GRAFT_BIN ?? releaseBinary());
+const bin = resolve(args.includes('--bin') ? option('bin') : process.env.GIT_GRAFT_BIN ??
+  join(import.meta.dirname, '../target/release', process.platform === 'win32' ? 'git-graft.exe' : 'git-graft'));
 assert(existsSync(bin), `Binary does not exist: ${bin}`);
 const mode = option('mode', 'seeded');
-assert(mode === 'cold' || mode === 'seeded', '--mode must be cold or seeded');
+assert(mode === 'cold' || mode === 'seeded' || mode === 'shared', '--mode must be cold, seeded or shared');
 const copy = args.includes('--copy');
+const addPackage = args.includes('--add-package');
 const repeats = positive('repeats', '3');
 const smallFiles = positive('small-files', '400');
 const largeMiB = positive('large-mib', '8');
@@ -78,11 +71,29 @@ function run(arm: 'graft' | 'native', payload: Buffer[], archive: {path:string; 
     };
     const git = (argv: string[], cwd = ctx.repo) => command('git', argv, cwd);
     const npm = (argv: string[], cwd = ctx.repo) => command(npmExe, [...npmPrefix, ...argv], cwd);
+    const npmVersion = npm(['--version']);
     // Git discovers the release executable as its git-graft subcommand.
     const pathKey = Object.keys(ctx.env).find(k => k.toUpperCase() === 'PATH') ?? 'PATH';
     ctx.env[pathKey] = `${dirname(bin)}${delimiter}${ctx.env[pathKey] ?? ''}`;
     assert(/^git-graft(?:\.exe)?$/i.test(bin.split(/[\\/]/).at(-1)!), '--bin must be named git-graft (or git-graft.exe)');
     const graft = (argv: string[]) => objectResult(JSON.parse(git(['graft', '--repo', ctx.repo, '--json', ...argv])));
+    // A filesystem without CoW can still measure the same two-workspace workflow
+    // using explicit layer copies. Only the documented CoW refusal triggers this.
+    let useCopy = copy;
+    let shared = mode === 'shared' && !useCopy;
+    const layerWithFallback = (argv: string[], allowSharedFallback = false) => {
+      const invoke = (args: string[]) => ctx.command('git',['graft','--repo',ctx.repo,'--json',...args],ctx.repo);
+      const attempt = invoke([...argv,...(useCopy ? ['--copy'] : [])]);
+      assert.ifError(attempt.error);
+      if (attempt.status === 0) return objectResult(JSON.parse(attempt.stdout));
+      const refusal = objectResult(JSON.parse(attempt.stderr || attempt.stdout));
+      assert.equal(refusal.code,'cow_unavailable',attempt.stderr);
+      useCopy = true;
+      if (allowSharedFallback) shared = false;
+      const fallback = invoke([...argv.filter(arg => arg !== '--shared'),'--copy']);
+      assert.equal(fallback.status,0,fallback.error?.message ?? fallback.stderr);
+      return objectResult(JSON.parse(fallback.stdout));
+    };
     const manifest = {name:'workflow-fixture',version:'1.0.0',private:true,dependencies:{'graft-fixture':'1.0.0'},scripts:{build:'node build.cjs',test:'node test.cjs'}};
     const lock = {name:manifest.name,version:manifest.version,lockfileVersion:3,requires:true,packages:{'':manifest,'node_modules/graft-fixture':{version:'1.0.0',resolved:'https://127.0.0.1:1/graft-fixture.tgz',integrity:archive.integrity}}};
     write(ctx.repo, 'package.json', JSON.stringify(manifest));
@@ -100,6 +111,15 @@ function run(arm: 'graft' | 'native', payload: Buffer[], archive: {path:string; 
     mkdirSync(cache,{recursive:true});
     npm(['cache','add',archive.path,'--offline','--cache',cache]);
     npm(['ci','--offline','--cache',cache]);
+    // Cold mode primes a separate workspace cache after the first checkout for
+    // each arm. The primary's existing install/cache remain untouched.
+    const workspaceCache = mode === 'cold' ? join(ctx.root,'workspace-npm-cache') : cache;
+    const extra = join(ctx.root,'extra');
+    if (addPackage) {
+      write(extra,'package.json',JSON.stringify({name:'graft-bench-extra',version:'1.0.0',main:'index.js'}));
+      write(extra,'index.js','module.exports = 7;\n');
+      npm(['pack',extra,'--offline','--pack-destination',ctx.root]);
+    }
     const digest = Buffer.from(archive.integrity.slice('sha512-'.length),'base64').toString('hex');
     const cacheBlob = join(cache,'_cacache','content-v2','sha512',digest.slice(0,2),digest.slice(2,4),digest.slice(4));
     const assertOriginalCache = () => assert.equal(createHash('sha512').update(readFileSync(cacheBlob)).digest('hex'),digest,'original npm cache changed');
@@ -126,24 +146,23 @@ function run(arm: 'graft' | 'native', payload: Buffer[], archive: {path:string; 
       const numericKeys = ['cloned_bytes','copied_bytes','logical_bytes','cloned_files','parent_reused_bytes','parent_reused_files','primary_reused_files','primary_reused_bytes','private_files','private_bytes','exit_code'];
       const safeReceipts = receipts.map(value => {
         const item = objectResult(value);
-        const safe: Record<string, number | boolean | string | null> = {};
+        const safe: Record<string, unknown> = {};
         for (const key of numericKeys) if (typeof item[key] === 'number' || item[key] === null) safe[key] = item[key] as number | null;
         for (const key of ['snapshot_reused','success','removed']) if (typeof item[key] === 'boolean') safe[key] = item[key] as boolean;
         if (typeof item.backend === 'string' && ['copy','copy-on-write','mixed','git','native','reflink','clonefile'].includes(item.backend)) safe.backend = item.backend;
         if (typeof item.action === 'string' && ['save','restore','land','drop'].includes(item.action)) safe.action = item.action;
+        if (item.objects && typeof item.objects === 'object' && !Array.isArray(item.objects)) safe.objects = objectBootstrap(item.objects);
         return safe;
       }).filter(item => Object.keys(item).length > 0);
       stages[name] = {seconds,deltaBytes:(previous-after).toString(),cumulativeBytes:(baseline-after).toString(),readySeconds,commands,receipts:safeReceipts};
       previous = after;
     };
     stage('cache-setup', () => {
-      if (arm === 'graft' && mode === 'cold') {
-        receipts.push(timed('git graft doctor', () => graft(['doctor'])));
-        timed('prime project npm cache', () => npm(['cache','add',archive.path,'--offline','--cache',join(ctx.repo,'.git','graft','cache','npm')]));
-      }
+      // In cold mode, each arm primes its workspace cache in the first stage,
+      // after the first checkout has initialized the appropriate runtime.
     });
     stage('seed', () => {
-      if (arm === 'graft' && mode === 'seeded') receipts.push(timed('git graft seed-layer', () => graft(['seed-layer','--key',key,...(copy ? ['--copy'] : [])])));
+      if (arm === 'graft' && mode !== 'cold') receipts.push(timed('git graft seed-layer', () => layerWithFallback(['seed-layer','--key',key,...(shared ? ['--shared'] : [])],true)));
       // Dirty local data is present before either workspace is created.
       write(ctx.repo,'tracked.txt','private tracked edit\n');
       write(ctx.repo,'local.txt','private untracked\n');
@@ -156,16 +175,28 @@ function run(arm: 'graft' | 'native', payload: Buffer[], archive: {path:string; 
       let path: string;
       if (arm === 'graft') {
         const result = timed('git graft spawn', () => graft(['spawn',name]));
-        assert(typeof result.worktree_path === 'string' && typeof result.lease === 'string');
-        path = result.worktree_path; leases.push(result.lease); receipts.push(result.storage);
+        assert(typeof result.path === 'string' && typeof result.lease === 'string');
+        path = result.path; leases.push(result.lease); receipts.push(result.storage);
         if (mode === 'cold' && i === 0) {
+          const primed = timed('git graft exec npm cache add', () => graft(['exec',name,'--lease',result.lease as string,
+            '--',npmExe,...npmPrefix,'cache','add',archive.path,'--offline']));
+          assert.equal(primed.success,true);
+          receipts.push(primed);
           receipts.push(timed('git graft add-dep', () => graft(['add-dep',name,'--lease',result.lease as string,'--manager','npm','--offline'])));
-          receipts.push(timed('git graft layer save', () => graft(['layer',name,'--lease',result.lease as string,'save','--key',key,...(copy ? ['--copy'] : [])])));
-        } else receipts.push(timed('git graft layer restore', () => graft(['layer',name,'--lease',result.lease as string,'restore','--key',key,...(copy ? ['--copy'] : [])])));
+          receipts.push(timed('git graft layer save', () => layerWithFallback(['layer',name,'--lease',result.lease as string,'save','--key',key])));
+        } else if (shared) {
+          const dependency = objectResult(objectResult(result.storage).dependencies);
+          assert.equal(dependency.status,'attached');
+          assert.equal(dependency.action,'restore');
+          assert.equal(dependency.copied_bytes,0);
+          receipts.push(dependency);
+        } else receipts.push(timed('git graft layer restore', () => layerWithFallback(['layer',name,'--lease',result.lease as string,'restore','--key',key])));
       } else {
         path = join(ctx.root,name);
         timed('git worktree add', () => git(['worktree','add','-b',name,path,'main']));
-        timed('npm ci --offline', () => npm(['ci','--offline','--cache',cache],path));
+        if (mode === 'cold' && i === 0)
+          timed('npm cache add', () => npm(['cache','add',archive.path,'--offline','--cache',workspaceCache],path));
+        timed('npm ci --offline', () => npm(['ci','--offline','--cache',workspaceCache],path));
       }
       readySeconds = (performance.now()-readyStart)/1000;
       paths.push(path);
@@ -173,6 +204,27 @@ function run(arm: 'graft' | 'native', payload: Buffer[], archive: {path:string; 
       assert(!existsSync(join(path,'local.txt')) && !existsSync(join(path,'ignored/private.txt')));
       assert.equal(readFileSync(join(path,'node_modules/graft-fixture/index.js'),'utf8'),'module.exports = 42;\n');
     });
+    if (addPackage) {
+      const manifestBytes = readFileSync(join(paths[0],'package.json'));
+      const lockBytes = readFileSync(join(paths[0],'package-lock.json'));
+      const tarball = join(ctx.root,'graft-bench-extra-1.0.0.tgz');
+      stage('add-package', () => {
+        const result = arm === 'graft'
+          ? timed('git graft add-dep package', () => graft(['add-dep','agent-0','--lease',leases[0],'--manager','npm','--offline',tarball]))
+          : (timed('npm install package --offline', () => npm(['install','--offline','--cache',cache,tarball],paths[0])), undefined);
+        if (result) { assert.equal(result.success,true); receipts.push(result); }
+        assert.equal(readFileSync(join(paths[0],'node_modules/graft-bench-extra/index.js'),'utf8'),'module.exports = 7;\n');
+        assert(!existsSync(join(paths[1],'node_modules/graft-bench-extra')));
+        assert(!existsSync(join(ctx.repo,'node_modules/graft-bench-extra')));
+        const dir = join(paths[0],'node_modules/graft-bench-extra');
+        assert(statSync(join(dir,'index.js')).size+statSync(join(dir,'package.json')).size > 0);
+      });
+      stage('add-package-reset', () => {
+        writeFileSync(join(paths[0],'package.json'),manifestBytes);
+        writeFileSync(join(paths[0],'package-lock.json'),lockBytes);
+        rmSync(join(paths[0],'node_modules/graft-bench-extra'),{recursive:true,force:true});
+      });
+    }
     stage('edit-build-test', () => {
       write(paths[0],'node_modules/graft-fixture/index.js','module.exports = 99;\n');
       assert.equal(readFileSync(join(paths[1],'node_modules/graft-fixture/index.js'),'utf8'),'module.exports = 42;\n');
@@ -231,7 +283,8 @@ function run(arm: 'graft' | 'native', payload: Buffer[], archive: {path:string; 
       assertOriginalCache();
     });
     return {stages,totalSeconds:Object.values(stages).reduce((sum,s) => sum+s.seconds,0),
-      firstReadyIncludingSeedSeconds:stages['cache-setup'].seconds+stages.seed.seconds+stages.first.readySeconds!,testOutput,
+      firstReadyIncludingSeedSeconds:stages['cache-setup'].seconds+stages.seed.seconds+stages.first.readySeconds!,
+      dependencyMode:arm === 'native' ? 'npm-install' : shared ? 'shared-layer' : useCopy ? 'copied-layer' : 'manual-layer',npmVersion,testOutput,
       validation:['private data excluded','source and build isolation','build and test passed','landed change','workspace retirement','original local data and install preserved']};
   } finally { ctx.close(); }
 }
@@ -277,10 +330,16 @@ try {
     pairedNativeMinusGraft:median(pairs.map(p=>Number(BigInt(p.native.stages[stage].cumulativeBytes)-BigInt(p.graft.stages[stage].cumulativeBytes)))),
   }]));
   const fs = statfsSync(fixture.root,{bigint:true});
-  const report = {binary:basename(bin),mode,copy,repeats,platform:process.platform,architecture:process.arch,node:process.version,
-    fixture:{smallFiles,largeFiles:3,largeMiB,dependencyMiB,workspaces:2},
+  const executable = readFileSync(bin);
+  const graftBinary = {
+    name: basename(bin),
+    bytes: executable.length,
+    sha256: createHash('sha256').update(executable).digest('hex'),
+  };
+  const report = {binary:basename(bin),graftBinary,mode,copy,addPackage,repeats,platform:process.platform,architecture:process.arch,node:process.version,
+    fixture:{smallFiles,largeFiles:3,largeMiB,dependencyMiB,workspaces:2,...(addPackage ? {addedPackageLogicalBytes:Buffer.byteLength('module.exports = 7;\n')+Buffer.byteLength(JSON.stringify({name:'graft-bench-extra',version:'1.0.0',main:'index.js'})),addPackageCaveat:'This fixture has no peers or transitives; npm version and dependency graph can change which existing packages are replaced.'} : {})},
     filesystem:{typeCode:fs.type.toString(),blockSize:fs.bsize.toString(),method:'statfs bfree * bsize'},
-    methodology:'Independent bootstrapped repositories and npm caches, same source and archive; large files contain independent incompressible data. Baseline follows installation in one checkout and cache warmup. Seeded mode directly charges primary seed; cold mode separately charges initialization and project cache priming, then installs in first workspace and charges layer save. The original warmed cache is preserved. Native installs both workspaces from its warmed cache offline. Source snapshot is cold in both modes. Both land into an unchecked integration branch; native fast-forwards the ref with an expected-old-value check. Dirty primary data remains in place. Readiness includes spawn and dependency preparation; first readiness excludes separately charged setup and seed, while firstReadyIncludingSeedSeconds includes both. Land-drop cumulative bytes show retained storage after retirement, cleanup cumulative bytes show retained storage after cache purge. Volume deltas are signed and include unrelated activity, metadata and delayed allocation. CPU/RSS unavailable portably; command wall time is measured. No savings threshold.',
+    methodology:'Independent bootstrapped repositories and npm caches, same source and archive; large files contain independent incompressible data. Baseline follows installation in one checkout and cache warmup. Shared mode charges one registration and attaches each spawn automatically; seeded mode charges primary seed and manual restores. Cold mode charges each arm for priming a fresh workspace cache after the first checkout; Graft primes its managed cache through exec, then installs and saves a layer. The original warmed cache is preserved. Native installs both workspaces offline from the corresponding cache. Optional add-package measures the same local tarball in each arm without additional base cache priming; a reset stage restores tracked files for the common landing workload. Installed package logical bytes exclude npm cache and metadata. Source snapshot is cold in all modes. Both land into an unchecked integration branch; native fast-forwards the ref with an expected-old-value check. Dirty primary data remains in place. Readiness includes spawn and dependency preparation; first readiness excludes separately charged setup and seed, while firstReadyIncludingSeedSeconds includes both. Land-drop cumulative bytes show retained storage after retirement, cleanup cumulative bytes show retained storage after cache purge. Volume deltas are signed and include unrelated activity, metadata and delayed allocation. CPU/RSS unavailable portably; command wall time is measured. No savings threshold.',
     summary,footprints,firstReadyIncludingSeedSeconds:{graft:median(pairs.map(p=>p.graft.firstReadyIncludingSeedSeconds)),native:median(pairs.map(p=>p.native.firstReadyIncludingSeedSeconds)),pairedNativeMinusGraft:median(pairs.map(p=>p.native.firstReadyIncludingSeedSeconds-p.graft.firstReadyIncludingSeedSeconds))},
     totalSeconds:{graft:median(pairs.map(p=>p.graft.totalSeconds)),native:median(pairs.map(p=>p.native.totalSeconds)),pairedNativeMinusGraft:median(pairs.map(p=>p.native.totalSeconds-p.graft.totalSeconds))},
     totalBytesAfterCleanup:{graft:median(pairs.map(p=>Number(p.graft.stages.cleanup.cumulativeBytes))),native:median(pairs.map(p=>Number(p.native.stages.cleanup.cumulativeBytes))),pairedNativeMinusGraft:median(pairs.map(p=>Number(BigInt(p.native.stages.cleanup.cumulativeBytes)-BigInt(p.graft.stages.cleanup.cumulativeBytes))))},pairs};

@@ -35,14 +35,14 @@ fn open_at(parent: &File, name: &OsStr, flags: libc::c_int) -> io::Result<File> 
     Ok(unsafe { File::from_raw_fd(fd) })
 }
 
-pub(super) struct Root {
+pub(crate) struct Root {
     directory: File,
     device: u64,
     parent: RefCell<Option<(PathBuf, File)>>,
 }
 
 impl Root {
-    pub(super) fn open(path: &Path) -> io::Result<Self> {
+    pub(crate) fn open(path: &Path) -> io::Result<Self> {
         if !path.is_absolute() {
             return Err(invalid("expected an absolute directory"));
         }
@@ -110,7 +110,7 @@ impl Root {
         Ok(directory)
     }
 
-    pub(super) fn names(&self, path: &Path) -> io::Result<Vec<OsString>> {
+    pub(crate) fn names(&self, path: &Path) -> io::Result<Vec<OsString>> {
         // Use a new open description: duplicating the root descriptor would
         // share its directory iteration offset between validations.
         let directory = self.subdirectory(path)?;
@@ -150,6 +150,30 @@ impl Root {
         result
     }
 
+    /// Classify a tree entry relative to a pinned directory without opening
+    /// special files or following symlinks.
+    pub(crate) fn entry_is_directory(&self, path: &Path) -> io::Result<bool> {
+        self.with_parent(path, |parent, name| {
+            let info = stat_at(parent, &CString::new(name.as_bytes())?)?;
+            let kind = info.st_mode & libc::S_IFMT;
+            if kind == libc::S_IFLNK {
+                return Ok(false);
+            }
+            #[cfg(target_os = "macos")]
+            let device = info.st_dev as u64;
+            #[cfg(target_os = "linux")]
+            let device = info.st_dev;
+            if device != self.device {
+                return Err(invalid("mounted entry"));
+            }
+            match kind {
+                libc::S_IFDIR => Ok(true),
+                libc::S_IFREG => Ok(false),
+                _ => Err(invalid("unexpected filesystem entry")),
+            }
+        })
+    }
+
     pub(super) fn regular(&self, path: &Path) -> io::Result<File> {
         self.regular_metadata(path).map(|(file, _)| file)
     }
@@ -158,6 +182,41 @@ impl Root {
         self.with_parent(path, |parent, name| {
             regular_at(parent, &CString::new(name.as_bytes())?, self.device)
         })
+    }
+
+    pub(super) fn regular_size(&self, path: &Path) -> io::Result<u64> {
+        self.with_parent(path, |parent, name| {
+            let info = stat_regular_at(parent, &CString::new(name.as_bytes())?)?;
+            #[cfg(target_os = "macos")]
+            let device = info.st_dev as u64;
+            #[cfg(target_os = "linux")]
+            let device = info.st_dev;
+            if info.st_nlink != 1 || device != self.device {
+                return Err(invalid("expected an independent regular file"));
+            }
+            u64::try_from(info.st_size).map_err(|_| invalid("invalid regular file size"))
+        })
+    }
+
+    pub(super) fn open_primary_clone(
+        &self,
+        path: &Path,
+        mode: u32,
+    ) -> io::Result<(File, Metadata)> {
+        // The pinned file is used for both metadata and content validation.
+        let (file, metadata) = self.regular_metadata(path)?;
+        if !plain(&file, &metadata)? {
+            return Err(invalid("cloned file has extended attributes or flags"));
+        }
+        #[cfg(target_os = "macos")]
+        if metadata.mode() & 0o7777 != mode {
+            file.set_permissions(fs::Permissions::from_mode(mode))?;
+            let permissions_applied = file.metadata()?;
+            return Ok((file, permissions_applied));
+        }
+        #[cfg(target_os = "linux")]
+        let _ = mode; // Linux applies the Git mode when creating the clone.
+        Ok((file, metadata))
     }
 
     pub(super) fn link(&self, path: &Path) -> io::Result<OsString> {
@@ -208,9 +267,7 @@ impl Root {
     }
 }
 
-fn regular_at(parent: &File, name: &CStr, device: u64) -> io::Result<(File, Metadata)> {
-    // O_NONBLOCK makes opening a FIFO harmless even if it replaces a file.
-    // fstatat avoids opening special files in the normal (non-racing) case.
+fn stat_at(parent: &File, name: &CStr) -> io::Result<libc::stat> {
     let mut info = std::mem::MaybeUninit::<libc::stat>::uninit();
     if unsafe {
         libc::fstatat(
@@ -223,9 +280,21 @@ fn regular_at(parent: &File, name: &CStr, device: u64) -> io::Result<(File, Meta
     {
         return Err(io::Error::last_os_error());
     }
-    if unsafe { info.assume_init() }.st_mode & libc::S_IFMT != libc::S_IFREG {
+    Ok(unsafe { info.assume_init() })
+}
+
+fn stat_regular_at(parent: &File, name: &CStr) -> io::Result<libc::stat> {
+    let info = stat_at(parent, name)?;
+    if info.st_mode & libc::S_IFMT != libc::S_IFREG {
         return Err(invalid("expected a regular file"));
     }
+    Ok(info)
+}
+
+fn regular_at(parent: &File, name: &CStr, device: u64) -> io::Result<(File, Metadata)> {
+    // O_NONBLOCK makes opening a FIFO harmless even if it replaces a file.
+    // fstatat avoids opening special files in the normal (non-racing) case.
+    stat_regular_at(parent, name)?;
     let fd = unsafe {
         libc::openat(
             parent.as_raw_fd(),
@@ -320,16 +389,13 @@ fn clone_at(
     {
         return Err(io::Error::last_os_error());
     }
-    // A signed inode was verified at publication. Its caller checks the
-    // stamp again after cloning before allowing this file into a workspace.
-    if authenticated && metadata.mode() & 0o7777 == mode {
+    // Primary clones are validated before hashing their bytes. The caller
+    // checks a signed inode's stamp again after cloning it.
+    if !authenticated || metadata.mode() & 0o7777 == mode {
         return Ok(());
     }
     let result = (|| {
         let (cloned, copied) = regular_at(parent, name, metadata.dev())?;
-        if !authenticated && !plain(&cloned, &copied)? {
-            return Err(invalid("cloned file has extended attributes or flags"));
-        }
         if copied.mode() & 0o7777 != mode {
             cloned.set_permissions(fs::Permissions::from_mode(mode))?;
         }

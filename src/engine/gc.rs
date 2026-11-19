@@ -1,181 +1,250 @@
-//! Garbage collection is opt-in. Time alone cannot make an edit disposable.
-use super::retire;
+//! Cleanup for verified package caches and dependency layers.
 use crate::{
-    api, git, layer,
-    registry::{CACHE_OWNER, LEASE_SECS, Project, check_owned_tree, now},
+    api,
+    cache::{self, PackageBinding, PurgeFailure},
+    layer,
+    registry::{CACHE_OWNER, Project, check_owned_tree, exists},
     storage,
+    workspace::{
+        HISTORY_CACHE_DIR, HISTORY_CACHE_MARKER, history_cache_root,
+        verify_history_cache_generation,
+    },
 };
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
-use std::{collections::BTreeSet, fs};
-use uuid::Uuid;
+use std::{fs, path::Path};
 
-pub(super) fn forget_lock(p: &Project, name: &str) -> Result<()> {
-    let path = p.state.join("locks").join(name);
-    match fs::remove_file(path) {
-        Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(e.into()),
-    }
+#[derive(PartialEq, Eq)]
+enum Verified {
+    Package(PackageBinding),
+    Layer(Value),
+    Base(Vec<[u8; 32]>),
+    History([u8; 32]),
 }
 
-fn purge_caches(p: &Project, apply: bool) -> Result<Value> {
-    let cache = p.state.join("cache");
-    let layers = p.state.join("layers");
+#[derive(Clone, Copy)]
+enum Kind {
+    Package,
+    Layer,
+    Base,
+    History,
+}
+
+pub(crate) fn purge_caches(p: &Project, apply: bool) -> Result<Value> {
+    // A legacy workspace may still use these shared caches. Treat its registry
+    // as opaque and retain the caches if there are records or ownership is unclear.
+    if p.has_legacy_workspace_records()? {
+        return Ok(json!({"requested":true, "eligible":false, "purged":false,
+            "reason":"legacy workspace registry may still reference project caches"}));
+    }
+    if apply {
+        p.require_private_state()?;
+    }
+    if crate::workspace::has_live(p)? {
+        return Ok(json!({"requested":true, "eligible":false, "purged":false,
+            "reason":"managed workspaces are using the project caches"}));
+    }
+    let mut directories = Vec::new();
     let mut candidates = Vec::new();
     let mut removed = Vec::new();
     let mut blocked = Vec::new();
-    for (directory, is_layer) in [(&cache, false), (&layers, true)] {
-        if let Err(error) = p.check_cache_owner(directory) {
-            blocked.push(json!({"path":directory,"reason":api::error_json(&error)}));
-            continue;
+    let mut retained = Vec::new();
+    let mut groups = vec![
+        (Kind::Package, p.state.join("cache")),
+        (Kind::Layer, p.state.join("layers")),
+    ];
+    let bases = p.state.join("bases");
+    if exists(&bases)? {
+        groups.push((Kind::Base, bases));
+    }
+    match history_cache_root(&p.state) {
+        Ok(Some(directory)) => groups.push((Kind::History, directory)),
+        Ok(None) => (),
+        Err(error) => {
+            let path = p.state.join(HISTORY_CACHE_DIR);
+            directories.push(path.clone());
+            blocked.push(json!({"path":path,"reason":api::error_json(&error)}));
         }
-        let mut entries = fs::read_dir(directory)?.collect::<std::io::Result<Vec<_>>>()?;
+    }
+    for (kind, directory) in groups {
+        directories.push(directory.clone());
+        let inspect_container = || {
+            match kind {
+                Kind::Package | Kind::Layer => p.check_cache_owner(&directory)?,
+                Kind::Base => (),
+                Kind::History => ensure!(
+                    history_cache_root(&p.state)?.as_deref() == Some(directory.as_path()),
+                    "Git history cache changed during purge"
+                ),
+            }
+            cache::directory_identity(&directory)
+        };
+        let container = match inspect_container() {
+            Ok(identity) => identity,
+            Err(error) => {
+                blocked.push(json!({"path":directory,"reason":api::error_json(&error)}));
+                continue;
+            }
+        };
+        let check_container = || {
+            ensure!(
+                inspect_container()? == container,
+                "cache container changed during purge"
+            );
+            Ok(())
+        };
+        let mut entries = match fs::read_dir(&directory)
+            .and_then(|entries| entries.collect::<std::io::Result<Vec<_>>>())
+        {
+            Ok(entries) => entries,
+            Err(error) => {
+                blocked.push(json!({"path":directory,"reason":api::error_json(&error.into())}));
+                continue;
+            }
+        };
         entries.sort_by_key(|entry| entry.file_name());
+        let marker = match kind {
+            Kind::Package | Kind::Layer => Some(CACHE_OWNER),
+            Kind::Base => None,
+            Kind::History => Some(HISTORY_CACHE_MARKER),
+        };
         for entry in entries {
             let name = entry.file_name();
-            if name == CACHE_OWNER {
+            if marker.is_some_and(|marker| name == marker) {
                 continue;
             }
             let path = entry.path();
-            let verified = if is_layer {
-                layer::verify_layer(&path)
-            } else {
-                (|| -> Result<()> {
-                    // These names match the package cache paths in Runtime::configure.
-                    ensure!(
-                        matches!(
-                            name.to_str(),
-                            Some("npm" | "pnpm" | "bun" | "cargo" | "uv" | "sccache")
-                        ),
-                        "unrecognized package cache root"
-                    );
-                    check_owned_tree(&path, false)
-                })()
-            };
-            if let Err(error) = verified {
-                blocked.push(json!({"path":path,"reason":api::error_json(&error)}));
+            if name
+                .to_str()
+                .is_some_and(|name| name.starts_with(cache::QUARANTINE_PREFIX))
+            {
+                let reason = anyhow::anyhow!("earlier cache quarantine retained for inspection");
+                retained.push(json!({"path":path,"reason":api::error_json(&reason)}));
                 continue;
             }
-            if apply {
-                // Keep the container and its marker through partial purges.
-                let result = p
-                    .check_cache_owner(directory)
-                    .and_then(|()| fs::remove_dir_all(&path).map_err(Into::into));
-                if let Err(error) = result {
+            let verify = |candidate: &Path| -> Result<Verified> {
+                match kind {
+                    Kind::Layer => {
+                        let digest = name.to_str().context("invalid layer digest")?;
+                        Ok(Verified::Layer(layer::verify_layer(candidate, digest)?))
+                    }
+                    Kind::Base => {
+                        check_owned_tree(candidate)?;
+                        let oid = name.to_str().context("invalid source snapshot commit")?;
+                        Ok(Verified::Base(
+                            storage::verify_base(candidate, &p.state, oid)
+                                .context("source snapshot ownership or contents are unverified")?,
+                        ))
+                    }
+                    Kind::History => {
+                        check_owned_tree(candidate)?;
+                        Ok(Verified::History(verify_history_cache_generation(
+                            candidate, &p.state, &name,
+                        )?))
+                    }
+                    Kind::Package => {
+                        let package = name.to_str().context("invalid package cache name")?;
+                        let binding = cache::verify_package(p, package, candidate)?;
+                        check_owned_tree(candidate)?;
+                        Ok(Verified::Package(binding))
+                    }
+                }
+            };
+            let result = (|| {
+                check_container()?;
+                let identity = cache::directory_identity(&path)?;
+                let verified = verify(&path)?;
+                ensure!(
+                    cache::directory_identity(&path)? == identity,
+                    "cache directory changed during verification"
+                );
+                Ok((identity, verified))
+            })();
+            let (identity, verified) = match result {
+                Ok(value) => value,
+                Err(error) => {
                     blocked.push(json!({"path":path,"reason":api::error_json(&error)}));
                     continue;
                 }
-                removed.push(path.clone());
+            };
+            if apply {
+                match cache::purge_directory(&path, &identity, check_container, |moved| {
+                    ensure!(
+                        verify(moved)? == verified,
+                        "cache verification changed during quarantine"
+                    );
+                    Ok(())
+                }) {
+                    Ok(()) => removed.push(path.clone()),
+                    Err(PurgeFailure::Unmoved(error)) => {
+                        blocked.push(json!({"path":path,"reason":api::error_json(&error)}));
+                        continue;
+                    }
+                    Err(PurgeFailure::Retained { path: moved, error }) => {
+                        retained.push(json!({"path":moved,"original_path":path,"reason":api::error_json(&error)}));
+                        continue;
+                    }
+                }
             }
             candidates.push(path);
         }
     }
-    let eligible = blocked.is_empty() || !candidates.is_empty();
+    let eligible = (blocked.is_empty() && retained.is_empty()) || !candidates.is_empty();
     Ok(json!({
-        "requested":true, "eligible":eligible, "purged":apply && eligible,
-        "directories":[cache,layers], "candidates":candidates,"removed":removed,"blocked":blocked
+        "requested":true, "eligible":eligible, "purged":!removed.is_empty(),
+        "directories":directories,"candidates":candidates,"removed":removed,"blocked":blocked,"retained":retained
     }))
 }
 
-pub(super) fn run(p: &Project, apply: bool, purge_cache: bool) -> Result<Value> {
-    let mut candidates = Vec::new();
-    let mut removed = Vec::new();
-    let mut retained = Vec::new();
-    let mut used = BTreeSet::new();
-    let records = p.records()?;
-    let record_count = records.len();
-    for mut r in records {
-        if now().saturating_sub(r.heartbeat) < LEASE_SECS {
-            used.insert(r.base);
-            continue;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::git;
+
+    #[test]
+    fn keeps_foreign_history_cache_namespace_intact() -> Result<()> {
+        let temporary = tempfile::tempdir()?;
+        git::bytes(temporary.path(), &["init", "-q", "--template="])?;
+        let (project, _lock) = Project::open(temporary.path())?;
+        let history = project.state.join(HISTORY_CACHE_DIR);
+        crate::registry::dir(&history)?;
+        let marker = history.join(HISTORY_CACHE_MARKER);
+        let unrelated = history.join("saved-data");
+        fs::write(&marker, "foreign format")?;
+        fs::write(&unrelated, "preserve saved history")?;
+        for apply in [false, true] {
+            let result = purge_caches(&project, apply)?;
+            assert_eq!(result["blocked"][0]["path"], serde_json::json!(history));
+            assert_eq!(result["purged"], false);
+            assert_eq!(fs::read_to_string(&marker)?, "foreign format");
+            assert_eq!(fs::read_to_string(&unrelated)?, "preserve saved history");
         }
-        let result = (|| -> Result<()> {
-            let lock = p.work_lock(&r.name)?;
-            let tip = retire::eligible(p, &r)?;
-            candidates.push(r.name.clone());
-            if apply {
-                retire::remove(p, &mut r, &tip, false, false, None)?;
-                drop(lock);
-                forget_lock(p, &r.name)?;
-                removed.push(r.name.clone());
-            }
-            Ok(())
-        })();
-        if let Err(error) = result {
-            retained.push(json!({"name":r.name,"reason":api::error_json(&error)}));
-            used.insert(r.base);
-        }
+        Ok(())
     }
-    // An OID-shaped name alone cannot establish ownership of a directory.
-    let mut bases = Vec::new();
-    let mut retained_bases = Vec::new();
-    for entry in fs::read_dir(p.state.join("bases"))? {
-        let entry = entry?;
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if git::checked_oid(&name).is_err() || used.contains(&name) {
-            continue;
-        }
-        let path = entry.path();
-        let ownership = (|| -> Result<()> {
-            ensure!(
-                storage::owned_base(&path)?,
-                "source snapshot ownership is unverified"
-            );
-            check_owned_tree(&path, false)
-        })();
-        if let Err(error) = ownership {
-            retained_bases.push(json!({"base":name,"reason":api::error_json(&error)}));
-            continue;
-        }
-        if apply {
-            fs::remove_dir_all(path)?;
-        }
-        bases.push(name);
-    }
-    bases.sort();
-    retained_bases.sort_by(|left, right| left["base"].as_str().cmp(&right["base"].as_str()));
-    let mut expired = 0;
-    for entry in fs::read_dir(p.state.join("completed"))? {
-        let path = entry?.path();
-        if path.extension().is_none_or(|s| s != "json") {
-            continue;
-        }
-        let id = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
-        if !Uuid::parse_str(id).is_ok_and(|uuid| uuid.to_string() == id) {
-            continue;
-        }
-        if let Some(receipt) = p.receipt(id)? {
-            let at = receipt["at"]
-                .as_u64()
-                .ok_or_else(|| anyhow::anyhow!("invalid receipt date"))?;
-            if now().saturating_sub(at) >= crate::registry::RECEIPT_SECS {
-                if apply {
-                    fs::remove_file(path)?;
-                }
-                expired += 1;
+
+    #[test]
+    fn preserves_shared_caches_when_either_legacy_workspace_store_exists() -> Result<()> {
+        for legacy in ["records", "independent"] {
+            let temporary = tempfile::tempdir()?;
+            git::bytes(temporary.path(), &["init", "-q", "--template="])?;
+            let (project, _lock) = Project::open(temporary.path())?;
+            let old_state = project.state.join(legacy);
+            fs::create_dir(&old_state)?;
+            let record = old_state.join("retained-data");
+            fs::write(&record, "unrecognized workspace state")?;
+            let npm = project.state.join("cache/npm");
+            fs::create_dir(&npm)?;
+            let entry = npm.join("cached");
+            fs::write(&entry, "cache in use")?;
+
+            for apply in [false, true] {
+                let result = purge_caches(&project, apply)?;
+                assert_eq!(result["eligible"], false);
+                assert_eq!(result["purged"], false);
+                assert_eq!(fs::read_to_string(&entry)?, "cache in use");
+                assert_eq!(fs::read_to_string(&record)?, "unrecognized workspace state");
             }
         }
+        Ok(())
     }
-    let mut cache = json!({"requested":purge_cache,"purged":false});
-    if purge_cache {
-        // Preview the result after eligible stale workspaces have been removed.
-        let remaining = record_count
-            - if apply {
-                removed.len()
-            } else {
-                candidates.len()
-            };
-        if remaining == 0 {
-            cache = purge_caches(p, apply)?;
-        } else {
-            cache["eligible"] = json!(false);
-            cache["remaining_workspaces"] = json!(remaining);
-        }
-    }
-    Ok(
-        json!({"applied":apply,"candidates":candidates,"removed":removed,"retained":retained,
-        "unused_source_snapshots":bases,"retained_source_snapshots":retained_bases,
-        "expired_receipts":expired,"cache":cache,"lease_seconds":LEASE_SECS}),
-    )
 }

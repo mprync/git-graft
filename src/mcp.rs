@@ -1,4 +1,4 @@
-//! MCP stdio adapter. All workspace behavior is owned by the shared engine.
+//! MCP stdio adapter for standalone workspaces.
 use std::path::PathBuf;
 
 use rmcp::{
@@ -12,10 +12,12 @@ use rmcp::{
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader};
 
-use crate::api::{
-    self, AddDep, DropWorkspace, Exec, Gc, Land, Layer, Name, Operation, Owned, SeedLayer, Spawn,
-};
+use crate::api::{self, AddDep, DropWorkspace, Exec, Gc, Land, Layer, Name, Owned, SeedLayer};
+use crate::workspace::{self, Command, Spawn};
+
+const MAX_REQUEST_BYTES: usize = 256 * 1024;
 
 #[derive(Clone)]
 struct Server {
@@ -26,6 +28,24 @@ struct Server {
 #[derive(serde::Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct Empty {}
+
+#[derive(serde::Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct LockWorkspace {
+    #[serde(flatten)]
+    workspace: Owned,
+    /// Optional explanation for the workspace lock.
+    reason: Option<String>,
+}
+
+#[derive(serde::Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct WorkspacePath {
+    #[serde(flatten)]
+    workspace: Owned,
+    /// Absolute workspace path on the same volume, with a canonical parent.
+    path: PathBuf,
+}
 
 fn tool<T: JsonSchema>(
     name: &'static str,
@@ -62,7 +82,9 @@ impl ServerHandler for Server {
                 env!("CARGO_PKG_NAME"),
                 env!("CARGO_PKG_VERSION"),
             ))
-            .with_instructions(instructions)
+            .with_instructions(format!(
+                "{instructions} Each newline-delimited message may contain up to {MAX_REQUEST_BYTES} bytes. Larger messages are discarded."
+            ))
     }
 
     async fn list_tools(
@@ -97,7 +119,7 @@ impl ServerHandler for Server {
             ),
             tool::<Spawn>(
                 "workspace_spawn",
-                "Create a managed workspace.",
+                "Create a standalone Git repository with a private branch, detached HEAD or unborn branch.",
                 false,
                 false,
             ),
@@ -121,21 +143,45 @@ impl ServerHandler for Server {
             ),
             tool::<Land>(
                 "workspace_land_and_wipe",
-                "Land a workspace and remove it on success. Lockfile reconciliation requires host --allow-exec.",
+                "Land a workspace and archive its repository on success. Lockfile reconciliation requires host --allow-exec.",
                 false,
                 true,
             ),
             tool::<DropWorkspace>(
                 "workspace_discard",
-                "Remove a managed workspace, subject to discard safeguards.",
+                "Archive a workspace and its files, subject to discard safeguards.",
                 false,
                 true,
             ),
             tool::<Gc>(
                 "workspace_gc",
-                "Preview or apply cleanup of stale workspaces.",
+                "Preview cleanup or archive eligible stale workspaces.",
                 false,
                 true,
+            ),
+            tool::<LockWorkspace>(
+                "workspace_lock",
+                "Protect a workspace against moves, retirement and cleanup.",
+                false,
+                false,
+            ),
+            tool::<Owned>(
+                "workspace_unlock",
+                "Release an explicit workspace lock.",
+                false,
+                false,
+            ),
+            tool::<WorkspacePath>(
+                "workspace_move",
+                "Move a workspace to an available absolute path on the same volume.",
+                false,
+                false,
+            ),
+            tool::<WorkspacePath>(
+                "workspace_repair",
+                "Reconnect a workspace using its absolute path after an external move.",
+                false,
+                false,
             ),
         ];
         if self.allow_exec {
@@ -179,22 +225,26 @@ impl ServerHandler for Server {
         let op = match name {
             "workspace_doctor" => {
                 parse::<Empty>(args)?;
-                Operation::Doctor
+                Command::Doctor
             }
             "workspace_list" => {
                 parse::<Empty>(args)?;
-                Operation::List
+                Command::List
             }
-            "workspace_spawn" => Operation::Spawn(parse(args)?),
-            "workspace_status" => Operation::Status(parse(args)?),
-            "workspace_heartbeat" => Operation::Heartbeat(parse(args)?),
-            "workspace_env" => Operation::Env(parse(args)?),
-            "workspace_exec" => Operation::Exec(parse(args)?),
-            "workspace_add_dependency" => Operation::AddDep(parse(args)?),
-            "workspace_layer" => Operation::Layer(parse(args)?),
-            "workspace_seed_layer" => Operation::SeedLayer(parse(args)?),
-            "workspace_restore" => Operation::Restore(parse(args)?),
-            "workspace_undo_land" => Operation::UndoLand(parse(args)?),
+            "workspace_spawn" => {
+                Command::Spawn(Spawn::from_mcp(args, !self.allow_exec).map_err(|e| {
+                    ErrorData::invalid_params(format!("Invalid tool arguments: {e}"), None)
+                })?)
+            }
+            "workspace_status" => Command::Status(parse(args)?),
+            "workspace_heartbeat" => Command::Heartbeat(parse(args)?),
+            "workspace_env" => Command::Env(parse(args)?),
+            "workspace_exec" => Command::Exec(parse(args)?),
+            "workspace_add_dependency" => Command::AddDep(parse(args)?),
+            "workspace_layer" => Command::Layer(parse(args)?),
+            "workspace_seed_layer" => Command::SeedLayer(parse(args)?),
+            "workspace_restore" => Command::Restore(parse(args)?),
+            "workspace_undo_land" => Command::UndoLand(parse(args)?),
             "workspace_land_and_wipe" => {
                 let land: Land = parse(args)?;
                 if land.reconcile && !self.allow_exec {
@@ -203,10 +253,23 @@ impl ServerHandler for Server {
                     );
                     return Ok(CallToolResult::structured_error(api::error_json(&error)).into());
                 }
-                Operation::Land(land)
+                Command::Land(land)
             }
-            "workspace_discard" => Operation::Drop(parse(args)?),
-            "workspace_gc" => Operation::Gc(parse(args)?),
+            "workspace_discard" => Command::Drop(parse(args)?),
+            "workspace_gc" => Command::Gc(parse(args)?),
+            "workspace_lock" => {
+                let LockWorkspace { workspace, reason } = parse(args)?;
+                Command::Lock { workspace, reason }
+            }
+            "workspace_unlock" => Command::Unlock(parse(args)?),
+            "workspace_move" => {
+                let WorkspacePath { workspace, path } = parse(args)?;
+                Command::Move { workspace, path }
+            }
+            "workspace_repair" => {
+                let WorkspacePath { workspace, path } = parse(args)?;
+                Command::Repair { workspace, path }
+            }
             _ => {
                 return Err(ErrorData::invalid_params(
                     format!("Unknown tool: {name}"),
@@ -215,7 +278,7 @@ impl ServerHandler for Server {
             }
         };
         let repo = self.repo.clone();
-        let result = tokio::task::spawn_blocking(move || crate::engine::run(&repo, op))
+        let result = tokio::task::spawn_blocking(move || workspace::run(&repo, op))
             .await
             .map_err(|e| {
                 ErrorData::internal_error(format!("Workspace operation failed to join: {e}"), None)
@@ -231,14 +294,46 @@ impl ServerHandler for Server {
     }
 }
 
+/// Bound rmcp's stdin framing buffer before it parses or dispatches requests.
+fn bounded_input(input: impl AsyncRead + Send + Unpin + 'static) -> impl AsyncRead + Send + Unpin {
+    let (mut writer, reader) = tokio::io::duplex(8192);
+    tokio::spawn(async move {
+        let mut input = BufReader::new(input);
+        let mut frame = Vec::new();
+        let mut oversized = false;
+        loop {
+            let chunk = input.fill_buf().await?;
+            if chunk.is_empty() {
+                return Ok::<_, std::io::Error>(());
+            }
+            let newline = chunk.iter().position(|&byte| byte == b'\n');
+            let consumed = newline.map_or(chunk.len(), |index| index + 1);
+            oversized |= frame.len() + consumed > MAX_REQUEST_BYTES + 1;
+            if !oversized {
+                frame.extend_from_slice(&chunk[..consumed]);
+            }
+            input.consume(consumed);
+            if newline.is_some() {
+                if !oversized {
+                    writer.write_all(&frame).await?;
+                }
+                frame.clear();
+                oversized = false;
+            }
+        }
+    });
+    reader
+}
+
 /// Serve MCP over stdin/stdout until the client closes the connection.
 pub fn serve(repo: PathBuf, allow_exec: bool) -> anyhow::Result<()> {
     tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?
         .block_on(async move {
+            let (stdin, stdout) = rmcp::transport::stdio();
             Server { repo, allow_exec }
-                .serve(rmcp::transport::stdio())
+                .serve((bounded_input(stdin), stdout))
                 .await?
                 .waiting()
                 .await?;

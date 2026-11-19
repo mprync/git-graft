@@ -13,9 +13,14 @@ use std::{
 
 const SECTIONS: [&str; 3] = ["dependencies", "devDependencies", "optionalDependencies"];
 
-fn git(repo: &Path, args: &[&str], input: Option<&[u8]>, index: Option<&Path>) -> Result<String> {
+fn git(
+    repo: &Path,
+    objects: Option<&Path>,
+    args: &[&str],
+    input: Option<&[u8]>,
+    index: Option<&Path>,
+) -> Result<String> {
     let mut command = crate::git::command(repo);
-    command.args(args);
     // Also discard other Git-specific variables, such as inherited config
     // overrides, before setting our deliberate private index below.
     for (key, _) in std::env::vars_os() {
@@ -23,6 +28,10 @@ fn git(repo: &Path, args: &[&str], input: Option<&[u8]>, index: Option<&Path>) -
             command.env_remove(key);
         }
     }
+    if let Some(objects) = objects {
+        crate::git::use_private_objects(&mut command, objects);
+    }
+    command.arg("--no-replace-objects").args(args);
     if let Some(index) = index {
         command.env("GIT_INDEX_FILE", index);
     }
@@ -57,12 +66,18 @@ fn oid(s: &str) -> Result<()> {
     Ok(())
 }
 
-fn read_json(repo: &Path, commit: &str, path: &str) -> Result<Value> {
-    let entry = git(repo, &["ls-tree", commit, "--", path], None, None)?;
+fn read_json(repo: &Path, objects: Option<&Path>, commit: &str, path: &str) -> Result<Value> {
+    let entry = git(repo, objects, &["ls-tree", commit, "--", path], None, None)?;
     if !entry.starts_with("100644 blob ") || !entry.trim_end().ends_with(&format!("\t{path}")) {
         bail!("{path} must be a normal root file in every commit");
     }
-    let text = git(repo, &["show", &format!("{commit}:{path}")], None, None)?;
+    let text = git(
+        repo,
+        objects,
+        &["show", &format!("{commit}:{path}")],
+        None,
+        None,
+    )?;
     serde_json::from_str(&text).with_context(|| format!("invalid {path}"))
 }
 
@@ -266,6 +281,7 @@ fn merge_lock(
 /// Never modifies the live index, branches, or checkout.
 pub fn resolve(
     repo: &Path,
+    objects: Option<&Path>,
     state: &Path,
     ours: &str,
     theirs: &str,
@@ -283,18 +299,24 @@ pub fn resolve(
     {
         bail!("only root npm manifest/lockfile conflicts are supported");
     }
-    let bases = git(repo, &["merge-base", "--all", ours, theirs], None, None)?;
+    let bases = git(
+        repo,
+        objects,
+        &["merge-base", "--all", ours, theirs],
+        None,
+        None,
+    )?;
     let bases: Vec<_> = bases.lines().collect();
     if bases.len() != 1 {
         bail!("exactly one merge base is required");
     }
     let manifests: Vec<Value> = [bases[0], ours, theirs]
         .iter()
-        .map(|c| read_json(repo, c, "package.json"))
+        .map(|c| read_json(repo, objects, c, "package.json"))
         .collect::<Result<_>>()?;
     let locks: Vec<Value> = [bases[0], ours, theirs]
         .iter()
-        .map(|c| read_json(repo, c, "package-lock.json"))
+        .map(|c| read_json(repo, objects, c, "package-lock.json"))
         .collect::<Result<_>>()?;
     let manifest = merge_additions(&manifests[0], &manifests[1], &manifests[2])?;
     let lock = merge_lock(
@@ -340,6 +362,9 @@ pub fn resolve(
             temp.path().join("no-global-config"),
         )
         .args([
+            "--global=false",
+            "--location=project",
+            "--workspaces=false",
             "install",
             "--package-lock-only",
             "--offline",
@@ -375,7 +400,13 @@ pub fn resolve(
         bail!("npm changed the manifest");
     }
     let index = temp.path().join("index");
-    git(repo, &["read-tree", conflict_tree], None, Some(&index))?;
+    git(
+        repo,
+        objects,
+        &["read-tree", conflict_tree],
+        None,
+        Some(&index),
+    )?;
     for (path, bytes) in [
         ("package.json", manifest_bytes),
         (
@@ -383,9 +414,16 @@ pub fn resolve(
             serde_json::to_vec_pretty(&regenerated)?,
         ),
     ] {
-        let blob = git(repo, &["hash-object", "-w", "--stdin"], Some(&bytes), None)?;
+        let blob = git(
+            repo,
+            objects,
+            &["hash-object", "-w", "--stdin"],
+            Some(&bytes),
+            None,
+        )?;
         git(
             repo,
+            objects,
             &[
                 "update-index",
                 "--add",
@@ -398,7 +436,7 @@ pub fn resolve(
             Some(&index),
         )?;
     }
-    Ok(git(repo, &["write-tree"], None, Some(&index))?
+    Ok(git(repo, objects, &["write-tree"], None, Some(&index))?
         .trim()
         .to_owned())
 }
@@ -410,7 +448,7 @@ mod tests {
     use std::{path::PathBuf, process::Command};
 
     fn run(repo: &Path, args: &[&str]) -> String {
-        git(repo, args, None, None).unwrap()
+        git(repo, None, args, None, None).unwrap()
     }
     fn write(repo: &Path, name: &str, value: &Value) {
         std::fs::write(repo.join(name), serde_json::to_vec_pretty(value).unwrap()).unwrap();
@@ -498,7 +536,16 @@ mod tests {
         let before_index = std::fs::read(f.repo.join(".git/index")).unwrap();
         let before_status = run(&f.repo, &["status", "--porcelain=v1"]);
         let before_head = run(&f.repo, &["rev-parse", "HEAD"]);
-        let tree = resolve(&f.repo, &f.state, &f.ours, &f.theirs, &f.tree, &paths()).unwrap();
+        let tree = resolve(
+            &f.repo,
+            None,
+            &f.state,
+            &f.ours,
+            &f.theirs,
+            &f.tree,
+            &paths(),
+        )
+        .unwrap();
         let manifest: Value =
             serde_json::from_str(&run(&f.repo, &["show", &format!("{tree}:package.json")]))
                 .unwrap();
@@ -582,7 +629,18 @@ mod tests {
             ("alpha", "devDependencies", "1.0.0"),
         ] {
             let f = fixture(("alpha", "dependencies", "1.0.0"), right);
-            assert!(resolve(&f.repo, &f.state, &f.ours, &f.theirs, &f.tree, &paths()).is_err());
+            assert!(
+                resolve(
+                    &f.repo,
+                    None,
+                    &f.state,
+                    &f.ours,
+                    &f.theirs,
+                    &f.tree,
+                    &paths()
+                )
+                .is_err()
+            );
         }
     }
     #[test]

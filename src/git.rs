@@ -11,15 +11,98 @@ use std::{
 
 use crate::api::fault;
 
+pub(crate) const MINIMUM_VERSION: &str = "2.46.0";
+
+pub(crate) fn supported_version(version: &str) -> bool {
+    let Some(token) = version
+        .strip_prefix("git version ")
+        .and_then(|v| v.split_whitespace().next())
+    else {
+        return false;
+    };
+    let mut fields = token.split('.');
+    let Some(major) = fields.next().and_then(|n| n.parse::<u32>().ok()) else {
+        return false;
+    };
+    let Some(minor) = fields.next().and_then(|n| n.parse::<u32>().ok()) else {
+        return false;
+    };
+    (major, minor) > (2, 46)
+        || ((major, minor) == (2, 46) && !(token.starts_with("2.46.0") && token.contains("rc")))
+}
+
+#[test]
+fn minimum_git_includes_vendor_builds() {
+    for supported in [
+        "2.46.0",
+        "2.46.0.windows.1",
+        "2.46.1.rc0",
+        "2.47.0 (Apple Git-154)",
+        "3.0.0",
+    ] {
+        assert!(supported_version(&format!("git version {supported}")));
+    }
+    for unsupported in [
+        "git version 2.45.4",
+        "git version 2.46.0-rc1",
+        "unknown version",
+    ] {
+        assert!(!supported_version(unsupported));
+    }
+}
+
 /// Set repository selection explicitly, even if called from inside a Git hook.
 pub fn command(dir: &Path) -> Command {
     let mut cmd = Command::new("git");
     clear_location(&mut cmd);
     cmd.arg("-C")
         .arg(dir)
+        .env("GIT_NO_LAZY_FETCH", "1")
         .env("GIT_TERMINAL_PROMPT", "0")
         .stdin(Stdio::null());
     cmd
+}
+
+/// Read and write the owned object database of a private bare repository while
+/// retaining the caller's repository configuration and checkout context.
+pub(crate) fn use_private_objects(command: &mut Command, bare: &Path) {
+    command
+        .env("GIT_OBJECT_DIRECTORY", bare.join("objects"))
+        .env("GIT_SHALLOW_FILE", bare.join("shallow"))
+        .args([
+            "-c",
+            "core.fsync=all",
+            "-c",
+            "core.fsyncMethod=fsync",
+            "-c",
+            "core.commitGraph=false",
+        ]);
+}
+
+/// Create a recovery pin inside an owned repository without running user hooks.
+pub(crate) fn create_private_ref(repo: &Path, reference: &str, oid: &str) -> Result<()> {
+    let hooks = if cfg!(windows) {
+        "core.hooksPath=NUL"
+    } else {
+        "core.hooksPath=/dev/null"
+    };
+    bytes(
+        repo,
+        &[
+            "-c",
+            hooks,
+            "-c",
+            "core.fsync=all",
+            "-c",
+            "core.fsyncMethod=fsync",
+            "update-ref",
+            "--no-deref",
+            reference,
+            oid,
+            &"0".repeat(oid.len()),
+        ],
+    )?;
+    Ok(())
 }
 
 /// Forget the calling checkout before starting Git or a workspace subprocess.
@@ -114,32 +197,20 @@ pub fn oid(dir: &Path, revision: &str) -> Result<String> {
     )
 }
 
-#[derive(Default, Debug, Serialize)]
-pub struct Worktree {
-    pub path: PathBuf,
-    pub branch: Option<String>,
-    pub locked: bool,
-    pub bare: bool,
+/// Resolve Git's primary administrative directory, even from a linked checkout.
+pub(crate) fn common_dir(dir: &Path) -> Result<PathBuf> {
+    Ok(dunce::canonicalize(text(
+        dir,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )?)?)
 }
-pub fn worktrees(dir: &Path) -> Result<Vec<Worktree>> {
-    let raw = bytes(dir, &["worktree", "list", "--porcelain", "-z"])?;
-    let mut result = Vec::new();
-    for field in raw.split(|&b| b == 0) {
-        if let Some(path) = field.strip_prefix(b"worktree ") {
-            result.push(Worktree {
-                path: PathBuf::from(std::str::from_utf8(path)?),
-                ..Default::default()
-            });
-        } else if let Some(wt) = result.last_mut() {
-            if let Some(branch) = field.strip_prefix(b"branch ") {
-                wt.branch = Some(std::str::from_utf8(branch)?.to_owned());
-            }
-            wt.bare |= field == b"bare";
-            wt.locked |= field == b"locked" || field.starts_with(b"locked ");
-        }
-    }
-    ensure!(!result.is_empty(), "Git reported no worktrees");
-    Ok(result)
+
+/// Resolve the administrative directory selected by Git for this checkout.
+pub(crate) fn absolute_git_dir(dir: &Path) -> Result<PathBuf> {
+    Ok(dunce::canonicalize(text(
+        dir,
+        &["rev-parse", "--absolute-git-dir"],
+    )?)?)
 }
 
 #[derive(Serialize)]
@@ -180,7 +251,11 @@ pub fn changes(dir: &Path) -> Result<Vec<Change>> {
 /// A clean porcelain status can hide user work behind index flags or a paused
 /// operation. Fail closed before committing, integrating or retiring a tree.
 pub fn check_idle(dir: &Path) -> Result<()> {
-    let admin = PathBuf::from(text(dir, &["rev-parse", "--absolute-git-dir"])?);
+    check_idle_with_locks(dir, false, false)
+}
+
+pub(crate) fn check_idle_with_locks(dir: &Path, index: bool, head: bool) -> Result<()> {
+    let admin = absolute_git_dir(dir)?;
     for mark in [
         "MERGE_HEAD",
         "MERGE_AUTOSTASH",
@@ -193,6 +268,9 @@ pub fn check_idle(dir: &Path) -> Result<()> {
         "index.lock",
         "HEAD.lock",
     ] {
+        if (index && mark == "index.lock") || (head && mark == "HEAD.lock") {
+            continue;
+        }
         match fs::symlink_metadata(admin.join(mark)) {
             Ok(_) => {
                 return Err(fault(
@@ -205,16 +283,27 @@ pub fn check_idle(dir: &Path) -> Result<()> {
             Err(error) => return Err(error.into()),
         }
     }
-    let raw = bytes(dir, &["ls-files", "-v", "-z"])?;
-    for r in raw.split(|&b| b == 0).filter(|r| r.len() > 2) {
-        let skips_present_file = if r[0] == b'S' {
+    // Read flags and conflict stages from a single view of the index. Paths
+    // may contain tabs or newlines, so only the first tab delimits the header.
+    let raw = bytes(dir, &["ls-files", "-v", "--stage", "-z"])?;
+    for row in raw.split(|&b| b == 0).filter(|r| !r.is_empty()) {
+        let tab = row
+            .iter()
+            .position(|b| *b == b'\t')
+            .context("invalid Git index entry")?;
+        let (header, path) = (&row[..tab], &row[tab + 1..]);
+        ensure!(
+            header.ends_with(b" 0"),
+            "Resolve the workspace index conflicts first"
+        );
+        let skips_present_file = if header[0] == b'S' {
             #[cfg(unix)]
             let path = {
                 use std::os::unix::ffi::OsStrExt;
-                dir.join(std::ffi::OsStr::from_bytes(&r[2..]))
+                dir.join(std::ffi::OsStr::from_bytes(path))
             };
             #[cfg(not(unix))]
-            let path = dir.join(std::str::from_utf8(&r[2..])?);
+            let path = dir.join(std::str::from_utf8(path)?);
             match fs::symlink_metadata(path) {
                 Ok(_) => true,
                 Err(e) if e.kind() == io::ErrorKind::NotFound => false,
@@ -223,16 +312,72 @@ pub fn check_idle(dir: &Path) -> Result<()> {
         } else {
             false
         };
-        if r[0].is_ascii_lowercase() || skips_present_file {
+        if header[0].is_ascii_lowercase() || skips_present_file {
             return Err(fault(
                 "hidden_changes",
                 "Clear assume-unchanged or skip-worktree flags on present files first",
-                json!({"path":String::from_utf8_lossy(&r[2..])}),
+                json!({"path":String::from_utf8_lossy(path)}),
             ));
         }
     }
-    if !bytes(dir, &["ls-files", "--unmerged", "-z"])?.is_empty() {
-        bail!("Resolve the workspace index conflicts first");
-    }
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn internal_git_does_not_fetch_missing_promisor_objects() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let source = temp.path().join("source");
+        let partial = temp.path().join("partial");
+        fs::create_dir(&source)?;
+        bytes(&source, &["init", "-q", "--template="])?;
+        for (key, value) in [
+            ("user.name", "Offline Fixture"),
+            ("user.email", "offline@example.invalid"),
+            ("commit.gpgsign", "false"),
+            ("core.hooksPath", "disabled-hooks"),
+            ("uploadpack.allowFilter", "true"),
+            ("uploadpack.allowAnySHA1InWant", "true"),
+        ] {
+            bytes(&source, &["config", key, value])?;
+        }
+        fs::create_dir(source.join("folder"))?;
+        fs::write(source.join("folder/file"), b"local source\n")?;
+        bytes(&source, &["add", "folder"])?;
+        bytes(&source, &["commit", "-qm", "base"])?;
+        bytes(
+            temp.path(),
+            &[
+                "clone",
+                "-q",
+                "--no-checkout",
+                "--filter=tree:0",
+                &format!("file://{}", path_str(&dunce::canonicalize(&source)?)?),
+                path_str(&partial)?,
+            ],
+        )?;
+        let packs = || -> Result<usize> {
+            Ok(fs::read_dir(partial.join(".git/objects/pack"))?
+                .collect::<io::Result<Vec<_>>>()?
+                .len())
+        };
+
+        let before = packs()?;
+        assert!(
+            !raw(&partial, &["cat-file", "-t", "HEAD:folder"])?
+                .status
+                .success()
+        );
+        assert_eq!(packs()?, before);
+        let control = command(&partial)
+            .env_remove("GIT_NO_LAZY_FETCH")
+            .args(["cat-file", "-t", "HEAD:folder"])
+            .output()?;
+        assert!(control.status.success());
+        assert!(packs()? > before);
+        Ok(())
+    }
 }

@@ -1,5 +1,5 @@
 //! Reverse the net tree change of one completed landing while preserving Git history.
-use std::path::Path;
+use std::{path::Path, process::Command};
 
 use anyhow::{Result, ensure};
 use serde_json::{Value, json};
@@ -9,7 +9,6 @@ use crate::{
     git,
     landing::{self, Plan},
     recovery,
-    registry::Project,
 };
 
 fn tree(repo: &Path, commit: &str) -> Result<String> {
@@ -53,15 +52,15 @@ fn verify_candidate(repo: &Path, commit: &str, tree: &str, landed: &str) -> Resu
 }
 
 fn create_candidate(
-    repo: &Path,
+    mut command: Command,
+    pins: &Path,
     reference: &str,
     tree: &str,
     landed: &str,
-    name: &str,
+    message: &str,
 ) -> Result<String> {
-    let commit = git::text(
-        repo,
-        &[
+    let output = command
+        .args([
             "--no-replace-objects",
             "-c",
             "core.fsync=loose-object",
@@ -72,18 +71,17 @@ fn create_candidate(
             "-p",
             landed,
             "-m",
-            &format!("Undo graft landing of {name}"),
-        ],
-    )?;
+            message,
+        ])
+        .output()?;
+    ensure!(
+        output.status.success(),
+        "create reversal commit: {}",
+        String::from_utf8_lossy(&output.stderr).trim_end()
+    );
+    let commit = String::from_utf8(output.stdout)?.trim_end().to_owned();
     git::checked_oid(&commit)?;
-    let edits = format!("option no-deref\ncreate {reference} {commit}\n");
-    recovery::transaction(repo, &edits, None, || {
-        ensure!(
-            recovery::direct_ref(repo, reference)?.is_none(),
-            "undo ref appeared while preparing the undo"
-        );
-        Ok(())
-    })?;
+    git::create_private_ref(pins, reference, &commit)?;
     Ok(commit)
 }
 
@@ -95,64 +93,68 @@ fn target_advanced(target: &str, expected: &str, actual: Option<&str>) -> anyhow
     )
 }
 
-/// Undo under the project and name locks. Only the pinned commit is a replay.
-pub fn run(p: &Project, name: &str, retired_lease: &str) -> Result<Value> {
-    let plan = recovery::retired_landing(p, name, retired_lease)?;
+pub(crate) fn reverse(
+    repo: &Path,
+    objects: &Path,
+    plan: &Plan,
+    undo_ref: &str,
+    apply: impl FnOnce(&Plan) -> Result<()>,
+) -> Result<Value> {
+    git::checked_oid(&plan.old)?;
+    git::checked_oid(&plan.new)?;
     if plan.old == plan.new {
         return Err(fault(
             "nothing_to_undo",
             "The landing did not advance its destination",
-            json!({"name": name, "target": plan.target}),
+            json!({"target": plan.target}),
         ));
     }
-    let repo = &p.repo;
     let target_ref = format!("refs/heads/{}", plan.target);
     git::bytes(repo, &["check-ref-format", &target_ref])?;
     let target = recovery::direct_ref(repo, &target_ref)?;
-    let undo_ref = recovery::undo_ref(retired_lease)?;
-    let candidate = recovery::direct_ref(repo, &undo_ref)?;
+    let candidate = recovery::direct_ref(objects, undo_ref)?;
     let landed = Some(plan.new.as_str());
     let replay = candidate.is_some() && target == candidate;
     if !replay && target.as_deref() != landed {
         return Err(target_advanced(&plan.target, &plan.new, target.as_deref()));
     }
 
-    let old_tree = tree(repo, &plan.old)?;
+    let old_tree = tree(objects, &plan.old)?;
     let commit = match candidate {
         Some(commit) => {
-            verify_candidate(repo, &commit, &old_tree, &plan.new)?;
+            verify_candidate(objects, &commit, &old_tree, &plan.new)?;
             commit
         }
-        None => create_candidate(repo, &undo_ref, &old_tree, &plan.new, name)?,
-    };
-    if !replay {
-        // The candidate is durable before the target changes, allowing retry
-        // after a lost response. For checked-out branches, the native Git merge
-        // retains landing's documented race with other Git commands and edits.
-        let undo = Plan {
-            target: plan.target.clone(),
-            old: plan.new.clone(),
-            new: commit.clone(),
-            tip: plan.new.clone(),
-        };
-        if let Err(error) = landing::apply(repo, &undo) {
-            if let Ok(current) = recovery::direct_ref(repo, &target_ref)
-                && current.as_deref() != landed
-                && current.as_deref() != Some(commit.as_str())
-            {
-                return Err(target_advanced(&plan.target, &plan.new, current.as_deref()));
-            }
-            return Err(error);
+        None => {
+            let message = format!("Undo graft landing into {}", plan.target);
+            let mut command = git::command(repo);
+            git::use_private_objects(&mut command, objects);
+            create_candidate(command, objects, undo_ref, &old_tree, &plan.new, &message)?
         }
+    };
+    let undo = Plan {
+        target: plan.target.clone(),
+        old: plan.new.clone(),
+        new: commit.clone(),
+        tip: plan.new.clone(),
+    };
+    if replay {
+        landing::finish_applied_checkout(repo, &undo)?;
+    } else if let Err(error) = apply(&undo) {
+        if let Ok(current) = recovery::direct_ref(repo, &target_ref)
+            && current.as_deref() != landed
+            && current.as_deref() != Some(commit.as_str())
+        {
+            return Err(target_advanced(&plan.target, &plan.new, current.as_deref()));
+        }
+        return Err(error);
     }
     let current = recovery::direct_ref(repo, &target_ref)?;
     if current.as_deref() != Some(commit.as_str()) {
         return Err(target_advanced(&plan.target, &commit, current.as_deref()));
     }
-    Ok(
-        json!({"action": "undo", "name": name, "target": plan.target,
-        "previous": plan.new, "commit": commit}),
-    )
+    Ok(json!({"action": "undo", "target": plan.target,
+        "previous": plan.new, "commit": commit}))
 }
 
 #[cfg(test)]
@@ -179,7 +181,14 @@ mod tests {
         git::bytes(repo, &["add", "landed"])?;
         git::bytes(repo, &["commit", "-m", "landed"])?;
         let landed = git::oid(repo, "HEAD")?;
-        let candidate = create_candidate(repo, "refs/graft/test/undo", &old_tree, &landed, "test")?;
+        let candidate = create_candidate(
+            git::command(repo),
+            repo,
+            "refs/graft/test/undo",
+            &old_tree,
+            &landed,
+            "test",
+        )?;
         verify_candidate(repo, &candidate, &old_tree, &landed)?;
         assert!(verify_candidate(repo, &candidate, &tree(repo, &landed)?, &landed).is_err());
         assert!(verify_candidate(repo, &candidate, &old_tree, &base).is_err());

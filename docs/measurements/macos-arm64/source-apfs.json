@@ -1,0 +1,277 @@
+{
+  "schemaVersion": 1,
+  "platform": "darwin",
+  "architecture": "arm64",
+  "node": "v24.5.0",
+  "git": "git version 2.56.0",
+  "graftBinary": {
+    "name": "git-graft",
+    "bytes": 3782384,
+    "sha256": "14d7a90df28888562ed5c912d3bef08d1283ce362289c4787b004e89e7d48144"
+  },
+  "fixture": {
+    "head": "c6db18e2350dc7a296454719bc50750f4d3b4183",
+    "tree": "a299cd602df0c035d558e34039e5874664093659",
+    "sha256": "adba58c1bcf37c3cff98836b41ae1106204e04b48d6404d20925644bba455537",
+    "trackedFiles": 4005,
+    "smallFiles": 4000,
+    "largeFiles": 3,
+    "largeMiB": 8,
+    "historyCommits": 8,
+    "historyKiB": 1024,
+    "repeats": 3
+  },
+  "apfsCalibration": {
+    "observerSeconds": 0.19906012499999998
+  },
+  "scope": "Cold is the first spawn in a fresh primary with no workspace state. Repeat follows immediately in that primary. Wall time covers only the Git or Graft CLI process. Fixture creation, validation, mutation after spawn, and disk observations are excluded. Signed disk deltas use volume-wide statfs. Optional APFS deltas count mapped regular-file allocation blocks once and exclude metadata, xattrs, and forks. Omit APFS scans for timing-only runs because scans can warm metadata caches.",
+  "summary": {
+    "native": {
+      "coldSeconds": 0.3462582500000026,
+      "repeatSeconds": 0.3138824160000004,
+      "coldStatfsBytes": 43347968,
+      "repeatStatfsBytes": 87035904,
+      "apfsRepeatBytes": 83943424
+    },
+    "graft": {
+      "coldSeconds": 1.1104035000000003,
+      "repeatSeconds": 0.7125707500000008,
+      "coldStatfsBytes": 128585728,
+      "repeatStatfsBytes": 147525632,
+      "apfsRepeatBytes": 33640448
+    }
+  },
+  "runs": [
+    {
+      "order": [
+        "native",
+        "graft"
+      ],
+      "results": {
+        "native": {
+          "cold": {
+            "seconds": 0.2953129169999993,
+            "bytesSincePopulatedCheckout": "43745280"
+          },
+          "repeat": {
+            "seconds": 0.3138824160000004,
+            "bytesSincePopulatedCheckout": "87601152"
+          },
+          "editedHead": "21ca0b6c988650bf32581f6ff13675c6a55631d4",
+          "apfsFileData": {
+            "baselineBytes": "76316672",
+            "repeatBytes": "160260096",
+            "repeatBytesSincePopulatedCheckout": "83943424",
+            "observerSeconds": 0.6825050830000009
+          }
+        },
+        "graft": {
+          "cold": {
+            "seconds": 1.1104035000000003,
+            "bytesSincePopulatedCheckout": "369950720",
+            "objectBootstrap": {
+              "method": "clonefile",
+              "source": "primary-pack",
+              "object_format": "sha1",
+              "bytes": 34306406,
+              "pack_bytes": 34191234,
+              "index_bytes": 115172,
+              "shared_bytes": 34306406,
+              "cache_bytes": 34306406,
+              "pack_count": 1,
+              "reused_primary_packs": 1,
+              "reused_primary_bytes": 34306406,
+              "timings": {
+                "cache_publish_seconds": 0.066518208,
+                "reachability_seconds": 0.007827167,
+                "transfer_seconds": 0.1329445,
+                "verify_seconds": 0.007224417,
+                "total_seconds": 0.233800125
+              }
+            }
+          },
+          "repeat": {
+            "seconds": 0.7493548329999994,
+            "bytesSincePopulatedCheckout": "630435840",
+            "objectBootstrap": {
+              "method": "clonefile",
+              "source": "cache",
+              "object_format": "sha1",
+              "bytes": 34306406,
+              "pack_bytes": 34191234,
+              "index_bytes": 115172,
+              "shared_bytes": 34306406,
+              "cache_bytes": 0,
+              "pack_count": 1,
+              "timings": {
+                "cache_seconds": 0.02227075,
+                "total_seconds": 0.048876667
+              }
+            }
+          },
+          "editedHead": "21ca0b6c988650bf32581f6ff13675c6a55631d4",
+          "apfsFileData": {
+            "baselineBytes": "76316672",
+            "repeatBytes": "109957120",
+            "repeatBytesSincePopulatedCheckout": "33640448",
+            "observerSeconds": 0.9010539160000008
+          }
+        }
+      }
+    },
+    {
+      "order": [
+        "graft",
+        "native"
+      ],
+      "results": {
+        "graft": {
+          "cold": {
+            "seconds": 1.1543759580000006,
+            "bytesSincePopulatedCheckout": "128585728",
+            "objectBootstrap": {
+              "method": "clonefile",
+              "source": "primary-pack",
+              "object_format": "sha1",
+              "bytes": 34306406,
+              "pack_bytes": 34191234,
+              "index_bytes": 115172,
+              "shared_bytes": 34306406,
+              "cache_bytes": 34306406,
+              "pack_count": 1,
+              "reused_primary_packs": 1,
+              "reused_primary_bytes": 34306406,
+              "timings": {
+                "cache_publish_seconds": 0.069706167,
+                "reachability_seconds": 0.007747083,
+                "transfer_seconds": 0.129169916,
+                "verify_seconds": 0.006516333,
+                "total_seconds": 0.233126625
+              }
+            }
+          },
+          "repeat": {
+            "seconds": 0.7125707500000008,
+            "bytesSincePopulatedCheckout": "147525632",
+            "objectBootstrap": {
+              "method": "clonefile",
+              "source": "cache",
+              "object_format": "sha1",
+              "bytes": 34306406,
+              "pack_bytes": 34191234,
+              "index_bytes": 115172,
+              "shared_bytes": 34306406,
+              "cache_bytes": 0,
+              "pack_count": 1,
+              "timings": {
+                "cache_seconds": 0.021226208,
+                "total_seconds": 0.05066325
+              }
+            }
+          },
+          "editedHead": "21ca0b6c988650bf32581f6ff13675c6a55631d4",
+          "apfsFileData": {
+            "baselineBytes": "76316672",
+            "repeatBytes": "109957120",
+            "repeatBytesSincePopulatedCheckout": "33640448",
+            "observerSeconds": 0.7727491259999988
+          }
+        },
+        "native": {
+          "cold": {
+            "seconds": 0.34897691699999994,
+            "bytesSincePopulatedCheckout": "43347968"
+          },
+          "repeat": {
+            "seconds": 0.502968458000003,
+            "bytesSincePopulatedCheckout": "85270528"
+          },
+          "editedHead": "21ca0b6c988650bf32581f6ff13675c6a55631d4",
+          "apfsFileData": {
+            "baselineBytes": "76316672",
+            "repeatBytes": "160260096",
+            "repeatBytesSincePopulatedCheckout": "83943424",
+            "observerSeconds": 0.6900348749999976
+          }
+        }
+      }
+    },
+    {
+      "order": [
+        "native",
+        "graft"
+      ],
+      "results": {
+        "native": {
+          "cold": {
+            "seconds": 0.3462582500000026,
+            "bytesSincePopulatedCheckout": "43347968"
+          },
+          "repeat": {
+            "seconds": 0.2929641249999986,
+            "bytesSincePopulatedCheckout": "87035904"
+          },
+          "editedHead": "21ca0b6c988650bf32581f6ff13675c6a55631d4",
+          "apfsFileData": {
+            "baselineBytes": "76316672",
+            "repeatBytes": "160260096",
+            "repeatBytesSincePopulatedCheckout": "83943424",
+            "observerSeconds": 0.7088661259999972
+          }
+        },
+        "graft": {
+          "cold": {
+            "seconds": 1.0466918330000008,
+            "bytesSincePopulatedCheckout": "23379968",
+            "objectBootstrap": {
+              "method": "clonefile",
+              "source": "primary-pack",
+              "object_format": "sha1",
+              "bytes": 34306406,
+              "pack_bytes": 34191234,
+              "index_bytes": 115172,
+              "shared_bytes": 34306406,
+              "cache_bytes": 34306406,
+              "pack_count": 1,
+              "reused_primary_packs": 1,
+              "reused_primary_bytes": 34306406,
+              "timings": {
+                "cache_publish_seconds": 0.06460075,
+                "reachability_seconds": 0.006984917,
+                "transfer_seconds": 0.129491875,
+                "verify_seconds": 0.00694175,
+                "total_seconds": 0.21822375
+              }
+            }
+          },
+          "repeat": {
+            "seconds": 0.6533694589999978,
+            "bytesSincePopulatedCheckout": "42078208",
+            "objectBootstrap": {
+              "method": "clonefile",
+              "source": "cache",
+              "object_format": "sha1",
+              "bytes": 34306406,
+              "pack_bytes": 34191234,
+              "index_bytes": 115172,
+              "shared_bytes": 34306406,
+              "cache_bytes": 0,
+              "pack_count": 1,
+              "timings": {
+                "cache_seconds": 0.0207605,
+                "total_seconds": 0.036328083
+              }
+            }
+          },
+          "editedHead": "21ca0b6c988650bf32581f6ff13675c6a55631d4",
+          "apfsFileData": {
+            "baselineBytes": "76316672",
+            "repeatBytes": "109957120",
+            "repeatBytesSincePopulatedCheckout": "33640448",
+            "observerSeconds": 0.7468699579999993
+          }
+        }
+      }
+    }
+  ]
+}

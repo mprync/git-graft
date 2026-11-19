@@ -1,15 +1,13 @@
 import assert from 'node:assert/strict';
-import { spawn as spawnProcess } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { execFile, spawn as spawnProcess } from 'node:child_process';
+import { existsSync, mkdirSync, readFileSync, rmSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { promisify } from 'node:util';
 import type { Scenario } from './harness.ts';
 
 type Context = Parameters<Scenario['run']>[0];
 
-function record(ctx: Context, name: string): string {
-  return join(ctx.repo, '.git', 'graft', 'records', `${name}.json`);
-}
 function object(value: unknown): Record<string, unknown> {
   assert.ok(value && typeof value === 'object' && !Array.isArray(value));
   return value as Record<string, unknown>;
@@ -18,18 +16,8 @@ function array(value: unknown): unknown[] {
   assert.ok(Array.isArray(value));
   return value;
 }
-function editRecord(ctx: Context, name: string, change: (value: Record<string, unknown>) => void): void {
-  const path = record(ctx, name);
-  const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
-  const data = object(parsed);
-  change(data);
-  writeFileSync(path, JSON.stringify(data));
-}
 function drop(ctx: Context, name: string, lease: string, ...args: string[]): Record<string, unknown> {
   return ctx.cli(['drop', name, '--lease', lease, ...args]);
-}
-function land(ctx: Context, name: string, lease: string, ...args: string[]): Record<string, unknown> {
-  return ctx.cli(['land', name, '--lease', lease, ...args]);
 }
 function commit(ctx: Context, cwd: string, message: string): void {
   ctx.git(['add', '-A'], cwd);
@@ -45,7 +33,9 @@ export const cases: Scenario[] = [
     run(ctx) {
       const doctor = ctx.cli(['doctor']);
       assert.ok(doctor.git && doctor.common_dir && doctor.source_storage);
-      assert.equal(typeof doctor.recovery_supported, 'boolean');
+      assert.equal(doctor.git, ctx.git(['--version']));
+      assert.equal(doctor.git_minimum, '2.46.0');
+      assert.equal(doctor.git_supported, true);
       assert.equal(array(ctx.cli(['list']).workspaces).length, 0);
       const w = ctx.spawn('agent');
       assert.equal(JSON.stringify(ctx.cli(['doctor'])).includes(w.lease), false, 'doctor exposed the active lease');
@@ -53,7 +43,8 @@ export const cases: Scenario[] = [
       assert.equal(ctx.git(['branch', '--show-current']), 'main');
       assert.ok(names(ctx.cli(['list']).workspaces).includes('agent'));
       let status = ctx.cli(['status', 'agent']);
-      assert.equal(status.registered, true);
+      assert.equal(status.path, w.path);
+      assert.equal(status.phase, 'ready');
       assert.equal(status.change_count, 0);
       writeFileSync(join(w.path, 'tracked.txt'), 'committed\n');
       commit(ctx, w.path, 'workspace commit');
@@ -61,7 +52,7 @@ export const cases: Scenario[] = [
       writeFileSync(join(w.path, 'untracked.txt'), 'new');
       assert.equal(readFileSync(join(ctx.repo, 'tracked.txt'), 'utf8'), 'initial\n');
       status = ctx.cli(['status', 'agent']);
-      assert.ok(array(status.committed_paths).includes('tracked.txt'));
+      assert.equal(status.head, ctx.git(['rev-parse', 'HEAD'], w.path));
       const changes = array(status.changes).map(object);
       assert.ok(changes.some((v) => v.path === 'tracked.txt'));
       assert.ok(changes.some((v) => v.path === 'untracked.txt'));
@@ -74,17 +65,20 @@ export const cases: Scenario[] = [
     },
   },
   {
-    name: 'linked source shares registry and primary root',
+    name: 'a native linked checkout stays intact while Graft uses the primary',
     run(ctx) {
-      const linked = join(ctx.root, 'linked');
-      ctx.git(['worktree', 'add', '-b', 'other', linked]);
-      const w = ctx.spawn('linked-agent', [], linked);
-      assert.ok(existsSync(w.path));
-      assert.equal(ctx.git(['branch', '--show-current'], w.path), 'graft/linked-agent');
-      assert.ok(names(ctx.cli(['list']).workspaces).includes('linked-agent'));
-      ctx.cli(['drop', 'linked-agent', '--lease', w.lease], linked);
+      const linked = join(ctx.root, 'native linked checkout');
+      ctx.git(['worktree', 'add', '-qb', 'other', linked]);
+      writeFileSync(join(linked, 'tracked.txt'), 'native user edit\n');
+      const head = ctx.git(['rev-parse', 'HEAD'], linked);
+      assert.match(String(ctx.fail(['spawn', 'native-input'], linked).message), /primary repository/i);
+      const w = ctx.spawn('agent');
+      assert.ok(names(ctx.cli(['list']).workspaces).includes('agent'));
+      assert.equal(ctx.git(['rev-parse', 'HEAD'], w.path), head);
+      drop(ctx, 'agent', w.lease);
       assert.equal(existsSync(w.path), false);
-      ctx.git(['worktree', 'remove', linked]);
+      assert.equal(ctx.git(['rev-parse', 'HEAD'], linked), head);
+      assert.equal(readFileSync(join(linked, 'tracked.txt'), 'utf8'), 'native user edit\n');
     },
   },
   {
@@ -108,25 +102,7 @@ export const cases: Scenario[] = [
     },
   },
   {
-    name: 'landing refusal preserves data and commit lands',
-    run(ctx) {
-      const w = ctx.spawn('agent');
-      writeFileSync(join(w.path, 'tracked.txt'), 'landed\n');
-      ctx.fail(['land', 'agent', '--lease', w.lease]);
-      assert.equal(readFileSync(join(w.path, 'tracked.txt'), 'utf8'), 'landed\n');
-      assert.equal(readFileSync(join(ctx.repo, 'tracked.txt'), 'utf8'), 'initial\n');
-      mkdirSync(join(w.path, 'ignored'));
-      writeFileSync(join(w.path, 'ignored', 'data'), 'keep ignored');
-      ctx.fail(['land', 'agent', '--lease', w.lease, '--commit', 'agent changes']);
-      assert.equal(readFileSync(join(w.path, 'ignored', 'data'), 'utf8'), 'keep ignored');
-      const result = land(ctx, 'agent', w.lease, '--commit', 'agent changes', '--discard-ignored');
-      assert.equal(result.commit, ctx.git(['rev-parse', 'main']));
-      assert.equal(ctx.git(['show', 'main:tracked.txt']), 'landed');
-      assert.equal(existsSync(w.path), false);
-    },
-  },
-  {
-    name: 'land invoked from retiring worktree',
+    name: 'land invoked from the workspace it retires',
     run(ctx) {
       const w = ctx.spawn('agent');
       writeFileSync(join(w.path, 'tracked.txt'), 'integrate\n');
@@ -134,25 +110,6 @@ export const cases: Scenario[] = [
       assert.equal(result.commit, ctx.git(['rev-parse', 'main']));
       assert.equal(existsSync(w.path), false);
       assert.equal(ctx.git(['branch', '--list', 'graft/agent']), '');
-    },
-  },
-  {
-    name: 'gc previews and retains stale dirty work',
-    run(ctx) {
-      const clean = ctx.spawn('clean');
-      const dirty = ctx.spawn('dirty');
-      writeFileSync(join(dirty.path, 'untracked'), 'keep');
-      for (const name of ['clean', 'dirty']) editRecord(ctx, name, (r) => { r.heartbeat = 0; });
-      const preview = ctx.cli(['gc']);
-      assert.ok(array(preview.candidates).includes('clean'));
-      assert.ok(names(preview.retained).includes('dirty'));
-      assert.ok(existsSync(clean.path));
-      const applied = ctx.cli(['gc', '--apply']);
-      assert.ok(array(applied.removed).includes('clean'));
-      assert.ok(names(applied.retained).includes('dirty'));
-      assert.equal(existsSync(clean.path), false);
-      assert.equal(readFileSync(join(dirty.path, 'untracked'), 'utf8'), 'keep');
-      drop(ctx, 'dirty', dirty.lease, '--discard');
     },
   },
   {
@@ -164,10 +121,10 @@ export const cases: Scenario[] = [
       }));
       commit(ctx, ctx.repo, 'Layer fixture');
       const w = ctx.spawn('agent');
+      ctx.cli(['exec', 'agent', '--lease', w.lease, '--', process.execPath, '-e', '']);
       const cacheDir = join(ctx.repo, '.git', 'graft', 'cache');
       const layerDir = join(ctx.repo, '.git', 'graft', 'layers');
       const npm = join(cacheDir, 'npm');
-      mkdirSync(npm);
       writeFileSync(join(npm, 'entry'), 'package cache');
       const foreignCache = join(cacheDir, 'fixture');
       const foreignLayer = join(layerDir, 'fixture');
@@ -177,7 +134,7 @@ export const cases: Scenario[] = [
       mkdirSync(modules, { recursive: true });
       writeFileSync(join(modules, 'index.js'), 'module.exports = 1;\n');
       function save(key: string): string {
-        const layer = ctx.cli(['layer', 'agent', '--lease', w.lease, 'save', '--key', key]);
+        const layer = ctx.cli(['layer', 'agent', '--lease', w.lease, 'save', '--key', key, '--copy']);
         assert.equal(typeof layer.digest, 'string');
         return join(layerDir, String(layer.digest));
       }
@@ -197,12 +154,24 @@ export const cases: Scenario[] = [
       assert.equal(preview.eligible, true);
       assert.equal(preview.purged, false);
       assert.ok(existsSync(verified));
-      const applied = object(ctx.cli(['gc', '--purge-cache', '--apply']).cache);
       // Layer deletion requires metadata verification unavailable on Windows.
       const canPurgeLayer = process.platform !== 'win32';
+      assert(typeof w.result.base === 'string');
+      const base = join(ctx.repo, '.git', 'graft', 'bases', w.result.base);
+      const packages = ['npm', 'pnpm', 'bun', 'cargo', 'uv', 'sccache'].map(name => join(cacheDir, name));
+      const removable = [...packages, ...(canPurgeLayer ? [verified] : []), ...(existsSync(base) ? [base] : [])];
+      const blocked = [foreignCache, foreignLayer, changed, ...(canPurgeLayer ? [] : [verified])];
+      const candidates = array(preview.candidates);
+      for (const path of removable) assert(candidates.includes(path), `Expected a purge candidate at ${path}`);
+      for (const path of blocked) assert(!candidates.includes(path), `Unexpected purge candidate at ${path}`);
+      const applied = object(ctx.cli(['gc', '--purge-cache', '--apply']).cache);
       assert.equal(applied.purged, true);
-      assert.equal(array(applied.removed).length, canPurgeLayer ? 2 : 1);
-      assert.equal(array(applied.blocked).length, canPurgeLayer ? 3 : 4);
+      assert.deepEqual(array(applied.removed).sort(), candidates.sort());
+      for (const report of [preview, applied]) {
+        const retained = array(report.blocked).map(row => object(row).path);
+        for (const path of blocked) assert(retained.includes(path), `Expected blocked cache at ${path}`);
+      }
+      assert.equal(existsSync(base), false);
       assert.equal(existsSync(npm), false);
       assert.equal(existsSync(verified), !canPurgeLayer);
       assert.equal(readFileSync(foreignCache, 'utf8'), 'user cache note');
@@ -230,8 +199,12 @@ export const cases: Scenario[] = [
         const deadline = Date.now() + 10000;
         while (!existsSync(started) && Date.now() < deadline) await delay(25);
         assert.ok(existsSync(started), `exec did not start: ${stderr}`);
-        ctx.fail(['drop', 'agent', '--lease', w.lease, '--discard']);
+        assert.equal(ctx.fail(['drop', 'agent', '--lease', w.lease, '--discard']).code, 'workspace_busy');
+        assert.equal(ctx.fail(['move', 'agent', join(ctx.root, 'busy move'), '--lease', w.lease]).code, 'workspace_busy');
         assert.ok(existsSync(w.path));
+        const peer = ctx.spawn('peer');
+        drop(ctx, 'peer', peer.lease);
+        assert.equal(existsSync(peer.path), false);
         writeFileSync(release, 'release');
         assert.equal(await exit, 0, stderr);
         ctx.coverCli('exec');
@@ -244,38 +217,22 @@ export const cases: Scenario[] = [
     },
   },
   {
-    name: 'changed branch and hidden index flags protect work',
+    name: 'hidden index flags protect local edits from drop and land',
     run(ctx) {
       const w = ctx.spawn('agent');
-      ctx.git(['switch', '-c', 'foreign'], w.path);
-      assert.equal(ctx.cli(['status', 'agent']).registered, false);
-      ctx.fail(['drop', 'agent', '--lease', w.lease, '--discard']);
-      assert.ok(existsSync(w.path));
-      ctx.git(['switch', 'graft/agent'], w.path);
+      const base = ctx.git(['rev-parse', 'HEAD']);
       for (const flag of ['assume-unchanged', 'skip-worktree']) {
-        writeFileSync(join(w.path, 'tracked.txt'), `${flag}\n`);
-        ctx.git(['update-index', `--${flag}`, 'tracked.txt'], w.path);
-        ctx.fail(['drop', 'agent', '--lease', w.lease]);
-        assert.equal(readFileSync(join(w.path, 'tracked.txt'), 'utf8'), `${flag}\n`);
-        ctx.git(['update-index', `--no-${flag}`, 'tracked.txt'], w.path);
+        writeFileSync(join(w.path, 'tracked.txt'), flag + '\n');
+        ctx.git(['update-index', '--' + flag, 'tracked.txt'], w.path);
+        assert.equal(ctx.fail(['drop', 'agent', '--lease', w.lease]).code, 'hidden_changes');
+        assert.equal(ctx.fail(['land', 'agent', '--lease', w.lease]).code, 'hidden_changes');
+        assert.equal(readFileSync(join(w.path, 'tracked.txt'), 'utf8'), flag + '\n');
+        assert.equal(ctx.git(['rev-parse', 'HEAD']), base);
+        ctx.git(['update-index', '--no-' + flag, 'tracked.txt'], w.path);
       }
-      ctx.git(['worktree', 'lock', w.path]);
-      ctx.fail(['drop', 'agent', '--lease', w.lease, '--discard']);
-      ctx.git(['worktree', 'unlock', w.path]);
       drop(ctx, 'agent', w.lease, '--discard');
-    },
-  },
-  {
-    name: 'moved worktree is protected until restored',
-    run(ctx) {
-      const w = ctx.spawn('agent');
-      const moved = join(ctx.root, 'moved');
-      ctx.git(['worktree', 'move', w.path, moved]);
-      ctx.fail(['drop', 'agent', '--lease', w.lease, '--discard']);
-      assert.ok(existsSync(moved));
-      ctx.git(['worktree', 'move', moved, w.path]);
-      drop(ctx, 'agent', w.lease);
-      assert.equal(existsSync(w.path), false);
+      ctx.cli(['restore', 'agent', '--lease', w.lease]);
+      assert.equal(readFileSync(join(w.path, 'tracked.txt'), 'utf8'), 'skip-worktree\n');
     },
   },
   {
@@ -283,9 +240,9 @@ export const cases: Scenario[] = [
     run(ctx) {
       const w = ctx.spawn('agent');
       const moved = join(ctx.root, 'moved');
-      ctx.git(['worktree', 'move', w.path, moved]);
+      renameSync(w.path, moved);
       try {
-        symlinkSync(moved, w.path, 'dir');
+        symlinkSync(moved, w.path, process.platform === 'win32' ? 'junction' : 'dir');
       } catch (error) {
         ctx.unavailable(`Cannot create directory symlink to verify redirection protection: ${String(error)}`);
       }
@@ -295,7 +252,7 @@ export const cases: Scenario[] = [
       } finally {
         unlinkSync(w.path);
       }
-      ctx.git(['worktree', 'move', moved, w.path]);
+      renameSync(moved, w.path);
       drop(ctx, 'agent', w.lease);
     },
   },
@@ -324,6 +281,29 @@ export const cases: Scenario[] = [
     },
   },
   {
+    name: 'concurrent retries of the same spawn reserve one identity',
+    async run(ctx) {
+      const id = '80dd84ae-2182-42d5-ad09-1b14d6d9480a';
+      const args = ['--repo', ctx.repo, '--json', 'spawn', 'concurrent', '--request-id', id];
+      const spawn = promisify(execFile);
+      const attempts = await Promise.allSettled(Array.from({ length: 3 }, () =>
+        spawn(ctx.bin, args, { cwd: ctx.repo, env: ctx.env, timeout: 30_000 })));
+      const results = attempts.map(attempt => {
+        assert.equal(attempt.status, 'fulfilled', attempt.status === 'rejected' ? String(attempt.reason) : undefined);
+        return object(JSON.parse(attempt.value.stdout));
+      });
+      const [first, ...retries] = results;
+      assert.equal(first.lease, id);
+      assert(typeof first.path === 'string');
+      for (const retry of retries) assert.deepEqual(retry, first);
+      assert.deepEqual(names(ctx.cli(['list']).workspaces), ['concurrent']);
+      assert.equal(ctx.git(['rev-parse', 'HEAD'], first.path), ctx.git(['rev-parse', 'HEAD']));
+      ctx.git(['fsck', '--full'], first.path);
+      drop(ctx, 'concurrent', id);
+      ctx.coverCli('spawn');
+    },
+  },
+  {
     name: 'drop replay and reused slug reject stale lease',
     run(ctx) {
       const first = ctx.spawn('agent');
@@ -332,98 +312,12 @@ export const cases: Scenario[] = [
       const next = ctx.spawn('agent');
       assert.notEqual(first.lease, next.lease);
       ctx.fail(['heartbeat', 'agent', '--lease', first.lease]);
-      ctx.fail(['drop', 'agent', '--lease', first.lease, '--discard']);
+      assert.deepEqual(drop(ctx, 'agent', first.lease, '--discard'), result);
+      ctx.fail(['restore', 'agent', '--lease', first.lease]);
       assert.ok(existsSync(next.path));
+      assert.equal(ctx.cli(['status', 'agent']).id, next.result.id);
       ctx.cli(['heartbeat', 'agent', '--lease', next.lease]);
       drop(ctx, 'agent', next.lease);
-    },
-  },
-  {
-    name: 'squash land replay does not create another commit',
-    run(ctx) {
-      const w = ctx.spawn('agent');
-      writeFileSync(join(w.path, 'tracked.txt'), 'landed\n');
-      const args = ['land', 'agent', '--lease', w.lease, '--squash', '--commit', 'agent work'];
-      const result = ctx.cli(args);
-      const head = ctx.git(['rev-parse', 'main']);
-      const count = ctx.git(['rev-list', '--count', 'main']);
-      assert.deepEqual(ctx.cli(args), result);
-      assert.equal(ctx.git(['rev-parse', 'main']), head);
-      assert.equal(ctx.git(['rev-list', '--count', 'main']), count);
-      const next = ctx.spawn('agent');
-      ctx.fail(args);
-      assert.ok(existsSync(next.path));
-      drop(ctx, 'agent', next.lease);
-    },
-  },
-  {
-    name: 'drop resumes after interrupted worktree removal',
-    run(ctx) {
-      const w = ctx.spawn('agent');
-      const tip = ctx.git(['rev-parse', 'HEAD'], w.path);
-      editRecord(ctx, 'agent', (r) => { r.state = { phase: 'removing', tip, discard: false, discard_ignored: false, landed: null }; });
-      ctx.git(['worktree', 'remove', w.path]);
-      const result = drop(ctx, 'agent', w.lease);
-      assert.equal(existsSync(record(ctx, 'agent')), false);
-      assert.equal(ctx.git(['branch', '--list', 'graft/agent']), '');
-      assert.deepEqual(drop(ctx, 'agent', w.lease), result);
-    },
-  },
-  {
-    name: 'landing resumes from persisted plan',
-    run(ctx) {
-      const w = ctx.spawn('agent');
-      const old = ctx.git(['rev-parse', 'main']);
-      writeFileSync(join(w.path, 'tracked.txt'), 'planned\n');
-      commit(ctx, w.path, 'planned');
-      const tip = ctx.git(['rev-parse', 'HEAD'], w.path);
-      const plan = { target: 'main', old, new: tip, tip };
-      editRecord(ctx, 'agent', (r) => { r.state = { phase: 'landing', plan, discard_ignored: false }; });
-      const result = land(ctx, 'agent', w.lease);
-      assert.equal(result.commit, tip);
-      assert.equal(ctx.git(['rev-parse', 'main']), tip);
-      assert.equal(ctx.git(['show', 'main:tracked.txt']), 'planned');
-      assert.equal(existsSync(w.path), false);
-      assert.deepEqual(land(ctx, 'agent', w.lease), result);
-    },
-  },
-  {
-    name: 'landing resumes after applied worktree removal',
-    run(ctx) {
-      const w = ctx.spawn('agent');
-      const old = ctx.git(['rev-parse', 'main']);
-      writeFileSync(join(w.path, 'tracked.txt'), 'applied\n');
-      commit(ctx, w.path, 'applied');
-      const tip = ctx.git(['rev-parse', 'HEAD'], w.path);
-      ctx.git(['merge', '--ff-only', tip]);
-      const plan = { target: 'main', old, new: tip, tip };
-      editRecord(ctx, 'agent', (r) => { r.state = { phase: 'removing', tip, discard: false, discard_ignored: false, landed: plan }; });
-      ctx.git(['worktree', 'remove', w.path]);
-      const result = land(ctx, 'agent', w.lease);
-      assert.equal(result.commit, tip);
-      assert.equal(ctx.git(['rev-parse', 'main']), tip);
-      assert.equal(ctx.git(['branch', '--list', 'graft/agent']), '');
-      assert.equal(existsSync(record(ctx, 'agent')), false);
-      assert.deepEqual(land(ctx, 'agent', w.lease), result);
-    },
-  },
-  {
-    name: 'expired completion receipts require gc apply',
-    run(ctx) {
-      const w = ctx.spawn('agent');
-      const result = drop(ctx, 'agent', w.lease);
-      const receipt = join(ctx.repo, '.git', 'graft', 'completed', `${w.lease}.json`);
-      const parsed: unknown = JSON.parse(readFileSync(receipt, 'utf8'));
-      const data = object(parsed);
-      data.at = Math.floor(Date.now() / 1000) - 8 * 86400;
-      writeFileSync(receipt, JSON.stringify(data));
-      const preview = ctx.cli(['gc']);
-      assert.equal(preview.expired_receipts, 1);
-      assert.deepEqual(drop(ctx, 'agent', w.lease), result);
-      const applied = ctx.cli(['gc', '--apply']);
-      assert.equal(applied.expired_receipts, 1);
-      assert.equal(existsSync(receipt), false);
-      ctx.fail(['drop', 'agent', '--lease', w.lease]);
     },
   },
 ];

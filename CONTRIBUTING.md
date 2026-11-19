@@ -1,7 +1,14 @@
 # Contributing
 
-Build with stable Rust and Git. Before submitting a change run `cargo fmt --all --check`, `cargo clippy --locked --all-targets -- -D warnings`, `cargo test --locked` and `npm test`. Tests create disposable repositories.
+Build with Rust 1.89 or newer and Git. Run these checks before submitting changes:
 
-Keep Git lifecycle decisions in the shared engine. CLI argument definitions also generate the MCP input schemas. A new user-facing operation needs assertions through the binary and the stdio protocol in the TypeScript suite. Filesystem changes need both a supported-volume case and a fallback case. Destructive changes need a test that proves the original files or refs survive refusal and interrupted retries.
+```sh
+cargo fmt --all --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked
+npm test
+```
 
-Include the operating system, Git version, reported storage backend and a minimal reproduction when reporting a bug. Remove lease values and private repository data from shared logs. Contributions use the project's MIT license.
+The end-to-end suite uses disposable repositories and needs the tools listed in [verification](docs/verification.md). Exercise user-facing operations through the CLI and MCP, and cover supported and fallback filesystem paths where relevant. For retirement and recovery changes, verify that refused or interrupted operations preserve the original files and refs.
+
+When reporting a bug, include the operating system, Git version, storage receipt and a minimal reproduction. Remove leases and private repository data from logs. Contributions use the [MIT license](LICENSE).

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { leaveIndexedCheckoutJournal } from './checkout-journal.ts';
 import type { Scenario } from './harness.ts';
 
 type Context = Parameters<Scenario['run']>[0];
@@ -62,11 +63,17 @@ export const cases: Scenario[] = [
       const old = ctx.git(['rev-parse', 'HEAD']).trim();
       write(workspace.path, 'feature.txt', 'feature\n');
       const tip = commit(ctx, workspace.path, 'feature');
-      ctx.cli(landArgs(workspace, 'ff'));
+      const args = landArgs(workspace, 'ff');
+      const result = ctx.cli(args);
+      assert.equal(result.recovery_lease, workspace.lease);
+      assert.equal(result.commit, tip);
+      assert.equal(result.previous, old);
+      assert.deepEqual(ctx.cli(args), result);
       assert.equal(ctx.git(['rev-parse', 'HEAD']).trim(), tip);
       assert.deepEqual(parents(ctx), [old]);
       assert.equal(read(ctx.repo, 'feature.txt'), 'feature\n');
       assert.equal(existsSync(workspace.path), false);
+      ctx.git(['fsck', '--full']);
     },
   },
   ...[false, true].map((squash): Scenario => ({
@@ -75,13 +82,48 @@ export const cases: Scenario[] = [
       const workspace = ctx.spawn(squash ? 'squash' : 'merge');
       write(ctx.repo, 'ours.txt', 'ours\n');
       const old = commit(ctx, ctx.repo, 'ours');
+      let privateBlob: string | undefined;
+      if (squash) {
+        write(workspace.path, 'scratch.txt', 'private intermediate work\n');
+        commit(ctx, workspace.path, 'private intermediate work');
+        privateBlob = ctx.git(['rev-parse', 'HEAD:scratch.txt'], workspace.path);
+        ctx.git(['rm', '--', 'scratch.txt'], workspace.path);
+      }
       write(workspace.path, 'theirs.txt', 'theirs\n');
       const tip = commit(ctx, workspace.path, 'theirs');
-      ctx.cli(landArgs(workspace, squash ? 'squash' : 'merge', ...(squash ? ['--squash'] : [])));
+      const name = squash ? 'squash' : 'merge';
+      const args = landArgs(workspace, name, ...(squash ? ['--squash'] : []));
+      const result = ctx.cli(args);
+      assert.equal(result.workspace_tip, tip);
+      assert.equal(result.previous, old);
+      assert.deepEqual(ctx.cli(args), result);
+      assert.equal(ctx.git(['rev-parse', 'HEAD']), result.commit);
       assert.deepEqual(parents(ctx), squash ? [old] : [old, tip]);
       assert.equal(read(ctx.repo, 'ours.txt'), 'ours\n');
       assert.equal(read(ctx.repo, 'theirs.txt'), 'theirs\n');
-      assert.equal(ctx.git(['status', '--porcelain']).trim(), '');
+      assert.equal(ctx.git(['for-each-ref', '--format=%(refname)', 'refs/graft']), '');
+      if (privateBlob) {
+        for (const oid of [tip, privateBlob]) {
+          const check = ctx.command('git', ['cat-file', '-e', oid]);
+          assert.ifError(check.error);
+          assert.equal(check.status, 1, `primary contains private Git object ${oid}`);
+        }
+      }
+      assert.equal(ctx.git(['status', '--porcelain']), '');
+      const replacement = ctx.spawn(name);
+      write(replacement.path, 'local.txt', 'replacement data\n');
+      assert.deepEqual(ctx.cli(args), result);
+      assert.equal(ctx.git(['rev-parse', 'HEAD']), result.commit);
+      assert.equal(ctx.cli(['status', name]).id, replacement.result.id);
+      assert.equal(read(replacement.path, 'local.txt'), 'replacement data\n');
+      ctx.cli(['drop', name, '--lease', replacement.lease, '--discard']);
+      ctx.git(['gc', '--prune=now']);
+      ctx.git(['fsck', '--full']);
+      const restored = ctx.cli(['restore', name, '--lease', workspace.lease]);
+      assert.equal(restored.path, workspace.path);
+      assert.equal(ctx.git(['rev-parse', 'HEAD'], workspace.path), tip);
+      if (privateBlob) assert.equal(ctx.git(['cat-file', 'blob', privateBlob], workspace.path), 'private intermediate work');
+      ctx.git(['fsck', '--full'], workspace.path);
     },
   })),
   {
@@ -89,13 +131,16 @@ export const cases: Scenario[] = [
     run(ctx) {
       const workspace = ctx.spawn('dirty');
       write(workspace.path, 'collision.txt', 'landed\n');
-      commit(ctx, workspace.path, 'feature');
+      const tip = commit(ctx, workspace.path, 'feature');
       const old = ctx.git(['rev-parse', 'HEAD']).trim();
+      write(ctx.repo, 'tracked.txt', 'staged user edit\n');
+      ctx.git(['add', 'tracked.txt']);
       write(ctx.repo, 'tracked.txt', 'local edit\n');
       assert.match(String(ctx.fail(landArgs(workspace, 'dirty')).message), /local changes/i);
       assert.equal(read(ctx.repo, 'tracked.txt'), 'local edit\n');
       assert.equal(ctx.git(['rev-parse', 'HEAD']).trim(), old);
-      write(ctx.repo, 'tracked.txt', 'initial\n');
+      assert.equal(ctx.git(['show', ':tracked.txt']), 'staged user edit');
+      ctx.git(['restore', '--source=HEAD', '--staged', '--worktree', '--', 'tracked.txt']);
       const gitDir = ctx.git(['rev-parse', '--absolute-git-dir']).trim();
       write(gitDir, 'info/exclude', 'collision.txt\n');
       write(ctx.repo, 'collision.txt', 'ignored user data\n');
@@ -103,27 +148,37 @@ export const cases: Scenario[] = [
       assert.equal(read(ctx.repo, 'collision.txt'), 'ignored user data\n');
       assert.equal(ctx.git(['rev-parse', 'HEAD']).trim(), old);
       rmSync(join(ctx.repo, 'collision.txt'));
-      ctx.cli(landArgs(workspace, 'dirty'));
+      assert.equal(ctx.git(['rev-parse', 'HEAD'], workspace.path), tip);
+      assert.equal(ctx.cli(landArgs(workspace, 'dirty')).commit, tip);
       assert.equal(read(ctx.repo, 'collision.txt'), 'landed\n');
     },
   },
   {
-    name: 'landing respects locked linked destination',
+    name: 'landing protects a native linked destination and retries after it is removed',
     run(ctx) {
       const workspace = ctx.spawn('linked');
       const dest = join(ctx.root, 'destination with spaces');
       ctx.git(['worktree', 'add', '-b', 'target', dest]);
+      const main = ctx.git(['rev-parse', 'HEAD']);
       write(workspace.path, 'feature.txt', 'feature\n');
       const tip = commit(ctx, workspace.path, 'feature');
-      const main = ctx.git(['rev-parse', 'HEAD']).trim();
+      const args = landArgs(workspace, 'linked', '--into', 'target');
       ctx.git(['worktree', 'lock', dest]);
-      assert.match(String(ctx.fail(landArgs(workspace, 'linked', '--into', 'target')).message), /locked/i);
-      assert.equal(ctx.git(['rev-parse', 'HEAD'], dest).trim(), main);
+      assert.match(String(ctx.fail(args).message), /locked/i);
       ctx.git(['worktree', 'unlock', dest]);
-      ctx.cli(landArgs(workspace, 'linked', '--into', 'target'));
-      assert.equal(ctx.git(['rev-parse', 'HEAD'], dest).trim(), tip);
-      assert.equal(ctx.git(['rev-parse', 'HEAD']).trim(), main);
-      assert.equal(read(dest, 'feature.txt'), 'feature\n');
+      assert.match(String(ctx.fail(args).message), /external linked worktree/i);
+      assert.equal(ctx.git(['rev-parse', 'HEAD'], dest), main);
+      assert.equal(ctx.git(['status', '--porcelain'], dest), '');
+      assert.equal(read(dest, 'tracked.txt'), 'initial\n');
+      assert.equal(existsSync(join(dest, 'feature.txt')), false);
+      assert.equal(ctx.git(['rev-parse', 'HEAD'], workspace.path), tip);
+
+      ctx.git(['worktree', 'remove', dest]);
+      const landed = ctx.cli(args);
+      assert.equal(landed.commit, tip);
+      assert.equal(ctx.git(['rev-parse', 'HEAD']), main);
+      assert.equal(ctx.git(['show', 'target:feature.txt']), 'feature');
+      ctx.git(['fsck', '--full']);
     },
   },
   {
@@ -182,9 +237,9 @@ export const cases: Scenario[] = [
       const marker = join(ctx.root, 'hook-ran');
       writeFileSync(hook, '#!/bin/sh\nprintf ran > "$(git config --get graft.testmarker)"\n');
       chmodSync(hook, 0o755);
-      ctx.git(['config', 'core.hooksPath', hooks]);
-      ctx.git(['config', 'graft.testmarker', marker]);
       const workspace = ctx.spawn('hook');
+      ctx.git(['config', 'core.hooksPath', hooks], workspace.path);
+      ctx.git(['config', 'graft.testmarker', marker], workspace.path);
       write(workspace.path, 'feature.txt', 'staged by graft\n');
       ctx.cli(landArgs(workspace, 'hook', '--commit', 'workspace commit'));
       assert.equal(readFileSync(marker, 'utf8'), 'ran');
@@ -216,6 +271,200 @@ export const cases: Scenario[] = [
       assert.equal(ctx.git(['rev-parse', 'HEAD']).trim(), old);
     },
   },
+  {
+    name: 'explicit land commit refuses to overwrite distinct staged and unstaged content',
+    run(ctx) {
+      const ws = ctx.spawn('partial');
+      const base = ctx.git(['rev-parse', 'HEAD']);
+      const land = landArgs(ws, 'partial', '--commit', 'land changes');
+      const stagedDiff = () => ctx.git(['diff', '--cached', '--binary'], ws.path);
+      const assertRejected = (bytes: string) => {
+        const index = stagedDiff();
+        assert(index.includes('tracked.txt'));
+        assert.equal(ctx.fail(land).code, 'partially_staged');
+        assert.equal(stagedDiff(), index);
+        assert.equal(read(ws.path, 'tracked.txt'), bytes);
+        assert.equal(ctx.git(['rev-parse', 'HEAD'], ws.path), base);
+        assert.equal(ctx.git(['rev-parse', 'HEAD']), base);
+        assert.equal(read(ctx.repo, 'tracked.txt'), 'initial\n');
+      };
+
+      write(ws.path, 'tracked.txt', 'staged content\n');
+      ctx.git(['add', '--', 'tracked.txt'], ws.path);
+      write(ws.path, 'tracked.txt', 'unstaged content\n');
+      assertRejected('unstaged content\n');
+      assert.equal(ctx.git(['show', ':tracked.txt'], ws.path), 'staged content');
+
+      ctx.git(['rm', '-f', '--', 'tracked.txt'], ws.path);
+      write(ws.path, 'tracked.txt', 'recreated after staging deletion\n');
+      assertRejected('recreated after staging deletion\n');
+      ctx.git(['add', '--', 'tracked.txt'], ws.path);
+      const result = ctx.cli(land);
+      assert.equal(ctx.git(['rev-parse', 'HEAD']), result.commit);
+      assert.equal(read(ctx.repo, 'tracked.txt'), 'recreated after staging deletion\n');
+      ctx.git(['fsck', '--full']);
+    },
+  },
+  {
+    name: 'prepared reference hook rejection leaves the checked-out destination untouched',
+    run(ctx) {
+      const ws = ctx.spawn('hook-reject');
+      const base = ctx.git(['rev-parse', 'HEAD']);
+      write(ws.path, 'tracked.txt', 'incoming change\n');
+      write(ws.path, 'feature.txt', 'new path\n');
+      const tip = commit(ctx, ws.path, 'incoming change');
+      const hook = '.git/hooks/reference-transaction';
+      const marker = join(ctx.root, 'prepared-ref-hook');
+      ctx.env.GRAFT_E2E_HOOK_MARKER = marker.replaceAll('\\', '/');
+      write(ctx.repo, hook, [
+        '#!/bin/sh',
+        '[ "$1" = prepared ] || exit 0',
+        'while read -r old new reference; do',
+        '  if [ "$reference" = refs/heads/main ]; then',
+        '    printf "%s\\n" "$new" > "$GRAFT_E2E_HOOK_MARKER"',
+        '    exit 1',
+        '  fi',
+        'done',
+        'exit 0',
+      ].join('\n') + '\n');
+      chmodSync(join(ctx.repo, hook), 0o700);
+      const args = landArgs(ws, 'hook-reject');
+      const index = readFileSync(join(ctx.repo, '.git', 'index'));
+      try {
+        assert.match(String(ctx.fail(args).message), /hook|reference/i);
+        assert.equal(readFileSync(marker, 'utf8').trim(), tip);
+        assert.equal(ctx.git(['rev-parse', 'HEAD']), base);
+        assert.deepEqual(readFileSync(join(ctx.repo, '.git', 'index')), index);
+        assert.equal(read(ctx.repo, 'tracked.txt'), 'initial\n');
+        assert.equal(existsSync(join(ctx.repo, 'feature.txt')), false);
+        assert.equal(ctx.git(['rev-parse', 'HEAD'], ws.path), tip);
+        const unpublished = ctx.command('git', ['cat-file', '-e', tip]);
+        assert.ifError(unpublished.error);
+        assert.equal(unpublished.status, 1);
+      } finally {
+        delete ctx.env.GRAFT_E2E_HOOK_MARKER;
+        rmSync(join(ctx.repo, hook));
+      }
+      assert.equal(ctx.cli(args).commit, tip);
+      assert.equal(read(ctx.repo, 'tracked.txt'), 'incoming change\n');
+      assert.equal(read(ctx.repo, 'feature.txt'), 'new path\n');
+    },
+  },
+  {
+    name: 'drop with discard completes an applied landing and preserves undo and later edits',
+    run(ctx) {
+      const initialTree = ctx.git(['rev-parse', 'HEAD^{tree}']);
+      const workspace = ctx.spawn('interrupted');
+      const owned = (command: string) => [command, 'interrupted', '--lease', workspace.lease];
+      write(workspace.path, 'feature.txt', 'landed feature\n');
+      const tip = commit(ctx, workspace.path, 'landed feature');
+      const hook = '.git/hooks/post-merge';
+      // Simulate a concurrent workspace edit after Git updates the destination.
+      write(ctx.repo, hook, '#!/bin/sh\nset -eu\nprintf "%s\\n" "edit during land" > "$GRAFT_E2E_PENDING_PATH/feature.txt"\n');
+      chmodSync(join(ctx.repo, hook), 0o700);
+      ctx.env.GRAFT_E2E_PENDING_PATH = process.platform === 'win32' ? workspace.path.replaceAll('\\', '/') : workspace.path;
+      const land = owned('land');
+      try {
+        assert.match(String(ctx.fail(land).message), /local changes/);
+      } finally {
+        delete ctx.env.GRAFT_E2E_PENDING_PATH;
+        rmSync(join(ctx.repo, hook));
+      }
+      assert.equal(ctx.git(['rev-parse', 'HEAD']), tip);
+      assert.equal(read(ctx.repo, 'feature.txt'), 'landed feature\n');
+      assert.equal(read(workspace.path, 'feature.txt'), 'edit during land\n');
+      assert.equal(ctx.cli(['status', 'interrupted']).phase, 'landing');
+      ctx.git(['add', '--', 'feature.txt'], workspace.path);
+      write(workspace.path, 'feature.txt', 'edit after failure\n');
+
+      assert.match(String(ctx.fail(land).message), /local changes/);
+      const drop = owned('drop');
+      assert.match(String(ctx.fail(drop).message), /landing is pending/);
+      assert.equal(read(workspace.path, 'feature.txt'), 'edit after failure\n');
+      const retired = ctx.cli([...drop, '--discard']);
+      assert.equal(retired.action, 'land');
+      assert.equal(retired.commit, tip);
+      assert.equal(retired.recovery_lease, workspace.lease);
+      assert(!existsSync(workspace.path));
+      assert.deepEqual(ctx.cli([...drop, '--discard']), retired);
+
+      ctx.cli(owned('restore'));
+      const undone = ctx.cli(owned('undo-land'));
+      assert.equal(ctx.git(['rev-parse', 'HEAD']), undone.commit);
+      assert.equal(ctx.git(['rev-parse', 'HEAD^']), tip);
+      assert.equal(ctx.git(['rev-parse', 'HEAD^{tree}']), initialTree);
+      assert.equal(ctx.git(['show', ':feature.txt'], workspace.path), 'edit during land');
+      assert.equal(read(workspace.path, 'feature.txt'), 'edit after failure\n');
+      for (const repo of [ctx.repo, workspace.path]) ctx.git(['fsck', '--full'], repo);
+    },
+  },
+  ...[false, true].map((advanced): Scenario => ({
+    name: advanced
+      ? 'discard completes an indexed landing after the destination advances'
+      : 'an indexed landing retry preserves dirty work after the ref is committed',
+    run(ctx) {
+      const workspace = ctx.spawn('indexed-land');
+      const base = ctx.git(['rev-parse', 'HEAD']);
+      write(workspace.path, 'feature.txt', 'landed feature\n');
+      const tip = commit(ctx, workspace.path, 'landed feature');
+      const land = landArgs(workspace, 'indexed-land');
+      const journal = leaveIndexedCheckoutJournal(ctx, land);
+      assert.deepEqual(journal.plan, { target: 'main', old: base, new: tip, tip });
+      assert.equal(ctx.git(['rev-parse', 'HEAD']), tip);
+
+      let destination = tip;
+      if (advanced) {
+        write(ctx.repo, 'later.txt', 'later primary commit\n');
+        destination = commit(ctx, ctx.repo, 'later primary commit');
+        assert.equal(ctx.git(['rev-parse', 'HEAD^']), tip);
+      }
+      write(ctx.repo, 'tracked.txt', 'private primary edit\n');
+      write(workspace.path, 'feature.txt', 'staged workspace edit\n');
+      ctx.git(['add', '--', 'feature.txt'], workspace.path);
+      write(workspace.path, 'feature.txt', 'unstaged workspace edit\n');
+      write(workspace.path, 'local.txt', 'untracked workspace data\n');
+      const index = readFileSync(join(ctx.repo, '.git', 'index'));
+      const workspaceIndex = readFileSync(join(workspace.path, '.git', 'index'));
+      const assertPrimary = () => {
+        assert.equal(ctx.git(['rev-parse', 'HEAD']), destination);
+        assert.deepEqual(readFileSync(join(ctx.repo, '.git', 'index')), index);
+        assert.equal(read(ctx.repo, 'feature.txt'), 'landed feature\n');
+        assert.equal(read(ctx.repo, 'tracked.txt'), 'private primary edit\n');
+        if (advanced) assert.equal(read(ctx.repo, 'later.txt'), 'later primary commit\n');
+      };
+      const assertWorkspace = () => {
+        assert.equal(ctx.git(['rev-parse', 'HEAD'], workspace.path), tip);
+        assert.deepEqual(readFileSync(join(workspace.path, '.git', 'index')), workspaceIndex);
+        assert.equal(ctx.git(['show', ':feature.txt'], workspace.path), 'staged workspace edit');
+        assert.equal(read(workspace.path, 'feature.txt'), 'unstaged workspace edit\n');
+        assert.equal(read(workspace.path, 'local.txt'), 'untracked workspace data\n');
+      };
+
+      const owned = ['indexed-land', '--lease', workspace.lease];
+      assert.match(String(ctx.fail(['drop', ...owned]).message), /landing is pending/i);
+      assert(existsSync(journal.path));
+      if (!advanced) {
+        assert.match(String(ctx.fail(land).message), /local changes/i);
+        assert.equal(existsSync(journal.path), false);
+      }
+      assertPrimary();
+      assertWorkspace();
+
+      const retired = ctx.cli(['drop', ...owned, '--discard']);
+      assert.equal(retired.action, 'land');
+      assert.equal(retired.commit, tip);
+      assert.equal(retired.previous, base);
+      assert.equal(retired.recovery_lease, workspace.lease);
+      assert.equal(existsSync(journal.path), false);
+      assert.equal(existsSync(workspace.path), false);
+      const restored = ctx.cli(['restore', ...owned]);
+      assert.equal(restored.path, workspace.path);
+      assert.notEqual(restored.lease, workspace.lease);
+      assertPrimary();
+      assertWorkspace();
+      for (const repo of [ctx.repo, workspace.path]) ctx.git(['fsck', '--full'], repo);
+    },
+  })),
   {
     name: 'offline reconcile joins independent npm dependency additions',
     run(ctx) {

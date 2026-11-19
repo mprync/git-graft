@@ -1,70 +1,47 @@
-# Operating managed worktrees
+# Operating Graft workspaces
 
-## Workspace identity and paths
+## Identity and lifecycle
 
-For a primary repository at `/code/project`, workspaces live at `/code/project.graft/NAME`. All entry points, including linked checkouts and bare repositories, discover the common Git directory. The shared registry is in `$GIT_COMMON_DIR/graft`. Git owns branch registration, the per-worktree index and worktree removal. Graft checks the registration, branch, private Git directory and ownership marker before operating on a workspace.
+`git graft spawn NAME --base REV` creates a standalone repository with its own Git objects, refs, index and working files. The result gives its `path` and an active `lease`. A name can be reused, so keep the lease with the task and share it only with trusted local tools. Avoid including leases in shared logs or reports. CLI mutations accept `--lease` or `GIT_GRAFT_LEASE`; MCP mutations take `lease`. Use `git graft list` and `git graft status NAME` to inspect workspaces. Run `git graft --help` and `git graft COMMAND --help` for the available options.
 
-A name identifies a slot. A lease identifies one use of that slot. Keep the lease returned by spawn with the task. CLI mutations accept `--lease` or `GIT_GRAFT_LEASE`. MCP mutations take a `lease` argument. Leases coordinate clients that share the same local account. That account can read the registry.
+Ordinary Git commands operate on the workspace's private repository. A branch or stash created there is local to it; landing transfers the selected committed work into the original repository. A nested spawn can use a parent workspace's private commit as its base. Shallow repositories retain the selected commit’s locally available history and relevant Git shallow boundaries. Graft does not fetch missing history. Landing uses the destination’s existing boundaries and fails before changing it if ancestry cannot be resolved. Replacement refs, legacy Git grafts and repository-local checkout filters are declined.
 
-## Run and install
+Use `lock` and `unlock` to protect an active workspace from moves and retirement. `move` changes its path on the same filesystem. After a manual rename, `repair` verifies its recorded identity before accepting the new path. `gc` previews eligible cleanup and `gc --apply` applies it.
+
+## Run commands and install dependencies
 
 ```sh
-git graft exec task -- cargo test --locked
-git graft add-dep task --manager npm
-git graft add-dep task --manager pnpm zod
-git graft add-dep task --manager uv --offline
+git graft exec task --lease "<lease>" -- cargo test --locked
+git graft add-dep task --lease "<lease>" --manager npm
+git graft add-dep task --lease "<lease>" --manager pnpm zod
 git graft env task
 ```
 
-Use argv arrays over MCP. Child stdout and stderr are captured separately with a 256 KiB limit per stream and truncation flags. A failed child yields its exit code, output and `success: false`. The CLI propagates the exit status and MCP sets `isError`. Commands should finish and close their output streams.
+An empty package list requests a locked installation or fetch. Package managers run with project-scoped caches; runtime and build paths are private to the workspace. `--offline` can fail when the cache lacks required artifacts. Package scripts are local programs. MCP execution and dependency tools require the host's `--allow-exec` option.
 
-| Manager | Empty package list | Private output | Shared storage |
-| --- | --- | --- | --- |
-| npm | `ci` | Worktree `node_modules` | npm content cache |
-| pnpm | Frozen install | Worktree installation using clone-or-copy imports | pnpm store |
-| Bun | Frozen install | Worktree installation using the copyfile backend | Bun package cache |
-| Cargo | `fetch --locked` | Workspace-specific target and intermediate directories | Cargo home, optional sccache |
-| uv | `sync --locked` | Workspace-specific virtual environment using copy mode | uv cache |
+## Reuse an npm installation
 
-Supplying packages uses the manager's add/install operation. `--offline` requests offline resolution. Missing cache entries can make it fail. Install scripts are ordinary local programs. Bun's strict offline mode requires a version that advertises it. On Windows, the npm adapter uses the Node installation's adjacent `npm-cli.js`, and the pnpm adapter uses a native `pnpm.exe`.
-
-## Reuse an installed Node tree
-
-If the primary checkout already has the install you want to reuse, run the following while its tracked source is clean. The supplied key attests that the installed files match the committed lockfile, are relocatable, contain no private data, and were built with the toolchain and options represented by the key.
+From a primary checkout with a trusted, relocatable install matching the committed lockfile, register it once:
 
 ```sh
-git graft seed-layer --key node24-npm11-production
-git graft spawn task
-git graft layer task restore --key node24-npm11-production --lease "<task lease>"
+git graft seed-layer --shared --key node-and-npm-version-and-install-options
+git graft spawn task --base main
 ```
 
-To publish an install prepared in a managed workspace instead, use its lease.
+The key attests to the toolchain, options and relevant environment. The install must contain no private data and be usable after source-only edits. Compatible full spawns on a clone-capable volume attach a private writable view; inspect `storage.dependencies.status`. An unavailable or mismatched layer is not installed automatically. Use `--no-deps` for a source-only spawn. Sparse workspaces and MCP hosts without `--allow-exec` do not attach the install.
 
-```sh
-git graft layer task save --key node24-npm11-production
-git graft layer other restore --key node24-npm11-production --lease "<other lease>"
-git graft layer task forget --key node24-npm11-production
-```
+For an exact-source manual snapshot, use `seed-layer --key KEY` or `layer NAME save --key KEY`, then `layer NAME restore --key KEY`. Manual transfers require copy-on-write unless `--copy` is explicitly supplied. Review `--help` for leases and options. Treat installed layers as executable content shared within one trust domain.
 
-Save after installing a known relocatable package tree. Each operation requires clean tracked source and a single tracked root manifest and lockfile. The digest includes the committed source tree, manifest and lock content, OS, CPU architecture and your key. Include ABI, manager version, install flags and relevant environment in that key. It is conservative across source changes. Workspace monorepos, external package links and nonrelocatable outputs should use their package manager.
+## Land and recover
 
-Save verifies package links, file contents and modes. Restore validates the saved tree, prepares the installation privately and publishes it into an absent `node_modules`. `--copy` requests ordinary independent files. Treat cached installations as executable content shared by members of the same trust domain.
+Land integrates committed work by fast-forward, merge or `--squash`, subject to the destination's state. `--commit MESSAGE` stages nonignored workspace changes first; use it only when all such changes belong in the task. If `--commit` detects a path with both staged and unstaged changes, it returns `partially_staged` without replacing the staged version. Commit the staged version or unstage it explicitly before retrying. This also applies to a staged deletion whose path has been recreated. Conflicts remain available for inspection. `--reconcile` supports a narrow offline npm lockfile conflict case; other conflicts need normal resolution. Ignored files block a normal land; `--discard-ignored` retains them in the archived workspace.
 
-## Land and resolve conflicts
+Retain the `recovery_lease` from land or drop. `restore NAME --lease TOKEN` reopens the archive and issues a fresh active lease. `undo-land NAME --lease TOKEN` appends a reversal commit only while the destination is still at the recorded landed commit. `list` includes recoverable workspaces. Archives retain repository and local file state, which can include credentials and other sensitive user data, and can occupy disk indefinitely. See [safety and recovery](safety.md).
 
-Land computes a merge from commit IDs. It fast-forwards when possible, creates a two-parent commit for clean divergence, or creates a single-parent result with `--squash`. A checked-out destination must pass Git's working-tree checks before a native fast-forward. An unchecked local branch advances through a compare-and-swap ref update. Finish any merge/rebase in the destination first. Git's hooks still apply. Coordinate external branch switches, edits and ref updates with the landing operation.
+For a disconnected spawn, retry with the same client-generated, cryptographically random UUIDv4 `request_id` and the same options. The request ID acts as the workspace lease; keep it secret and share it only with trusted local tools. `heartbeat` renews a task lease. Close external editors and builds before retirement, especially on Windows where open handles can prevent a move. Graft locks coordinate Graft operations, not arbitrary external processes.
 
-A `merge_conflict` includes paths and Git conflict records. Resolve the conflict in the task branch and retry. With `land --reconcile` a supported root npm lockfile-v3 conflict can be reconciled offline for independent, additive changes. It uses a private index and a temporary resolver directory, disables npm scripts, and checks the generated resolution. Incompatible versions, unsupported project layouts, unrelated conflicts and incomplete cache data remain conflicts. Other ecosystems use their normal resolver and review process.
+## Interrupted checkout update
 
-Ignored files block a normal land. `land --discard-ignored` permits parking them with the retired workspace. A private runtime directory is retained for restoration. These files may continue to occupy disk after retirement.
+A checked-out destination interrupted during land or undo can return `checkout_recovery_required` with `target`, `previous`, `commit` and `recovery_path`. Before editing the destination, retry the same command with the same lease. Graft can finish a verified update or restart it from the saved original index and a clean previous checkout.
 
-On Windows, move terminals out of the workspace and close programs holding its files before cleanup. Windows can keep a directory open for as long as another process uses it as its working directory. Retry with the same lease after releasing the handle. [Windows current-directory behavior](https://learn.microsoft.com/windows/win32/api/winbase/nf-winbase-setcurrentdirectory)
-
-## Recover a disconnected task
-
-- Use a client-generated UUID with `spawn --request-id` or MCP `request_id`. Retry with the same name, UUID, base spelling and sparse paths to recover that instance.
-- `status` reports the phase and registration health. `heartbeat` renews the 24-hour lease. Scoped commands hold a per-workspace OS lock, refresh the heartbeat and allow other workspaces to run concurrently.
-- Retry a partially completed land with the same lease and target. An already integrated plan can finish cleanup. A terminal receipt lets a client replay a completed land or drop while the name is vacant. Receipts become eligible for GC after seven days.
-- Keep the `recovery_lease` from land or drop. Run `git graft list` to see recoverable workspaces and `git graft restore NAME --lease TOKEN` to reopen one. The restored workspace gets a fresh active lease. To reverse the integration itself, run `git graft undo-land NAME --lease TOKEN` while the destination is still at the landed commit. [Recovery guarantees and boundaries](safety.md)
-- If a tree was moved or detached with native Git, restore its recorded path and branch before retrying. If creation stopped before registration could be authenticated, inspect the path and branch with `git worktree list --porcelain`. Verify ownership before manually retiring either. A repository owner who lost a lease can inspect the corresponding private record in `graft/records`.
-- `gc` previews. `gc --apply` can retire a stale workspace only after checking its Git state, merge reachability, locks and ownership. External editors and programs started outside Graft do not hold its locks. Renew the lease or use `git worktree lock` for a workspace that needs to outlive an unattended task.
+If recovery still stops, preserve copies of the current files and index before investigating. Inspect Git status and `index.before` in the reported recovery path (when an original index existed). Restore the previous clean checkout and saved index only after preserving any changes, then retry the same command. The workspace cannot be dropped while its checkout update is pending.

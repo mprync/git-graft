@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::{
     ffi::OsStr,
     fs,
-    io::{self, Seek, Write},
+    io::{self, BufWriter, Seek, Write},
     path::{Component, Path},
     process::{Command, Output, Stdio},
 };
@@ -21,6 +21,8 @@ mod cache;
 mod native;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod verify;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(crate) use native::Root as NoFollowRoot;
 
 fn git_command(worktree: &Path) -> Command {
     crate::git::command(worktree)
@@ -39,15 +41,51 @@ fn git(worktree: &Path, args: &[&str]) -> Result<Output> {
     Ok(output)
 }
 
-fn checked_oid(worktree: &Path, oid: &str) -> Result<String> {
+fn checkout_identity(worktree: &Path, oid: &str) -> Result<String> {
     crate::git::checked_oid(oid)?;
-    let head = git(worktree, &["rev-parse", "--verify", "HEAD^{commit}"])?;
-    let head = String::from_utf8(head.stdout)?.trim().to_owned();
+    let identity = crate::git::text(
+        worktree,
+        &[
+            "rev-parse",
+            "--verify",
+            "--path-format=absolute",
+            "--git-common-dir",
+            "--absolute-git-dir",
+            "--show-toplevel",
+            "HEAD^{commit}",
+        ],
+    )?;
+    // The last line is the OID. Fall back to separate Git queries for
+    // newlines in directory names or differently spelled canonical paths.
+    let (paths, head) = identity
+        .rsplit_once('\n')
+        .context("missing Git checkout root")?;
+    let git_dir = worktree.join(".git");
+    if !exact_git_paths(paths, &[&git_dir, &git_dir, worktree]) {
+        let common = crate::git::text(
+            worktree,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        )?;
+        validate_workspace(worktree, &common)?;
+    }
     ensure!(
         head.eq_ignore_ascii_case(oid),
         "worktree HEAD does not match requested commit"
     );
-    Ok(head)
+    Ok(head.to_owned())
+}
+
+fn exact_git_paths(output: &str, paths: &[&Path]) -> bool {
+    output
+        .split('\n')
+        .map(|line| {
+            Some(if cfg!(windows) {
+                line.strip_suffix('\r').unwrap_or(line)
+            } else {
+                line
+            })
+        })
+        .eq(paths.iter().map(|path| path.to_str()))
 }
 
 fn ensure_empty(worktree: &Path) -> Result<()> {
@@ -58,12 +96,35 @@ fn ensure_empty(worktree: &Path) -> Result<()> {
             "worktree is not empty: {}",
             entry.path().display()
         );
-        let metadata = fs::symlink_metadata(entry.path())?;
-        ensure!(
-            metadata.is_file() && !crate::registry::is_reparse_point(&metadata),
-            "expected a registered worktree .git file"
-        );
+        crate::registry::owned_directory(&entry.path())?;
     }
+    Ok(())
+}
+
+/// Confirm Git's live common directory, actual Git directory and checkout root
+/// belong to the canonical workspace and its ordinary .git directory.
+pub(crate) fn validate_workspace(workspace: &Path, common: &str) -> Result<()> {
+    let git_dir = workspace.join(".git");
+    crate::registry::owned_directory(&git_dir)?;
+    let names = crate::git::text(
+        workspace,
+        &["rev-parse", "--absolute-git-dir", "--show-toplevel"],
+    )?;
+    let direct = exact_git_paths(&names, &[&git_dir, workspace]);
+    ensure!(
+        dunce::canonicalize(common)? == git_dir
+            && (direct
+                || (dunce::canonicalize(crate::git::text(
+                    workspace,
+                    &["rev-parse", "--absolute-git-dir"]
+                )?)? == git_dir
+                    && dunce::canonicalize(crate::git::text(
+                        workspace,
+                        &["rev-parse", "--show-toplevel"]
+                    )?)? == workspace)),
+        "expected an independent repository rooted at {}",
+        workspace.display()
+    );
     Ok(())
 }
 
@@ -100,6 +161,8 @@ struct Entry {
     name: Vec<u8>,
     blob: String,
     mode: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    size: Option<u64>,
 }
 
 impl Entry {
@@ -141,7 +204,15 @@ impl Entry {
 }
 
 fn entries(worktree: &Path, oid: &str) -> Result<Vec<Entry>> {
-    let tree = git(worktree, &["ls-tree", "-r", "-z", oid])?;
+    let tree = git_command(worktree)
+        .env("GIT_NO_REPLACE_OBJECTS", "1")
+        .args(["ls-tree", "-r", "-l", "-z", oid])
+        .output()?;
+    ensure!(
+        tree.status.success(),
+        "read Git checkout tree: {}",
+        String::from_utf8_lossy(&tree.stderr).trim()
+    );
     tree.stdout
         .split(|b| *b == 0)
         .filter(|record| !record.is_empty())
@@ -163,6 +234,11 @@ fn entries(worktree: &Path, oid: &str) -> Result<Vec<Entry>> {
             let kind = header.next().context("missing Git tree kind")?;
             let blob = crate::git::checked_oid(header.next().context("missing Git object ID")?)?
                 .to_owned();
+            let size = header.next().context("missing Git object size")?;
+            let size = match size {
+                "-" | "BAD" => None,
+                bytes => Some(bytes.parse()?),
+            };
             ensure!(
                 matches!(
                     (mode, kind),
@@ -174,6 +250,7 @@ fn entries(worktree: &Path, oid: &str) -> Result<Vec<Entry>> {
                 name: name.to_vec(),
                 blob,
                 mode,
+                size,
             })
         })
         .collect()
@@ -251,12 +328,67 @@ fn native_checkout(
         args.extend(sparse.iter().map(String::as_str));
         git(worktree, &args)?;
     }
-    git(worktree, &["read-tree", "-m", "-u", oid])?;
+    let output = parallel_checkout(git_command(worktree))
+        .args(["read-tree", "-m", "-u", oid])
+        .output()?;
+    ensure!(
+        output.status.success(),
+        "Git checkout: {}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
     let mut result = Receipt::default();
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    if let Ok(root) = native::Root::open(worktree) {
+        for entry in entries {
+            if let Ok(path) = entry.path()
+                && let Ok(size) = root.regular_size(path)
+            {
+                result.private.add(size);
+            }
+        }
+        return Ok(result.json("git", Some(reason)));
+    }
     for entry in entries {
         count_private(worktree, entry, &mut result.private);
     }
     Ok(result.json("git", Some(reason)))
+}
+
+// Native Git parallelizes only entries whose conversions can run concurrently.
+// Bound the worker pool so simultaneous spawns do not fan out to every CPU.
+const PARALLEL_THRESHOLD: usize = 256;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+const MIN_CLONE_BYTES: u64 = 128 * 1024;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+const MIN_SNAPSHOT_BYTES: u64 = 4 * 1024 * 1024;
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn clone_candidate(entries: &[Entry], entry: &Entry) -> bool {
+    entries.len() < PARALLEL_THRESHOLD
+        || entry.regular() && entry.size.is_some_and(|size| size >= MIN_CLONE_BYTES)
+}
+
+fn parallel_checkout(mut command: Command) -> Command {
+    let workers = std::thread::available_parallelism().map_or(1, |count| count.get().min(4));
+    command
+        .arg("-c")
+        .arg(format!("checkout.workers={workers}"))
+        .arg("-c")
+        .arg(format!(
+            "checkout.thresholdForParallelism={PARALLEL_THRESHOLD}"
+        ));
+    command
+}
+
+fn path_input<'a>(entries: impl Iterator<Item = &'a Entry>) -> Result<fs::File> {
+    let mut input = BufWriter::new(tempfile::tempfile()?);
+    for entry in entries {
+        input.write_all(&entry.name)?;
+        input.write_all(b"\0")?;
+    }
+    let mut input = input.into_inner()?;
+    input.rewind()?;
+    Ok(input)
 }
 
 struct Checkout<'a> {
@@ -265,6 +397,8 @@ struct Checkout<'a> {
     entries: &'a [Entry],
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     settings: String,
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    frozen: FrozenGit,
     symlinks: bool,
     inspect_attributes: bool,
     #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -275,7 +409,7 @@ impl<'a> Checkout<'a> {
     fn read(worktree: &'a Path, oid: &'a str, entries: &'a [Entry]) -> Result<Self> {
         let out = git_command(worktree).args([
             "config", "--null", "--get-regexp",
-            r"^core\.(autocrlf|eol|safecrlf|symlinks|ignorecase|precomposeunicode|protecthfs|protectntfs|bigfilethreshold)$",
+            r"^core\.(autocrlf|eol|safecrlf|symlinks|filemode|ignorecase|precomposeunicode|protecthfs|protectntfs|bigfilethreshold)$",
         ]).output()?;
         ensure!(
             matches!(out.status.code(), Some(0 | 1)),
@@ -285,10 +419,19 @@ impl<'a> Checkout<'a> {
         let settings = {
             let git_version = git(worktree, &["version"])?;
             let mut identity = blake3::Hasher::new();
-            identity.update(b"git-graft-checkout-v3\0");
+            identity.update(b"git-graft-checkout-v5\0");
             identity.update(std::env::consts::OS.as_bytes());
+            identity.update(&MIN_CLONE_BYTES.to_le_bytes());
             identity.update(&git_version.stdout);
             identity.update(&out.stdout);
+            // A parent's files can only be reused under the same committed
+            // rules, even if its snapshot omits small .gitattributes files.
+            for entry in entries.iter().filter(|entry| entry.attributes()) {
+                identity.update(&entry.name);
+                identity.update(b"\0");
+                identity.update(entry.blob.as_bytes());
+                identity.update(&entry.mode.to_le_bytes());
+            }
             identity.finalize().to_hex().to_string()
         };
         let value = |key: &[u8]| {
@@ -326,11 +469,92 @@ impl<'a> Checkout<'a> {
             entries,
             #[cfg(any(target_os = "macos", target_os = "linux"))]
             settings,
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            frozen: FrozenGit::new(worktree, oid, &out.stdout)?,
             symlinks,
             inspect_attributes,
             #[cfg(any(target_os = "macos", target_os = "linux"))]
             may_convert_eol,
         })
+    }
+
+    fn command(&self) -> Command {
+        let command = git_command(self.worktree);
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        let command = self.frozen.configure(command, self.worktree, self.oid);
+        command
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    fn cache_entry(&self, entry: &Entry) -> bool {
+        clone_candidate(self.entries, entry)
+    }
+}
+
+/// Cache commands see only committed attributes and the exact configuration
+/// bytes used for the snapshot identity. The live repository remains untouched.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+struct FrozenGit {
+    directory: tempfile::TempDir,
+    settings: Vec<std::ffi::OsString>,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl FrozenGit {
+    fn new(worktree: &Path, oid: &str, config: &[u8]) -> Result<Self> {
+        use std::os::unix::ffi::OsStringExt;
+
+        crate::registry::owned_directory(&worktree.join(".git/objects"))?;
+        let directory = tempfile::Builder::new()
+            .prefix(".graft-checkout-")
+            .tempdir_in(worktree.join(".git"))?;
+        let admin = directory.path();
+        fs::create_dir(admin.join("objects"))?;
+        fs::create_dir(admin.join("refs"))?;
+        fs::write(admin.join("HEAD"), format!("{oid}\n"))?;
+        if oid.len() == 64 {
+            fs::write(
+                admin.join("config"),
+                "[core]\n repositoryformatversion = 1\n[extensions]\n objectformat = sha256\n",
+            )?;
+        }
+        let settings = config
+            .split(|&byte| byte == 0)
+            .filter(|item| !item.is_empty())
+            .map(|item| {
+                let mut item = item.to_vec();
+                if let Some(separator) = item.iter().position(|&byte| byte == b'\n') {
+                    item[separator] = b'=';
+                } else {
+                    item.extend_from_slice(b"=true");
+                }
+                std::ffi::OsString::from_vec(item)
+            })
+            .collect();
+        Ok(Self {
+            directory,
+            settings,
+        })
+    }
+
+    fn configure(&self, mut command: Command, worktree: &Path, oid: &str) -> Command {
+        command
+            .env("GIT_DIR", self.directory.path())
+            .env("GIT_WORK_TREE", worktree)
+            .env("GIT_OBJECT_DIRECTORY", worktree.join(".git/objects"))
+            .env("GIT_NO_REPLACE_OBJECTS", "1")
+            .env("GIT_NO_LAZY_FETCH", "1")
+            .env("GIT_GRAFT_FILE", "/dev/null")
+            .env("GIT_ALLOW_PROTOCOL", "")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_ATTR_NOSYSTEM", "1")
+            .env("GIT_ATTR_SOURCE", oid)
+            .args(["-c", "core.attributesFile=/dev/null"]);
+        for setting in &self.settings {
+            command.arg("-c").arg(setting);
+        }
+        command
     }
 }
 
@@ -351,18 +575,8 @@ fn conversion_reason(checkout: &Checkout<'_>) -> Result<Option<&'static str>> {
             return Ok(Some(reason));
         }
     }
-    let Ok(attr) = git(
-        worktree,
-        &[
-            "rev-parse",
-            "--path-format=absolute",
-            "--git-path",
-            "info/attributes",
-        ],
-    ) else {
-        return Ok(Some("cannot determine external attributes"));
-    };
-    if let Some(reason) = external_attributes(&attr.stdout) {
+    // The common Git directory was verified to be this workspace's .git.
+    if let Some(reason) = existing_attributes(&worktree.join(".git/info/attributes")) {
         return Ok(Some(reason));
     }
     if !checkout.symlinks {
@@ -388,15 +602,11 @@ fn conversion_reason(checkout: &Checkout<'_>) -> Result<Option<&'static str>> {
     if !checkout.inspect_attributes {
         return Ok(None);
     }
-    let mut input = tempfile::tempfile()?;
-    for entry in entries {
-        input.write_all(&entry.name)?;
-        input.write_all(b"\0")?;
-    }
-    input.rewind()?;
+    let input = path_input(entries.iter())?;
     let source = format!("--source={oid}");
     let attrs = ["filter", "ident", "working-tree-encoding"];
-    let output = git_command(worktree)
+    let output = checkout
+        .command()
         .args(["check-attr", &source, "-z", "--stdin"])
         .args(attrs)
         .stdin(Stdio::from(input))
@@ -440,76 +650,94 @@ fn external_attributes(output: &[u8]) -> Option<&'static str> {
     if !path.is_absolute() {
         return Some("cannot determine external attributes");
     }
+    existing_attributes(path)
+}
+
+fn existing_attributes(path: &Path) -> Option<&'static str> {
     match fs::symlink_metadata(path) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => None,
         _ => Some("external checkout attributes"),
     }
 }
 
-/// Populate a registered worktree, using the existing primary checkout as a
-/// donor when a private CoW copy can be verified against committed Git bytes.
-pub fn materialize_from(
-    worktree: &Path,
+/// Populate a registered standalone checkout from its own Git object store.
+/// The caller has authenticated the workspace and created its private HEAD.
+pub(crate) fn materialize(
+    workspace: &Path,
     state: &Path,
     oid: &str,
     sparse: &[String],
     primary: &Path,
 ) -> Result<Value> {
-    let worktree = dunce::canonicalize(worktree)?;
-    ensure_empty(&worktree)?;
-    let oid = checked_oid(&worktree, oid)?;
-    validate_sparse(&worktree, &oid, sparse)?;
-    let entries = entries(&worktree, &oid)?;
+    let workspace = dunce::canonicalize(workspace)?;
+    ensure_empty(&workspace)?;
+    let oid = checkout_identity(&workspace, oid)?;
+    // A bare primary is the common directory and has no checkout files.
+    let donor = (state.parent() != Some(primary)).then_some(primary);
+    materialize_checkout(&workspace, state, &oid, sparse, donor)
+}
+
+fn materialize_checkout(
+    worktree: &Path,
+    state: &Path,
+    oid: &str,
+    sparse: &[String],
+    primary: Option<&Path>,
+) -> Result<Value> {
+    validate_sparse(worktree, oid, sparse)?;
+    let entries = entries(worktree, oid)?;
     if !sparse.is_empty() {
-        return native_checkout(&worktree, &oid, sparse, &entries, "sparse checkout");
+        return native_checkout(worktree, oid, sparse, &entries, "sparse checkout");
     }
-    let checkout = Checkout::read(&worktree, &oid, &entries)?;
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    if entries.is_empty()
+        || (entries.len() >= PARALLEL_THRESHOLD
+            && entries
+                .iter()
+                .filter(|entry| clone_candidate(&entries, entry))
+                .filter_map(|entry| entry.size)
+                .fold(0u64, u64::saturating_add)
+                < MIN_SNAPSHOT_BYTES)
+    {
+        // A snapshot adds a stat pass over the whole tree. Below this
+        // aggregate savings threshold, a single native checkout is cheaper.
+        return native_checkout(worktree, oid, sparse, &entries, "limited clone savings");
+    }
+    let checkout = Checkout::read(worktree, oid, &entries)?;
     if let Some(reason) = conversion_reason(&checkout)? {
-        return native_checkout(&worktree, &oid, sparse, &entries, reason);
+        return native_checkout(worktree, oid, sparse, &entries, reason);
     }
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
         fs::create_dir_all(state)?;
         let state = dunce::canonicalize(state)?;
         ensure!(
-            !state.starts_with(&worktree),
+            !state.starts_with(worktree),
             "storage state must be outside the worktree"
         );
-        if probe(&state, &worktree)? {
+        if probe(&state, worktree)? {
             if let Ok(prepared) = prepare(&checkout, &state, primary) {
-                return prepared.install(&worktree, &oid);
+                return prepared.install(&checkout);
             }
-            return native_checkout(&worktree, &oid, sparse, &entries, "snapshot unavailable");
+            return native_checkout(worktree, oid, sparse, &entries, "snapshot unavailable");
         }
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let _ = (state, primary);
-    native_checkout(
-        &worktree,
-        &oid,
-        sparse,
-        &entries,
-        "native clone unavailable",
-    )
+    native_checkout(worktree, oid, sparse, &entries, "native clone unavailable")
 }
 
-/// Report ownership only for a complete, authenticated commit snapshot directory.
-pub fn owned_base(path: &Path) -> Result<bool> {
+/// Authenticate an unchanged commit snapshot, including after quarantine.
+pub(crate) fn verify_base(path: &Path, state: &Path, oid: &str) -> Result<Vec<[u8; 32]>> {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
-        Ok(cache::owned_base(path).is_ok())
+        cache::verify_base(path, state, oid)
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
-        let _ = path;
-        Ok(false)
+        let _ = (path, state, oid);
+        bail!("source snapshot ownership cannot be verified on this platform")
     }
-}
-
-#[cfg(test)]
-fn materialize(worktree: &Path, state: &Path, oid: &str, sparse: &[String]) -> Result<Value> {
-    let primary = crate::git::worktrees(worktree)?.remove(0).path;
-    materialize_from(worktree, state, oid, sparse, &primary)
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -520,23 +748,39 @@ struct Prepared {
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 impl Prepared {
-    fn install(self, worktree: &Path, oid: &str) -> Result<Value> {
-        git(
-            worktree,
-            &[
-                "-c",
-                "core.protectHFS=true",
-                "-c",
-                "core.protectNTFS=true",
-                "read-tree",
-                oid,
-            ],
-        )?;
-        for entry in fs::read_dir(self.staging.path())? {
+    fn install(self, checkout: &Checkout<'_>) -> Result<Value> {
+        let worktree = checkout.worktree;
+        let git_dir = worktree.join(".git");
+        crate::registry::owned_directory(&git_dir)?;
+        let destination = git_dir.join("index");
+        let lock = git_dir.join("index.lock");
+        // Use Git's lock protocol while publishing into a newly initialized
+        // repository. The index must never overwrite one created by Git.
+        let _lock = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock)
+            .context("reserve workspace Git index")?;
+        let lock = tempfile::TempPath::try_from_path(lock)?;
+        ensure!(
+            matches!(fs::symlink_metadata(&destination), Err(error) if error.kind() == io::ErrorKind::NotFound),
+            "workspace Git index already exists"
+        );
+        for entry in fs::read_dir(self.staging.path().join("tree"))? {
             let entry = entry?;
             native::rename_new(&entry.path(), &worktree.join(entry.file_name()))?;
         }
-        git(worktree, &["update-index", "--refresh"])?;
+        let index = self.staging.path().join("index");
+        let installed = StagedCheckout {
+            checkout,
+            index: &index,
+            tree: worktree,
+        };
+        // Git wrote stats for the batched paths. Refresh the new clone inodes
+        // and any top-level files whose ctime changed during publication.
+        installed.run(&["update-index", "--refresh"], None)?;
+        native::rename_new(&index, &destination)?;
+        lock.close()?;
         let backend = if cfg!(target_os = "macos") {
             "clonefile"
         } else {
@@ -547,7 +791,7 @@ impl Prepared {
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn prepare(checkout: &Checkout<'_>, state: &Path, primary: &Path) -> Result<Prepared> {
+fn prepare(checkout: &Checkout<'_>, state: &Path, primary: Option<&Path>) -> Result<Prepared> {
     let (worktree, oid, entries) = (checkout.worktree, checkout.oid, checkout.entries);
     let bases = state.join("bases");
     crate::registry::dir(&bases)?;
@@ -564,7 +808,7 @@ fn prepare(checkout: &Checkout<'_>, state: &Path, primary: &Path) -> Result<Prep
             cache::Snapshot::load(&base, &secret, oid, settings)?
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            let parent = parent_candidate(worktree, &bases, oid, entries, settings, &secret);
+            let parent = parent_candidate(checkout, &bases, settings, &secret);
             build_snapshot(
                 checkout,
                 &secret,
@@ -582,19 +826,44 @@ fn prepare(checkout: &Checkout<'_>, state: &Path, primary: &Path) -> Result<Prep
             .records()
             .iter()
             .map(|record| &record.entry)
-            .eq(entries),
+            .eq(entries.iter().filter(|entry| checkout.cache_entry(entry))),
         "source snapshot differs from the Git tree"
     );
     let staging = tempfile::Builder::new()
         .prefix(".graft-source-")
         .tempdir_in(worktree)?;
-    let destination = native::Root::open(staging.path())?;
+    let tree = staging.path().join("tree");
+    fs::create_dir(&tree)?;
+    let index = staging.path().join("index");
+    let staged = StagedCheckout {
+        checkout,
+        index: &index,
+        tree: &tree,
+    };
+    staged.run(&["read-tree", oid], None)?;
+    let destination = native::Root::open(&tree)?;
     let mut directory = std::path::PathBuf::new();
     for record in snapshot.records() {
-        let target = staging.path().join(record.entry.path()?);
+        let target = tree.join(record.entry.path()?);
         stage_parent(&target, &mut directory)?;
         if let Some(size) = snapshot.clone_record(record, &destination, &target, mode)? {
             receipt.cloned.add(size);
+        }
+    }
+    if snapshot.records().len() != entries.len() {
+        let missing = || entries.iter().filter(|entry| !checkout.cache_entry(entry));
+        staged.run(
+            &["checkout-index", "--index", "--stdin", "-z"],
+            Some(path_input(missing())?),
+        )?;
+        for entry in missing().filter(|entry| entry.regular()) {
+            receipt.private.add(
+                if let Some(size) = entry.size.filter(|_| !checkout.may_convert_eol) {
+                    size
+                } else {
+                    destination.regular_size(entry.path()?)?
+                },
+            );
         }
     }
     Ok(Prepared { staging, receipt })
@@ -612,18 +881,21 @@ fn stage_parent(target: &Path, previous: &mut std::path::PathBuf) -> Result<()> 
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn parent_candidate(
-    worktree: &Path,
+    checkout: &Checkout<'_>,
     bases: &Path,
-    oid: &str,
-    entries: &[Entry],
     settings: &str,
     secret: &cache::Key,
 ) -> Option<cache::Snapshot> {
     // An empty cache is the common first spawn and has no parent to discover.
-    if fs::read_dir(bases).ok()?.filter_map(Result::ok).count() <= 1 {
+    fs::read_dir(bases).ok()?.filter_map(Result::ok).nth(1)?;
+    let parents = checkout
+        .command()
+        .args(["show", "-s", "--format=%P", checkout.oid])
+        .output()
+        .ok()?;
+    if !parents.status.success() {
         return None;
     }
-    let parents = git(worktree, &["show", "-s", "--format=%P", oid]).ok()?;
     let parent = std::str::from_utf8(&parents.stdout)
         .ok()?
         .split_whitespace()
@@ -631,14 +903,6 @@ fn parent_candidate(
     crate::git::checked_oid(parent).ok()?;
     let snapshot =
         cache::Snapshot::load(&bases.join(parent).join(settings), secret, parent, settings).ok()?;
-    let old_attrs = snapshot
-        .records()
-        .iter()
-        .map(|record| &record.entry)
-        .filter(|entry| entry.attributes());
-    if !old_attrs.eq(entries.iter().filter(|entry| entry.attributes())) {
-        return None;
-    }
     snapshot.verify().ok()?;
     Some(snapshot)
 }
@@ -649,16 +913,17 @@ fn build_snapshot(
     secret: &cache::Key,
     base: &Path,
     parent: Option<&cache::Snapshot>,
-    primary: &Path,
+    primary: Option<&Path>,
     mode: u32,
     receipt: &mut Receipt,
 ) -> Result<cache::Snapshot> {
     use std::collections::{BTreeMap, BTreeSet};
-    let (worktree, oid, entries) = (
-        checkout_settings.worktree,
-        checkout_settings.oid,
-        checkout_settings.entries,
-    );
+    let oid = checkout_settings.oid;
+    let entries: Vec<_> = checkout_settings
+        .entries
+        .iter()
+        .filter(|entry| checkout_settings.cache_entry(entry))
+        .collect();
     let base_parent = base.parent().context("missing snapshot directory")?;
     let staging = tempfile::Builder::new()
         .prefix(".building-")
@@ -668,45 +933,24 @@ fn build_snapshot(
     fs::create_dir(&generation)?;
     fs::create_dir(&tree)?;
     let index = staging.path().join("index");
-    let checkout = |args: &[&str], input: Option<fs::File>| -> Result<()> {
-        let mut command = git_command(worktree);
-        command
-            .env("GIT_INDEX_FILE", &index)
-            .env("GIT_WORK_TREE", &tree)
-            .env("GIT_ATTR_SOURCE", oid)
-            .args([
-                "-c",
-                "core.sparseCheckout=false",
-                "-c",
-                "core.protectHFS=true",
-                "-c",
-                "core.protectNTFS=true",
-            ])
-            .args(args);
-        if let Some(input) = input {
-            command.stdin(Stdio::from(input));
-        }
-        let output = command.output()?;
-        ensure!(
-            output.status.success(),
-            "Git snapshot checkout: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        Ok(())
+    let staged = StagedCheckout {
+        checkout: checkout_settings,
+        index: &index,
+        tree: &tree,
     };
-    checkout(&["read-tree", oid], None)?;
+    staged.run(&["read-tree", oid], None)?;
 
     let previous: BTreeMap<_, _> = parent
         .into_iter()
         .flat_map(|p| p.records())
         .map(|record| (record.entry.name.as_slice(), record))
         .collect();
-    let donor = native::Root::open(primary).ok();
+    let donor = primary.and_then(|primary| native::Root::open(primary).ok());
     let private = native::Root::open(&tree)?;
     let mut reused = BTreeSet::new();
     let mut primary_clones = Vec::new();
     let mut directory = std::path::PathBuf::new();
-    for entry in entries.iter().filter(|entry| entry.regular()) {
+    for entry in entries.iter().copied().filter(|entry| entry.regular()) {
         let path = entry.path()?;
         let target = tree.join(path);
         if let Some(snapshot) = parent
@@ -737,51 +981,96 @@ fn build_snapshot(
             }
         }
     }
-    let digests = verify::checkout_digests(
-        worktree,
-        oid,
-        &primary_clones,
-        checkout_settings.may_convert_eol,
-    )?;
+    let digests = verify::checkout_digests(checkout_settings, &primary_clones)?;
+    let mut verified_primary = BTreeMap::new();
     for (entry, expected) in primary_clones.into_iter().zip(digests) {
         let path = entry.path()?;
-        let (file, metadata) = private.regular_metadata(path)?;
+        let Ok((file, metadata)) = private.open_primary_clone(path, entry.creation_mode(mode))
+        else {
+            private.discard(path)?;
+            continue;
+        };
         if verify::digest(file)? == expected {
             receipt.primary.add(metadata.len());
             reused.insert(entry.name.as_slice());
+            verified_primary.insert(entry.name.as_slice(), cache::Stamp::from(&metadata));
         } else {
             private.discard(path)?;
         }
     }
 
     if reused.len() < entries.len() {
-        let mut missing = tempfile::tempfile()?;
-        for entry in entries
-            .iter()
-            .filter(|entry| !reused.contains(entry.name.as_slice()))
-        {
-            missing.write_all(&entry.name)?;
-            missing.write_all(b"\0")?;
-        }
-        missing.rewind()?;
-        checkout(&["checkout-index", "--stdin", "-z"], Some(missing))?;
+        let missing = path_input(
+            entries
+                .iter()
+                .copied()
+                .filter(|entry| !reused.contains(entry.name.as_slice())),
+        )?;
+        staged.run(&["checkout-index", "--stdin", "-z"], Some(missing))?;
         for entry in entries
             .iter()
             .filter(|entry| entry.regular() && !reused.contains(entry.name.as_slice()))
         {
-            receipt
-                .private
-                .add(private.regular_metadata(entry.path()?)?.1.len());
+            receipt.private.add(private.regular_size(entry.path()?)?);
         }
     }
     cache::Snapshot::publish(
         &generation,
         base,
-        entries,
+        &entries,
+        &verified_primary,
         secret,
         oid,
         &checkout_settings.settings,
     )
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+struct StagedCheckout<'a> {
+    checkout: &'a Checkout<'a>,
+    index: &'a Path,
+    tree: &'a Path,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+impl StagedCheckout<'_> {
+    fn run(&self, args: &[&str], input: Option<fs::File>) -> Result<()> {
+        let mut command = parallel_checkout(self.checkout.command());
+        command
+            .env("GIT_INDEX_FILE", self.index)
+            .env("GIT_WORK_TREE", self.tree)
+            .args([
+                "-c",
+                "core.sparseCheckout=false",
+                "-c",
+                "core.protectHFS=true",
+                "-c",
+                "core.protectNTFS=true",
+                "-c",
+                "core.splitIndex=false",
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "core.untrackedCache=false",
+                "-c",
+                "core.trustctime=true",
+                "-c",
+                "core.checkStat=default",
+                "-c",
+                "core.ignorestat=false",
+            ])
+            .args(args);
+        if let Some(input) = input {
+            command.stdin(Stdio::from(input));
+        }
+        let output = command.output()?;
+        ensure!(
+            output.status.success(),
+            "Git staged checkout: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -880,6 +1169,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let repo = temp.path().join("repo");
         fs::create_dir(&repo).unwrap();
+        let repo = dunce::canonicalize(repo).unwrap();
         command(&repo, &["init", "-q"]);
         command(&repo, &["config", "user.email", "test@example.invalid"]);
         command(&repo, &["config", "user.name", "Test"]);
@@ -899,20 +1189,318 @@ mod tests {
         let oid = command(&repo, &["rev-parse", "HEAD"]);
         (temp, repo, oid)
     }
-    fn worktree(repo: &Path, path: &Path, branch: &str, oid: &str) {
+    fn independent(repo: &Path, workspace: &Path) {
         command(
             repo,
             &[
-                "worktree",
-                "add",
+                "clone",
+                "-q",
+                "--no-local",
                 "--no-checkout",
-                "-b",
-                branch,
-                path.to_str().unwrap(),
-                oid,
+                ".",
+                workspace.to_str().unwrap(),
             ],
         );
+        command(workspace, &["config", "core.autocrlf", "false"]);
+        command(workspace, &["config", "core.symlinks", "true"]);
     }
+
+    #[test]
+    fn independent_checkout_reuses_verified_snapshots_and_falls_back_to_git() {
+        let (temp, repo, oid) = fixture();
+        let repo = dunce::canonicalize(&repo).unwrap();
+        let state = temp.path().join("state");
+        fs::create_dir(&state).unwrap();
+        fs::write(repo.join("sub/file"), b"dirty primary").unwrap();
+        let first = temp.path().join("first");
+        independent(&repo, &first);
+        let cold = materialize(&first, &state, &oid, &[], &repo).unwrap();
+        assert_eq!(cold["snapshot_reused"], false);
+        assert_eq!(fs::read(first.join("sub/file")).unwrap(), b"committed\n");
+        assert_eq!(command(&first, &["status", "--porcelain"]), "");
+        fs::write(first.join("sub/file"), b"edited workspace").unwrap();
+
+        let second = temp.path().join("second");
+        independent(&repo, &second);
+        let warm = materialize(&second, &state, &oid, &[], &repo).unwrap();
+        assert_eq!(fs::read(second.join("sub/file")).unwrap(), b"committed\n");
+        assert_eq!(fs::read(repo.join("sub/file")).unwrap(), b"dirty primary");
+        assert_eq!(command(&second, &["status", "--porcelain"]), "");
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        let clone_supported = probe(&state, &second).unwrap();
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        let clone_supported = false;
+        if clone_supported {
+            assert_ne!(cold["backend"], "git", "{cold}");
+            assert!(cold["primary_reused_files"].as_u64().unwrap() > 0, "{cold}");
+            assert_eq!(warm["snapshot_reused"], true, "{warm}");
+            assert!(warm["cloned_files"].as_u64().unwrap() > 0, "{warm}");
+        } else {
+            for receipt in [&cold, &warm] {
+                assert_eq!(receipt["backend"], "git", "{receipt}");
+                assert_eq!(receipt["snapshot_reused"], false, "{receipt}");
+                assert_eq!(receipt["cloned_files"], 0, "{receipt}");
+            }
+        }
+
+        let fallback = temp.path().join("fallback");
+        independent(&repo, &fallback);
+        let info = fallback.join(".git/info");
+        fs::create_dir_all(&info).unwrap();
+        #[cfg(unix)]
+        let (attributes, expected): (&str, &[u8]) = {
+            command(
+                &fallback,
+                &["config", "filter.fixture.smudge", "tr a-z A-Z"],
+            );
+            command(&fallback, &["config", "filter.fixture.clean", "tr A-Z a-z"]);
+            ("sub/file text eol=crlf filter=fixture\n", b"COMMITTED\r\n")
+        };
+        #[cfg(not(unix))]
+        let (attributes, expected) = ("sub/file text eol=crlf\n", b"committed\r\n");
+        fs::write(info.join("attributes"), attributes).unwrap();
+        let receipt = materialize(&fallback, &state, &oid, &[], &repo).unwrap();
+        assert_eq!(receipt["backend"], "git", "{receipt}");
+        assert_eq!(receipt["reason"], "external checkout attributes");
+        assert_eq!(fs::read(fallback.join("sub/file")).unwrap(), expected);
+        assert_eq!(command(&fallback, &["status", "--porcelain"]), "");
+
+        let sparse = temp.path().join("sparse");
+        independent(&repo, &sparse);
+        let receipt = materialize(&sparse, &state, &oid, &["sub".into()], &repo).unwrap();
+        assert_eq!(receipt["backend"], "git", "{receipt}");
+        assert_eq!(receipt["reason"], "sparse checkout");
+        assert_eq!(fs::read(sparse.join("sub/file")).unwrap(), b"committed\n");
+        assert_eq!(command(&sparse, &["status", "--porcelain"]), "");
+    }
+
+    #[test]
+    fn independent_checkout_refuses_redirected_git_metadata() {
+        let (temp, repo, oid) = fixture();
+        let state = temp.path().join("state");
+        let linked = temp.path().join("linked");
+        command(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "--detach",
+                "--no-checkout",
+                linked.to_str().unwrap(),
+                &oid,
+            ],
+        );
+        assert!(materialize(&linked, &state, &oid, &[], &repo).is_err());
+        assert!(!linked.join("sub").exists());
+
+        let redirected = temp.path().join("redirected");
+        independent(&repo, &redirected);
+        fs::write(
+            redirected.join(".git/commondir"),
+            format!("{}\n", repo.join(".git").display()),
+        )
+        .unwrap();
+        assert!(materialize(&redirected, &state, &oid, &[], &repo).is_err());
+        assert!(!redirected.join(".git/index").exists());
+        assert!(!redirected.join("sub").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn checkout_identity_preserves_newlines_and_rejects_a_distinct_root() {
+        let (temp, repo, oid) = fixture();
+        let state = temp.path().join("state");
+        let workspace = temp.path().join("workspace\nwith newline");
+        independent(&repo, &workspace);
+        materialize(&workspace, &state, &oid, &[], &repo).unwrap();
+        assert_eq!(
+            fs::read(workspace.join("sub/file")).unwrap(),
+            b"committed\n"
+        );
+
+        let workspace = temp.path().join("redirected-root");
+        independent(&repo, &workspace);
+        let target = temp.path().join("redirected-root\r");
+        fs::create_dir(&target).unwrap();
+        command(
+            &workspace,
+            &["config", "core.worktree", target.to_str().unwrap()],
+        );
+        assert!(materialize(&workspace, &state, &oid, &[], &repo).is_err());
+        assert!(!target.join("sub").exists());
+        assert!(!workspace.join(".git/index").exists());
+    }
+
+    #[test]
+    fn large_tree_uses_git_for_small_files_and_clones_verified_large_files() {
+        let (temp, repo, _) = fixture();
+        let state = temp.path().join("state");
+        fs::create_dir(&state).unwrap();
+        for i in 0..PARALLEL_THRESHOLD {
+            fs::write(repo.join(format!("sub/small-{i}")), b"small\n").unwrap();
+        }
+        fs::write(repo.join(".gitattributes"), "sub/small-* text eol=crlf\n").unwrap();
+        let large = vec![0xa5; 2 * 1024 * 1024];
+        fs::write(repo.join("sub/large"), &large).unwrap();
+        fs::write(repo.join("top-level-large"), &large).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(
+                repo.join("top-level-large"),
+                fs::Permissions::from_mode(0o755),
+            )
+            .unwrap();
+        }
+        command(&repo, &["add", "."]);
+        command(&repo, &["commit", "-qm", "mixed checkout"]);
+        let oid = command(&repo, &["rev-parse", "HEAD"]);
+        fs::write(repo.join("sub/small-0"), b"private\n").unwrap();
+        fs::write(repo.join("sub/ignored"), b"private\n").unwrap();
+        fs::write(repo.join(".git/info/exclude"), b"sub/ignored\n").unwrap();
+
+        for (name, warm) in [("mixed-cold", false), ("mixed-warm", true)] {
+            let workspace = temp.path().join(name);
+            independent(&repo, &workspace);
+            let receipt = materialize(&workspace, &state, &oid, &[], &repo).unwrap();
+            assert_eq!(command(&workspace, &["diff-files", "--quiet"]), "");
+            assert_eq!(command(&workspace, &["status", "--porcelain"]), "");
+            assert_eq!(
+                fs::read(workspace.join("sub/small-0")).unwrap(),
+                b"small\r\n"
+            );
+            assert_eq!(fs::read(workspace.join("sub/large")).unwrap(), large);
+            assert_eq!(fs::read(workspace.join("top-level-large")).unwrap(), large);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                assert_ne!(
+                    fs::metadata(workspace.join("top-level-large"))
+                        .unwrap()
+                        .permissions()
+                        .mode()
+                        & 0o111,
+                    0
+                );
+            }
+            assert!(!workspace.join("sub/ignored").exists());
+            if probe(&state, &workspace).unwrap() {
+                assert_eq!(receipt["cloned_files"], 2, "{receipt}");
+                assert_eq!(receipt["snapshot_reused"], warm, "{receipt}");
+                assert_eq!(
+                    receipt["primary_reused_files"],
+                    u64::from(!warm) * 2,
+                    "{receipt}"
+                );
+                assert!(receipt["private_files"].as_u64().unwrap() >= PARALLEL_THRESHOLD as u64);
+            }
+            fs::write(workspace.join("sub/large"), b"workspace edit").unwrap();
+        }
+        assert_eq!(fs::read(repo.join("sub/large")).unwrap(), large);
+        assert_eq!(fs::read(repo.join("sub/small-0")).unwrap(), b"private\n");
+        assert_eq!(fs::read(repo.join("sub/ignored")).unwrap(), b"private\n");
+
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        {
+            let medium = vec![0xa5; MIN_CLONE_BYTES as usize];
+            fs::write(repo.join("sub/large"), &medium).unwrap();
+            fs::write(repo.join("top-level-large"), &medium).unwrap();
+            command(&repo, &["add", "sub/large", "top-level-large"]);
+            command(&repo, &["commit", "-qm", "below clone savings threshold"]);
+            let oid = command(&repo, &["rev-parse", "HEAD"]);
+            let workspace = temp.path().join("mixed-native");
+            independent(&repo, &workspace);
+            let receipt = materialize(&workspace, &state, &oid, &[], &repo).unwrap();
+            assert_eq!(receipt["backend"], "git", "{receipt}");
+            assert_eq!(receipt["reason"], "limited clone savings", "{receipt}");
+            assert!(!state.join("bases").join(&oid).exists());
+            assert_eq!(fs::read(workspace.join("sub/large")).unwrap(), medium);
+            assert_eq!(command(&workspace, &["diff-files", "--quiet"]), "");
+        }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn publication_preserves_an_existing_index_lock_index_or_checkout_file() -> Result<()> {
+        let (temp, repo, oid) = fixture();
+        let state = dunce::canonicalize(temp.path())?.join("state");
+        fs::create_dir(&state)?;
+        if !probe(&state, &state)? {
+            return Ok(());
+        }
+        for conflict in [".git/index.lock", ".git/index", "SCRIPT"] {
+            let workspace = state.join(conflict.replace('/', "-"));
+            independent(&repo, &workspace);
+            let entries = entries(&workspace, &oid)?;
+            let checkout = Checkout::read(&workspace, &oid, &entries)?;
+            let prepared = prepare(&checkout, &state, Some(&repo))?;
+            let mut conflict = workspace.join(conflict);
+            fs::write(&conflict, b"preserve this")?;
+            if conflict.ends_with("SCRIPT") && !workspace.join("script").exists() {
+                fs::rename(&conflict, workspace.join("script"))?;
+                conflict = workspace.join("script");
+            }
+            assert!(prepared.install(&checkout).is_err());
+            assert_eq!(fs::read(&conflict)?, b"preserve this");
+            if !conflict.ends_with("index") {
+                assert!(!workspace.join(".git/index").exists());
+            }
+            if !conflict.ends_with("index.lock") {
+                assert!(!workspace.join(".git/index.lock").exists());
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn live_checkout_config_and_external_attributes_cannot_poison_a_snapshot() -> Result<()> {
+        let (temp, repo, _) = fixture();
+        fs::write(repo.join(".gitattributes"), "sub/file text eol=lf\n")?;
+        command(&repo, &["add", ".gitattributes"]);
+        command(&repo, &["commit", "-qm", "committed checkout attributes"]);
+        let oid = command(&repo, &["rev-parse", "HEAD"]);
+        let root = dunce::canonicalize(temp.path())?;
+        let state = root.join("state");
+        fs::create_dir(&state)?;
+        if !probe(&state, &state)? {
+            return Ok(());
+        }
+
+        let raced = root.join("raced");
+        independent(&repo, &raced);
+        let entries = entries(&raced, &oid)?;
+        let checkout = Checkout::read(&raced, &oid, &entries)?;
+        assert_eq!(conversion_reason(&checkout)?, None);
+
+        // Mutate input after eligibility was checked, but before building and
+        // signing the generation. No dependency on process scheduling.
+        command(&raced, &["config", "core.autocrlf", "true"]);
+        let attrs = raced.join(".git/info/attributes");
+        fs::write(&attrs, "sub/file text eol=crlf\n")?;
+        let native = root.join("live-reference");
+        independent(&repo, &native);
+        command(&native, &["config", "core.autocrlf", "true"]);
+        fs::copy(&attrs, native.join(".git/info/attributes"))?;
+        command(&native, &["read-tree", "-m", "-u", &oid]);
+        assert_eq!(fs::read(native.join("sub/file"))?, b"committed\r\n");
+        assert_eq!(fs::read(native.join("script"))?, b"#!/bin/sh\r\n");
+
+        // With no donor, Git produces the bytes that will be signed.
+        prepare(&checkout, &state, None)?.install(&checkout)?;
+        assert_eq!(fs::read(raced.join("sub/file"))?, b"committed\n");
+        assert_eq!(fs::read(raced.join("script"))?, b"#!/bin/sh\n");
+
+        let warm = root.join("warm");
+        independent(&repo, &warm);
+        let receipt = materialize(&warm, &state, &oid, &[], &repo)?;
+        assert_eq!(receipt["snapshot_reused"], true, "{receipt}");
+        assert_eq!(fs::read(warm.join("sub/file"))?, b"committed\n");
+        assert_eq!(fs::read(warm.join("script"))?, b"#!/bin/sh\n");
+        assert_eq!(command(&warm, &["diff-files", "--quiet"]), "");
+        Ok(())
+    }
+
     #[test]
     fn materializes_committed_tree_and_isolates_edits() {
         let (temp, repo, oid) = fixture();
@@ -921,9 +1509,8 @@ mod tests {
         let first = temp.path().join("first");
         let second = temp.path().join("second");
         let state = temp.path().join("state");
-        worktree(&repo, &first, "first", &oid);
-        let result = materialize(&first, &state, &oid, &[]).unwrap();
-        println!("first worktree backend: {result}");
+        independent(&repo, &first);
+        let result = materialize(&first, &state, &oid, &[], &repo).unwrap();
         assert_eq!(fs::read(first.join("sub/file")).unwrap(), b"committed\n");
         assert!(!first.join("secret").exists());
         assert_eq!(command(&first, &["status", "--porcelain"]), "");
@@ -944,9 +1531,8 @@ mod tests {
             );
         }
         fs::write(first.join("sub/file"), b"changed in first").unwrap();
-        worktree(&repo, &second, "second", &oid);
-        let second_result = materialize(&second, &state, &oid, &[]).unwrap();
-        println!("second worktree backend: {second_result}");
+        independent(&repo, &second);
+        let second_result = materialize(&second, &state, &oid, &[], &repo).unwrap();
         assert_eq!(fs::read(second.join("sub/file")).unwrap(), b"committed\n");
         assert_eq!(fs::read(repo.join("sub/file")).unwrap(), b"dirty main");
         assert_eq!(command(&second, &["status", "--porcelain"]), "");
@@ -961,7 +1547,7 @@ mod tests {
     fn sparse_validation_and_native_checkout() {
         let (temp, repo, oid) = fixture();
         let wt = temp.path().join("sparse");
-        worktree(&repo, &wt, "sparse", &oid);
+        independent(&repo, &wt);
         for invalid in [
             "../escape",
             "/absolute",
@@ -971,11 +1557,25 @@ mod tests {
             "sub//file",
         ] {
             assert!(
-                materialize(&wt, &temp.path().join("state"), &oid, &[invalid.into()]).is_err(),
+                materialize(
+                    &wt,
+                    &temp.path().join("state"),
+                    &oid,
+                    &[invalid.into()],
+                    &repo
+                )
+                .is_err(),
                 "{invalid}"
             );
         }
-        let result = materialize(&wt, &temp.path().join("state"), &oid, &["sub".into()]).unwrap();
+        let result = materialize(
+            &wt,
+            &temp.path().join("state"),
+            &oid,
+            &["sub".into()],
+            &repo,
+        )
+        .unwrap();
         assert_eq!(result["backend"], "git");
         assert_eq!(fs::read(wt.join("sub/file")).unwrap(), b"committed\n");
         assert_eq!(command(&wt, &["status", "--porcelain"]), "");
@@ -988,12 +1588,12 @@ mod tests {
         command(&repo, &["commit", "-qm", "attributes"]);
         let oid = command(&repo, &["rev-parse", "HEAD"]);
         let wt = temp.path().join("attributes");
-        worktree(&repo, &wt, "attrs", &oid);
+        independent(&repo, &wt);
         fs::write(wt.join("occupied"), b"preserve").unwrap();
-        assert!(materialize(&wt, &temp.path().join("state"), &oid, &[]).is_err());
+        assert!(materialize(&wt, &temp.path().join("state"), &oid, &[], &repo).is_err());
         assert_eq!(fs::read(wt.join("occupied")).unwrap(), b"preserve");
         fs::remove_file(wt.join("occupied")).unwrap();
-        let result = materialize(&wt, &temp.path().join("state"), &oid, &[]).unwrap();
+        let result = materialize(&wt, &temp.path().join("state"), &oid, &[], &repo).unwrap();
         if probe(temp.path(), &wt).unwrap() {
             assert_ne!(result["backend"], "git");
         }
@@ -1026,8 +1626,8 @@ mod tests {
         let state = temp.path().join("state");
         fs::write(repo.join(".gitattributes"), "*.txt text eol=lf\n").unwrap();
         let first = temp.path().join("first-attrs");
-        worktree(&repo, &first, "first-attrs", &oid);
-        let first_result = materialize(&first, &state, &oid, &[]).unwrap();
+        independent(&repo, &first);
+        let first_result = materialize(&first, &state, &oid, &[], &repo).unwrap();
         let normal = temp.path().join("normal");
         command(
             &repo,
@@ -1057,10 +1657,10 @@ mod tests {
             fs::read(normal.join("opaque.bin")).unwrap()
         );
         assert_eq!(command(&first, &["status", "--porcelain"]), "");
-        command(&repo, &["config", "core.autocrlf", "true"]);
         let second = temp.path().join("second-attrs");
-        worktree(&repo, &second, "second-attrs", &oid);
-        let result = materialize(&second, &state, &oid, &[]).unwrap();
+        independent(&repo, &second);
+        command(&second, &["config", "core.autocrlf", "true"]);
+        let result = materialize(&second, &state, &oid, &[], &repo).unwrap();
         assert_eq!(
             fs::read(second.join("sample.txt")).unwrap(),
             b"one\r\ntwo\r\n"
@@ -1080,29 +1680,39 @@ mod tests {
         let (temp, repo, _) = fixture();
         fs::write(repo.join(".gitattributes"), "*.dat filter=demo\n").unwrap();
         fs::write(repo.join("data.dat"), "content\n").unwrap();
-        command(&repo, &["config", "filter.demo.smudge", "cat"]);
-        command(&repo, &["config", "filter.demo.clean", "cat"]);
         command(&repo, &["add", ".gitattributes", "data.dat"]);
         command(&repo, &["commit", "-qm", "filter"]);
         let oid = command(&repo, &["rev-parse", "HEAD"]);
         let wt = temp.path().join("filtered");
-        worktree(&repo, &wt, "filtered", &oid);
-        let result = materialize(&wt, &temp.path().join("state"), &oid, &[]).unwrap();
+        independent(&repo, &wt);
+        command(&wt, &["config", "filter.demo.smudge", "cat"]);
+        command(&wt, &["config", "filter.demo.clean", "cat"]);
+        let result = materialize(&wt, &temp.path().join("state"), &oid, &[], &repo).unwrap();
         assert_eq!(result["backend"], "git");
         assert_eq!(result["reason"], "path-dependent checkout conversion");
         assert_eq!(command(&wt, &["status", "--porcelain"]), "");
         let external = temp.path().join("attributes");
         fs::write(&external, "*.dat text\n").unwrap();
+        let wt = temp.path().join("external");
+        independent(&repo, &wt);
         command(
-            &repo,
+            &wt,
             &["config", "core.attributesfile", external.to_str().unwrap()],
         );
-        let wt = temp.path().join("external");
-        worktree(&repo, &wt, "external", &oid);
         assert_eq!(
-            materialize(&wt, &temp.path().join("state"), &oid, &[]).unwrap()["reason"],
+            materialize(&wt, &temp.path().join("state"), &oid, &[], &repo).unwrap()["reason"],
             "external checkout attributes"
         );
+
+        let wt = temp.path().join("info-attributes");
+        independent(&repo, &wt);
+        let info = wt.join(".git/info");
+        fs::create_dir_all(&info).unwrap();
+        fs::write(info.join("attributes"), "*.dat text eol=crlf\n").unwrap();
+        let result = materialize(&wt, &temp.path().join("state"), &oid, &[], &repo).unwrap();
+        assert_eq!(result["backend"], "git");
+        assert_eq!(result["reason"], "external checkout attributes");
+        assert_eq!(fs::read(wt.join("data.dat")).unwrap(), b"content\r\n");
     }
 
     #[test]
@@ -1120,8 +1730,8 @@ mod tests {
         command(&repo, &["commit", "-qm", "gitlink"]);
         let oid = command(&repo, &["rev-parse", "HEAD"]);
         let wt = temp.path().join("gitlink");
-        worktree(&repo, &wt, "gitlink", &oid);
-        let result = materialize(&wt, &temp.path().join("state"), &oid, &[]).unwrap();
+        independent(&repo, &wt);
+        let result = materialize(&wt, &temp.path().join("state"), &oid, &[], &repo).unwrap();
         assert_eq!(result["reason"], "submodules");
         assert_eq!(command(&wt, &["status", "--porcelain"]), "");
         assert_eq!(fs::read_dir(wt.join("module")).unwrap().count(), 0);
@@ -1146,8 +1756,8 @@ mod tests {
         let parent = command(&repo, &["rev-parse", "HEAD"]);
         let state = temp.path().join("state");
         let first = temp.path().join("parent-tree");
-        worktree(&repo, &first, "parent-tree", &parent);
-        let initial = materialize(&first, &state, &parent, &[]).unwrap();
+        independent(&repo, &first);
+        let initial = materialize(&first, &state, &parent, &[], &repo).unwrap();
         assert_eq!(initial["parent_reused_files"], 0);
         fs::write(repo.join("changed"), b"new\n").unwrap();
         fs::remove_file(repo.join("deleted")).unwrap();
@@ -1167,8 +1777,8 @@ mod tests {
         command(&repo, &["commit", "-qm", "child"]);
         let child = command(&repo, &["rev-parse", "HEAD"]);
         let second = temp.path().join("child-tree");
-        worktree(&repo, &second, "child-tree", &child);
-        let result = materialize(&second, &state, &child, &[]).unwrap();
+        independent(&repo, &second);
+        let result = materialize(&second, &state, &child, &[], &repo).unwrap();
         #[cfg(unix)]
         {
             assert_eq!(
@@ -1209,8 +1819,8 @@ mod tests {
         fs::write(second.join("large.bin"), b"changed locally").unwrap();
         assert_eq!(fs::read(first.join("large.bin")).unwrap(), large);
         let third = temp.path().join("child-again");
-        worktree(&repo, &third, "child-again", &child);
-        let again = materialize(&third, &state, &child, &[]).unwrap();
+        independent(&repo, &third);
+        let again = materialize(&third, &state, &child, &[], &repo).unwrap();
         assert_eq!(fs::read(third.join("large.bin")).unwrap(), large);
         if initial["backend"] != "git" {
             assert_eq!(again["snapshot_reused"], true);
@@ -1221,8 +1831,8 @@ mod tests {
         command(&repo, &["commit", "-qm", "attribute change"]);
         let attr_oid = command(&repo, &["rev-parse", "HEAD"]);
         let fourth = temp.path().join("attrs-tree");
-        worktree(&repo, &fourth, "attrs-tree", &attr_oid);
-        let attrs = materialize(&fourth, &state, &attr_oid, &[]).unwrap();
+        independent(&repo, &fourth);
+        let attrs = materialize(&fourth, &state, &attr_oid, &[], &repo).unwrap();
         if initial["backend"] != "git" {
             assert_eq!(attrs["parent_reused_files"], 0);
         }

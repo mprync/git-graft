@@ -6,7 +6,7 @@ import type { Scenario } from './harness.ts';
 type Context = Parameters<Scenario['run']>[0];
 type Workspace = ReturnType<Context['spawn']>;
 function layer(workspace: Workspace, name: string, action: string, key = 'node-v1'): string[] {
-  return ['layer', name, '--lease', workspace.lease, action, '--key', key];
+  return ['layer', name, '--lease', workspace.lease, action, '--key', key, ...(action === 'forget' ? [] : ['--copy'])];
 }
 function write(path: string, data: string): void {
   mkdirSync(dirname(path), { recursive: true });
@@ -36,36 +36,19 @@ export const cases: Scenario[] = [
       assert(pathKey && ctx.env[pathKey]);
       ctx.env[pathKey] = dirname(ctx.bin) + delimiter + ctx.env[pathKey];
       const created = object(JSON.parse(ctx.git(['graft', 'spawn', 'subcommand'], nested)));
-      assert(typeof created.lease === 'string' && typeof created.worktree_path === 'string');
+      assert(typeof created.lease === 'string' && typeof created.path === 'string');
       ctx.env.GIT_GRAFT_LEASE = created.lease;
       const heartbeat = object(JSON.parse(ctx.git(['graft', 'heartbeat', 'subcommand'], nested)));
       assert.equal(heartbeat.name, 'subcommand');
       assert.equal(heartbeat.phase, 'ready');
-      assert.equal(ctx.git(['rev-parse', '--abbrev-ref', 'HEAD'], created.worktree_path), 'graft/subcommand');
+      assert.equal(ctx.git(['rev-parse', '--abbrev-ref', 'HEAD'], created.path), 'graft/subcommand');
       ctx.git(['graft', 'drop', 'subcommand'], nested);
-      assert.equal(existsSync(created.worktree_path), false);
+      assert.equal(existsSync(created.path), false);
       assert.equal(ctx.git(['status', '--porcelain']), '');
     },
   },
   {
-    name: 'a bare repository can spawn an independent checkout and land into its default branch',
-    run(ctx) {
-      const bare = join(ctx.root, 'origin.git');
-      ctx.git(['clone', '--bare', '--no-hardlinks', ctx.repo, bare]);
-      const before = ctx.git(['rev-parse', 'HEAD'], bare);
-      const workspace = ctx.spawn('bare-agent', [], bare);
-      assert.equal(workspace.result.base, before);
-      write(join(workspace.path, 'from-agent.txt'), 'bare repository workflow\n');
-      ctx.cli(['land', 'bare-agent', '--lease', workspace.lease, '--into', 'main', '--commit', 'Add agent result'], bare);
-      assert.equal(ctx.git(['show', 'main:from-agent.txt'], bare), 'bare repository workflow');
-      assert.equal(ctx.git(['rev-parse', 'main^'], bare), before);
-      assert.equal(existsSync(workspace.path), false);
-      assert.equal(ctx.git(['rev-parse', 'HEAD']), before);
-      assert.deepEqual(ctx.cli(['list'], bare).workspaces, []);
-    },
-  },
-  {
-    name: 'spawn validates portable names and refuses preexisting branches',
+    name: 'spawn validates portable names and keeps same-named primary branches private',
     run(ctx) {
       const head = ctx.git(['rev-parse', 'HEAD']);
       for (const name of ['../escape', 'CAPS', 'nul', '1agent', 'a'.repeat(49)]) {
@@ -73,8 +56,14 @@ export const cases: Scenario[] = [
       }
       assert.equal(existsSync(join(ctx.root, 'escape')), false);
       ctx.git(['branch', 'graft/occupied']);
-      const fault = ctx.fail(['spawn', 'occupied']);
-      assert.equal(fault.code, 'already_exists');
+      const workspace = ctx.spawn('occupied');
+      const owned = ['occupied', '--lease', workspace.lease];
+      assert.equal(ctx.git(['branch', '--show-current'], workspace.path), 'graft/occupied');
+      write(join(workspace.path, 'tracked.txt'), 'private same-name branch\n');
+      ctx.git(['commit', '-qam', 'private commit'], workspace.path);
+      ctx.cli(['drop', ...owned, '--discard']);
+      ctx.cli(['restore', ...owned]);
+      assert.equal(ctx.git(['show', 'graft/occupied:tracked.txt'], workspace.path), 'private same-name branch');
       assert.equal(ctx.git(['rev-parse', 'graft/occupied']), head);
       assert.equal(ctx.git(['rev-parse', 'HEAD']), head);
       assert.equal(ctx.git(['status', '--porcelain']), '');
@@ -85,21 +74,20 @@ export const cases: Scenario[] = [
     run(ctx) {
       const ws = ctx.spawn('pending');
       write(join(ws.path, 'untracked'), 'preserve\n');
-      const path = join(ctx.repo, '.git', 'graft', 'records', 'pending.json');
-      const record = object(JSON.parse(readFileSync(path, 'utf8')));
-      record.state = { phase: 'creating' };
-      writeFileSync(path, JSON.stringify(record));
+      assert(typeof ws.result.id === 'string');
+      const path = join(ctx.repo, '.git', 'graft', 'workspaces', 'records', ws.result.id + '.json');
+      const record = readFileSync(path, 'utf8');
+      writeFileSync(path, JSON.stringify({ ...object(JSON.parse(record)), status: 'pending', initialized: false }));
       for (const command of [
         ['heartbeat', 'pending', '--lease', ws.lease],
         ['exec', 'pending', '--lease', ws.lease, '--', process.execPath, '-e', 'process.exit(0)'],
       ]) {
         const fault = ctx.fail(command);
-        assert.equal(fault.code, 'operation_in_progress');
-        assert.equal(object(fault.details).phase, 'creating');
+        assert.match(String(fault.message), /pending operation/i);
+        assert.equal(ctx.cli(['status', 'pending']).phase, 'creating');
       }
       assert.equal(readFileSync(join(ws.path, 'untracked'), 'utf8'), 'preserve\n');
-      record.state = { phase: 'ready' };
-      writeFileSync(path, JSON.stringify(record));
+      writeFileSync(path, record);
       ctx.cli(['heartbeat', 'pending', '--lease', ws.lease]);
       assert.equal(readFileSync(join(ws.path, 'untracked'), 'utf8'), 'preserve\n');
     },

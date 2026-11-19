@@ -67,6 +67,8 @@ export const cases: Scenario[] = [
       ctx.git(['commit', '-m', 'source fixtures']);
       ctx.git(['checkout-index', '--', 'tracked-link']);
       const parent = ctx.git(['rev-parse', 'HEAD']).trim();
+      const primaryWorktrees = ctx.git(['worktree', 'list', '--porcelain']);
+      const primaryRefs = ctx.git(['for-each-ref', '--format=%(refname)']);
       writeFileSync(join(ctx.repo, 'tracked.txt'), 'dirty main\n');
       writeFileSync(join(ctx.repo, 'different.bat'), 'Git equivalent\n');
       mkdirSync(join(ctx.repo, 'ignored'), { recursive: true });
@@ -78,8 +80,16 @@ export const cases: Scenario[] = [
       if (independentProbe !== null) assert.equal(doctor.native_clone, independentProbe, 'Git Graft and independent native clone probe disagree');
       const probe = doctor.native_clone;
       const first = ctx.spawn('storage-cold');
+      assert.equal(first.result.path, first.path);
+      assert(lstatSync(join(first.path, '.git')).isDirectory());
+      assert.equal(ctx.git(['rev-parse', '--git-common-dir'], first.path), '.git');
+      assert.equal(ctx.git(['worktree', 'list', '--porcelain']), primaryWorktrees);
+      assert.equal(ctx.git(['for-each-ref', '--format=%(refname)']), primaryRefs);
       // Plumbing consumers can ask this before any porcelain command refreshes the index.
       assert.equal(ctx.git(['diff-files', '--quiet'], first.path), '');
+      const status = ctx.cli(['status', 'storage-cold']);
+      assert.equal(status.path, first.path);
+      assert.equal(status.head, parent);
       const cold = receipt(first.result);
       const platformBackend = process.platform === 'darwin' ? 'clonefile' : process.platform === 'linux' ? 'reflink' : 'git';
       const expected = process.env.GIT_GRAFT_EXPECT_BACKEND;
@@ -197,6 +207,7 @@ export const cases: Scenario[] = [
       writeFileSync(join(ctx.repo, 'clean.bin'), Buffer.from([0, 1, 2, 13, 10, 255]));
       ctx.git(['add', '.']);
       ctx.git(['commit', '-qm', 'tracked source files']);
+      if (process.platform !== 'win32') chmodSync(join(ctx.repo, 'clean.bin'), 0o755);
       ctx.git(['update-index', '--assume-unchanged', 'assumed.txt']);
       writeFileSync(join(ctx.repo, 'assumed.txt'), 'private!!!\n');
       writeFileSync(join(ctx.repo, 'staged.txt'), 'private!!!\n');
@@ -222,6 +233,10 @@ export const cases: Scenario[] = [
       const workspace = ctx.spawn('donor-substitutions');
       const result = receipt(workspace.result);
       const probe = object(ctx.cli(['doctor']).source_storage).native_clone;
+      if (process.platform !== 'win32') {
+        assert.equal(lstatSync(join(workspace.path, 'clean.bin')).mode & 0o111, 0);
+        assert.notEqual(lstatSync(join(ctx.repo, 'clean.bin')).mode & 0o111, 0);
+      }
       for (const path of tests) assert.equal(readFileSync(join(workspace.path, path), 'utf8'), original, path);
       assert.equal(lstatSync(join(workspace.path, 'route')).isDirectory(), true);
       assert.equal(existsSync(join(workspace.path, 'route/private.txt')), false);
@@ -240,6 +255,8 @@ export const cases: Scenario[] = [
         assert.equal(ctx.command('xattr', ['-p', 'user.graft-test', 'xattr.txt']).stdout.trim(), 'private attribute');
         assert.equal(ctx.command('xattr', ['-p', 'com.apple.ResourceFork', 'resource.txt'], workspace.path).status, 1);
         assert.equal(readFileSync(join(ctx.repo, 'resource.txt', '..namedfork', 'rsrc'), 'utf8'), 'private resource fork');
+        assert.match(ctx.command('stat', ['-f', '%Sf', 'flags.txt']).stdout, /\bhidden\b/);
+        assert.doesNotMatch(ctx.command('stat', ['-f', '%Sf', 'flags.txt'], workspace.path).stdout, /\bhidden\b/);
       }
     },
   },
@@ -253,6 +270,8 @@ export const cases: Scenario[] = [
       mkdirSync(foreign);
       writeFileSync(join(foreign, 'foreign.txt'), 'foreign directory');
       const base = join(bases, oid);
+      let verifiedBase: string | undefined;
+      let tamperedFile: string | undefined;
       if (receipt(first.result).backend !== 'git') {
         const [generation] = readdirSync(base);
         const tree = join(base, generation, 'tree');
@@ -277,16 +296,31 @@ export const cases: Scenario[] = [
         assert.equal(receipt(child.result).parent_reused_files, 0);
         assert.equal(readFileSync(join(child.path, 'tracked.txt'), 'utf8'), 'initial\n');
         assert.equal(readFileSync(trackedPath, 'utf8'), 'private\n');
+        tamperedFile = trackedPath;
+        verifiedBase = join(bases, ctx.git(['rev-parse', 'HEAD']));
+        assert(existsSync(verifiedBase));
         for (const [name, lease] of [
           ['polluted-warm', warm.lease], ['invalidated-warm', changed.lease], ['invalidated-parent', child.lease],
         ]) ctx.cli(['drop', name, '--lease', lease]);
-        ctx.cli(['drop', 'cache-prime', '--lease', first.lease]);
-        const gc = ctx.cli(['gc', '--apply']);
-        assert.equal(readFileSync(trackedPath, 'utf8'), 'private\n');
-        assert.ok((gc.unused_source_snapshots as string[]).includes(ctx.git(['rev-parse', 'HEAD'])));
-      } else {
-        ctx.cli(['gc', '--apply']);
       }
+      ctx.cli(['drop', 'cache-prime', '--lease', first.lease]);
+      ctx.cli(['gc', '--apply']);
+      const preview = object(ctx.cli(['gc', '--purge-cache']).cache);
+      assert(Array.isArray(preview.candidates));
+      assert(Array.isArray(preview.blocked));
+      assert(preview.blocked.some(entry => object(entry).path === foreign));
+      if (verifiedBase) {
+        assert(preview.candidates.includes(verifiedBase));
+        assert(preview.blocked.some(entry => object(entry).path === base));
+        assert(existsSync(verifiedBase));
+      }
+      const applied = object(ctx.cli(['gc', '--purge-cache', '--apply']).cache);
+      assert(Array.isArray(applied.removed));
+      if (verifiedBase) {
+        assert(applied.removed.includes(verifiedBase));
+        assert(!existsSync(verifiedBase));
+      }
+      if (tamperedFile) assert.equal(readFileSync(tamperedFile, 'utf8'), 'private\n');
       assert.equal(readFileSync(join(foreign, 'foreign.txt'), 'utf8'), 'foreign directory');
     },
   },

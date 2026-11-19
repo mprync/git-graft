@@ -1,0 +1,2122 @@
+{
+  "binary": "git-graft",
+  "graftBinary": {
+    "name": "git-graft",
+    "bytes": 3782384,
+    "sha256": "14d7a90df28888562ed5c912d3bef08d1283ce362289c4787b004e89e7d48144"
+  },
+  "mode": "shared",
+  "copy": false,
+  "addPackage": true,
+  "repeats": 3,
+  "platform": "darwin",
+  "architecture": "arm64",
+  "node": "v24.5.0",
+  "fixture": {
+    "smallFiles": 400,
+    "largeFiles": 3,
+    "largeMiB": 8,
+    "dependencyMiB": 8,
+    "workspaces": 2,
+    "addedPackageLogicalBytes": 84,
+    "addPackageCaveat": "This fixture has no peers or transitives; npm version and dependency graph can change which existing packages are replaced."
+  },
+  "filesystem": {
+    "typeCode": "25",
+    "blockSize": "4096",
+    "method": "statfs bfree * bsize"
+  },
+  "methodology": "Independent bootstrapped repositories and npm caches, same source and archive; large files contain independent incompressible data. Baseline follows installation in one checkout and cache warmup. Shared mode charges one registration and attaches each spawn automatically; seeded mode charges primary seed and manual restores. Cold mode charges each arm for priming a fresh workspace cache after the first checkout; Graft primes its managed cache through exec, then installs and saves a layer. The original warmed cache is preserved. Native installs both workspaces offline from the corresponding cache. Optional add-package measures the same local tarball in each arm without additional base cache priming; a reset stage restores tracked files for the common landing workload. Installed package logical bytes exclude npm cache and metadata. Source snapshot is cold in all modes. Both land into an unchecked integration branch; native fast-forwards the ref with an expected-old-value check. Dirty primary data remains in place. Readiness includes spawn and dependency preparation; first readiness excludes separately charged setup and seed, while firstReadyIncludingSeedSeconds includes both. Land-drop cumulative bytes show retained storage after retirement, cleanup cumulative bytes show retained storage after cache purge. Volume deltas are signed and include unrelated activity, metadata and delayed allocation. CPU/RSS unavailable portably; command wall time is measured. No savings threshold.",
+  "summary": {
+    "cache-setup": {
+      "graftSeconds": {
+        "sorted": [
+          3.3299999995506366e-7,
+          6.250000005820766e-7,
+          0.0000037079999999605205
+        ],
+        "median": 6.250000005820766e-7
+      },
+      "nativeSeconds": {
+        "sorted": [
+          5.420000015874393e-7,
+          8.330000000569271e-7,
+          9.589999990566866e-7
+        ],
+        "median": 8.330000000569271e-7
+      },
+      "pairedSecondsNativeMinusGraft": {
+        "sorted": [
+          -0.0000028749999999035937,
+          -8.299999899463731e-8,
+          6.259999991016229e-7
+        ],
+        "median": -8.299999899463731e-8
+      },
+      "graftBytes": {
+        "sorted": [
+          0,
+          0,
+          0
+        ],
+        "median": 0
+      },
+      "nativeBytes": {
+        "sorted": [
+          0,
+          0,
+          0
+        ],
+        "median": 0
+      },
+      "pairedBytesNativeMinusGraft": {
+        "sorted": [
+          0,
+          0,
+          0
+        ],
+        "median": 0
+      },
+      "cumulativeBytesSincePopulatedCheckout": {
+        "graft": {
+          "sorted": [
+            0,
+            0,
+            0
+          ],
+          "median": 0
+        },
+        "native": {
+          "sorted": [
+            0,
+            0,
+            0
+          ],
+          "median": 0
+        },
+        "pairedNativeMinusGraft": {
+          "sorted": [
+            0,
+            0,
+            0
+          ],
+          "median": 0
+        }
+      }
+    },
+    "seed": {
+      "graftSeconds": {
+        "sorted": [
+          0.19716491600000155,
+          0.2075685840000001,
+          0.3373412500000013
+        ],
+        "median": 0.2075685840000001
+      },
+      "nativeSeconds": {
+        "sorted": [
+          0.00033979199999885167,
+          0.0003676670000004378,
+          0.0003826250000001892
+        ],
+        "median": 0.0003676670000004378
+      },
+      "pairedSecondsNativeMinusGraft": {
+        "sorted": [
+          -0.33697358300000085,
+          -0.20718595899999992,
+          -0.1968251240000027
+        ],
+        "median": -0.20718595899999992
+      },
+      "graftBytes": {
+        "sorted": [
+          -749568,
+          -700416,
+          -540672
+        ],
+        "median": -700416
+      },
+      "nativeBytes": {
+        "sorted": [
+          8192,
+          8192,
+          8192
+        ],
+        "median": 8192
+      },
+      "pairedBytesNativeMinusGraft": {
+        "sorted": [
+          548864,
+          708608,
+          757760
+        ],
+        "median": 708608
+      },
+      "cumulativeBytesSincePopulatedCheckout": {
+        "graft": {
+          "sorted": [
+            -749568,
+            -700416,
+            -540672
+          ],
+          "median": -700416
+        },
+        "native": {
+          "sorted": [
+            8192,
+            8192,
+            8192
+          ],
+          "median": 8192
+        },
+        "pairedNativeMinusGraft": {
+          "sorted": [
+            548864,
+            708608,
+            757760
+          ],
+          "median": 708608
+        }
+      }
+    },
+    "first": {
+      "graftSeconds": {
+        "sorted": [
+          1.2501128340000003,
+          1.2713655,
+          1.2725848750000004
+        ],
+        "median": 1.2713655
+      },
+      "nativeSeconds": {
+        "sorted": [
+          0.23722691699999995,
+          0.24622941700000048,
+          0.24939141699999892
+        ],
+        "median": 0.24622941700000048
+      },
+      "pairedSecondsNativeMinusGraft": {
+        "sorted": [
+          -1.0353579580000005,
+          -1.021974083000001,
+          -1.0038834169999997
+        ],
+        "median": -1.021974083000001
+      },
+      "graftBytes": {
+        "sorted": [
+          28180480,
+          28192768,
+          28459008
+        ],
+        "median": 28192768
+      },
+      "nativeBytes": {
+        "sorted": [
+          34672640,
+          35586048,
+          35893248
+        ],
+        "median": 35586048
+      },
+      "pairedBytesNativeMinusGraft": {
+        "sorted": [
+          6479872,
+          7405568,
+          7434240
+        ],
+        "median": 7405568
+      },
+      "cumulativeBytesSincePopulatedCheckout": {
+        "graft": {
+          "sorted": [
+            27480064,
+            27652096,
+            27709440
+          ],
+          "median": 27652096
+        },
+        "native": {
+          "sorted": [
+            34680832,
+            35594240,
+            35901440
+          ],
+          "median": 35594240
+        },
+        "pairedNativeMinusGraft": {
+          "sorted": [
+            7028736,
+            8114176,
+            8192000
+          ],
+          "median": 8114176
+        }
+      },
+      "readinessSeconds": {
+        "graft": {
+          "sorted": [
+            1.2499117499999997,
+            1.2712417089999999,
+            1.2724133330000005
+          ],
+          "median": 1.2712417089999999
+        },
+        "native": {
+          "sorted": [
+            0.23712174999999844,
+            0.2461215830000001,
+            0.24928112500000135
+          ],
+          "median": 0.2461215830000001
+        }
+      },
+      "spawnSeconds": {
+        "graft": {
+          "sorted": [
+            1.249888208,
+            1.2712260839999998,
+            1.2723942919999973
+          ],
+          "median": 1.2712260839999998
+        },
+        "native": {
+          "sorted": [
+            0.0687746249999982,
+            0.07478404099999988,
+            0.08429937499999869
+          ],
+          "median": 0.07478404099999988
+        }
+      }
+    },
+    "additional": {
+      "graftSeconds": {
+        "sorted": [
+          0.44506062499999827,
+          0.445960583,
+          0.4539966669999999
+        ],
+        "median": 0.445960583
+      },
+      "nativeSeconds": {
+        "sorted": [
+          0.23546254200000022,
+          0.23638908300000186,
+          0.264271041
+        ],
+        "median": 0.23638908300000186
+      },
+      "pairedSecondsNativeMinusGraft": {
+        "sorted": [
+          -0.2185341249999997,
+          -0.2086715419999964,
+          -0.18168954200000004
+        ],
+        "median": -0.2086715419999964
+      },
+      "graftBytes": {
+        "sorted": [
+          2101248,
+          2990080,
+          2994176
+        ],
+        "median": 2990080
+      },
+      "nativeBytes": {
+        "sorted": [
+          35454976,
+          35504128,
+          35512320
+        ],
+        "median": 35504128
+      },
+      "pairedBytesNativeMinusGraft": {
+        "sorted": [
+          32514048,
+          32518144,
+          33353728
+        ],
+        "median": 32518144
+      },
+      "cumulativeBytesSincePopulatedCheckout": {
+        "graft": {
+          "sorted": [
+            29753344,
+            30474240,
+            30699520
+          ],
+          "median": 30474240
+        },
+        "native": {
+          "sorted": [
+            70135808,
+            71106560,
+            71405568
+          ],
+          "median": 71106560
+        },
+        "pairedNativeMinusGraft": {
+          "sorted": [
+            40382464,
+            40632320,
+            40706048
+          ],
+          "median": 40632320
+        }
+      },
+      "readinessSeconds": {
+        "graft": {
+          "sorted": [
+            0.44492124999999944,
+            0.4458382499999989,
+            0.45386020899999996
+          ],
+          "median": 0.4458382499999989
+        },
+        "native": {
+          "sorted": [
+            0.23537116700000024,
+            0.23630729100000097,
+            0.2641735420000004
+          ],
+          "median": 0.23630729100000097
+        }
+      },
+      "spawnSeconds": {
+        "graft": {
+          "sorted": [
+            0.44490224999999917,
+            0.4458244169999998,
+            0.4538455830000003
+          ],
+          "median": 0.4458244169999998
+        },
+        "native": {
+          "sorted": [
+            0.06810629199999675,
+            0.07210258299999987,
+            0.09399195800000053
+          ],
+          "median": 0.07210258299999987
+        }
+      }
+    },
+    "add-package": {
+      "graftSeconds": {
+        "sorted": [
+          0.2951547080000018,
+          0.31633608300000016,
+          0.32485783300000004
+        ],
+        "median": 0.31633608300000016
+      },
+      "nativeSeconds": {
+        "sorted": [
+          0.16066291599999932,
+          0.16206966600000033,
+          0.16595337500000096
+        ],
+        "median": 0.16206966600000033
+      },
+      "pairedSecondsNativeMinusGraft": {
+        "sorted": [
+          -0.16419491700000072,
+          -0.15426641699999982,
+          -0.12920133300000086
+        ],
+        "median": -0.15426641699999982
+      },
+      "graftBytes": {
+        "sorted": [
+          147456,
+          167936,
+          12038144
+        ],
+        "median": 167936
+      },
+      "nativeBytes": {
+        "sorted": [
+          36864,
+          57344,
+          598016
+        ],
+        "median": 57344
+      },
+      "pairedBytesNativeMinusGraft": {
+        "sorted": [
+          -11440128,
+          -131072,
+          -90112
+        ],
+        "median": -131072
+      },
+      "cumulativeBytesSincePopulatedCheckout": {
+        "graft": {
+          "sorted": [
+            30642176,
+            30846976,
+            41791488
+          ],
+          "median": 30846976
+        },
+        "native": {
+          "sorted": [
+            70733824,
+            71143424,
+            71462912
+          ],
+          "median": 71143424
+        },
+        "pairedNativeMinusGraft": {
+          "sorted": [
+            28942336,
+            40501248,
+            40615936
+          ],
+          "median": 40501248
+        }
+      }
+    },
+    "add-package-reset": {
+      "graftSeconds": {
+        "sorted": [
+          0.0003148750000000291,
+          0.0003175409999985277,
+          0.000318583000000217
+        ],
+        "median": 0.0003175409999985277
+      },
+      "nativeSeconds": {
+        "sorted": [
+          0.00027345799999966403,
+          0.0003372909999998228,
+          0.0003704170000000886
+        ],
+        "median": 0.0003372909999998228
+      },
+      "pairedSecondsNativeMinusGraft": {
+        "sorted": [
+          -0.00004512500000055297,
+          0.0000197500000012951,
+          0.00005554200000005947
+        ],
+        "median": 0.0000197500000012951
+      },
+      "graftBytes": {
+        "sorted": [
+          0,
+          0,
+          16384
+        ],
+        "median": 0
+      },
+      "nativeBytes": {
+        "sorted": [
+          -8192,
+          -8192,
+          0
+        ],
+        "median": -8192
+      },
+      "pairedBytesNativeMinusGraft": {
+        "sorted": [
+          -16384,
+          -8192,
+          -8192
+        ],
+        "median": -8192
+      },
+      "cumulativeBytesSincePopulatedCheckout": {
+        "graft": {
+          "sorted": [
+            30642176,
+            30846976,
+            41807872
+          ],
+          "median": 30846976
+        },
+        "native": {
+          "sorted": [
+            70733824,
+            71135232,
+            71454720
+          ],
+          "median": 71135232
+        },
+        "pairedNativeMinusGraft": {
+          "sorted": [
+            28925952,
+            40493056,
+            40607744
+          ],
+          "median": 40493056
+        }
+      }
+    },
+    "edit-build-test": {
+      "graftSeconds": {
+        "sorted": [
+          0.25031945799999994,
+          0.25650020900000164,
+          0.26589237500000035
+        ],
+        "median": 0.25650020900000164
+      },
+      "nativeSeconds": {
+        "sorted": [
+          0.19969058299999962,
+          0.20209758300000066,
+          0.20827199999999993
+        ],
+        "median": 0.20209758300000066
+      },
+      "pairedSecondsNativeMinusGraft": {
+        "sorted": [
+          -0.05762037500000042,
+          -0.05680962600000203,
+          -0.048221874999999276
+        ],
+        "median": -0.05680962600000203
+      },
+      "graftBytes": {
+        "sorted": [
+          -12288,
+          4096,
+          15085568
+        ],
+        "median": 4096
+      },
+      "nativeBytes": {
+        "sorted": [
+          -241664,
+          24576,
+          212992
+        ],
+        "median": 24576
+      },
+      "pairedBytesNativeMinusGraft": {
+        "sorted": [
+          -15060992,
+          -229376,
+          208896
+        ],
+        "median": -229376
+      },
+      "cumulativeBytesSincePopulatedCheckout": {
+        "graft": {
+          "sorted": [
+            30629888,
+            30851072,
+            56893440
+          ],
+          "median": 30851072
+        },
+        "native": {
+          "sorted": [
+            70758400,
+            70893568,
+            71667712
+          ],
+          "median": 70893568
+        },
+        "pairedNativeMinusGraft": {
+          "sorted": [
+            13864960,
+            40263680,
+            40816640
+          ],
+          "median": 40263680
+        }
+      }
+    },
+    "land-drop": {
+      "graftSeconds": {
+        "sorted": [
+          1.697581833,
+          1.7522424589999996,
+          1.7682585409999994
+        ],
+        "median": 1.7522424589999996
+      },
+      "nativeSeconds": {
+        "sorted": [
+          0.16872983300000124,
+          0.16906562499999928,
+          0.18077612500000123
+        ],
+        "median": 0.16906562499999928
+      },
+      "pairedSecondsNativeMinusGraft": {
+        "sorted": [
+          -1.599192916,
+          -1.5714663339999984,
+          -1.5288519999999988
+        ],
+        "median": -1.5714663339999984
+      },
+      "graftBytes": {
+        "sorted": [
+          23834624,
+          50581504,
+          50597888
+        ],
+        "median": 50581504
+      },
+      "nativeBytes": {
+        "sorted": [
+          -70963200,
+          -70909952,
+          -62750720
+        ],
+        "median": -70909952
+      },
+      "pairedBytesNativeMinusGraft": {
+        "sorted": [
+          -121561088,
+          -113332224,
+          -94744576
+        ],
+        "median": -113332224
+      },
+      "cumulativeBytesSincePopulatedCheckout": {
+        "graft": {
+          "sorted": [
+            80728064,
+            81211392,
+            81448960
+          ],
+          "median": 81211392
+        },
+        "native": {
+          "sorted": [
+            -151552,
+            704512,
+            8142848
+          ],
+          "median": 704512
+        },
+        "pairedNativeMinusGraft": {
+          "sorted": [
+            -80879616,
+            -80744448,
+            -73068544
+          ],
+          "median": -80744448
+        }
+      }
+    },
+    "cleanup": {
+      "graftSeconds": {
+        "sorted": [
+          0.0669332089999998,
+          0.0686257080000014,
+          0.08556925000000047
+        ],
+        "median": 0.0686257080000014
+      },
+      "nativeSeconds": {
+        "sorted": [
+          0.005598999999998341,
+          0.005764417000000322,
+          0.005769959000001108
+        ],
+        "median": 0.005764417000000322
+      },
+      "pairedSecondsNativeMinusGraft": {
+        "sorted": [
+          -0.07997025000000213,
+          -0.0628557490000003,
+          -0.06116879199999948
+        ],
+        "median": -0.0628557490000003
+      },
+      "graftBytes": {
+        "sorted": [
+          -16384,
+          -4096,
+          12288
+        ],
+        "median": -4096
+      },
+      "nativeBytes": {
+        "sorted": [
+          0,
+          0,
+          0
+        ],
+        "median": 0
+      },
+      "pairedBytesNativeMinusGraft": {
+        "sorted": [
+          -12288,
+          4096,
+          16384
+        ],
+        "median": 4096
+      },
+      "cumulativeBytesSincePopulatedCheckout": {
+        "graft": {
+          "sorted": [
+            80723968,
+            81195008,
+            81461248
+          ],
+          "median": 81195008
+        },
+        "native": {
+          "sorted": [
+            -151552,
+            704512,
+            8142848
+          ],
+          "median": 704512
+        },
+        "pairedNativeMinusGraft": {
+          "sorted": [
+            -80875520,
+            -80756736,
+            -73052160
+          ],
+          "median": -80756736
+        }
+      }
+    }
+  },
+  "footprints": {
+    "firstActive": {
+      "graft": {
+        "sorted": [
+          27480064,
+          27652096,
+          27709440
+        ],
+        "median": 27652096
+      },
+      "native": {
+        "sorted": [
+          34680832,
+          35594240,
+          35901440
+        ],
+        "median": 35594240
+      },
+      "pairedNativeMinusGraft": {
+        "sorted": [
+          7028736,
+          8114176,
+          8192000
+        ],
+        "median": 8114176
+      }
+    },
+    "additionalActive": {
+      "graft": {
+        "sorted": [
+          29753344,
+          30474240,
+          30699520
+        ],
+        "median": 30474240
+      },
+      "native": {
+        "sorted": [
+          70135808,
+          71106560,
+          71405568
+        ],
+        "median": 71106560
+      },
+      "pairedNativeMinusGraft": {
+        "sorted": [
+          40382464,
+          40632320,
+          40706048
+        ],
+        "median": 40632320
+      }
+    },
+    "afterEditBuild": {
+      "graft": {
+        "sorted": [
+          30629888,
+          30851072,
+          56893440
+        ],
+        "median": 30851072
+      },
+      "native": {
+        "sorted": [
+          70758400,
+          70893568,
+          71667712
+        ],
+        "median": 70893568
+      },
+      "pairedNativeMinusGraft": {
+        "sorted": [
+          13864960,
+          40263680,
+          40816640
+        ],
+        "median": 40263680
+      }
+    },
+    "afterRetirement": {
+      "graft": {
+        "sorted": [
+          80728064,
+          81211392,
+          81448960
+        ],
+        "median": 81211392
+      },
+      "native": {
+        "sorted": [
+          -151552,
+          704512,
+          8142848
+        ],
+        "median": 704512
+      },
+      "pairedNativeMinusGraft": {
+        "sorted": [
+          -80879616,
+          -80744448,
+          -73068544
+        ],
+        "median": -80744448
+      }
+    },
+    "afterCleanup": {
+      "graft": {
+        "sorted": [
+          80723968,
+          81195008,
+          81461248
+        ],
+        "median": 81195008
+      },
+      "native": {
+        "sorted": [
+          -151552,
+          704512,
+          8142848
+        ],
+        "median": 704512
+      },
+      "pairedNativeMinusGraft": {
+        "sorted": [
+          -80875520,
+          -80756736,
+          -73052160
+        ],
+        "median": -80756736
+      }
+    }
+  },
+  "firstReadyIncludingSeedSeconds": {
+    "graft": {
+      "sorted": [
+        1.4574840419999997,
+        1.4695788740000026,
+        1.6085832920000012
+      ],
+      "median": 1.4695788740000026
+    },
+    "native": {
+      "sorted": [
+        0.23746208399999888,
+        0.24650504100000034,
+        0.24964975100000084
+      ],
+      "median": 0.24650504100000034
+    },
+    "pairedNativeMinusGraft": {
+      "sorted": [
+        -1.3589335410000003,
+        -1.2321167900000038,
+        -1.2109790009999994
+      ],
+      "median": -1.2321167900000038
+    }
+  },
+  "totalSeconds": {
+    "graft": {
+      "sorted": [
+        4.249935624000005,
+        4.3134007940000005,
+        4.467046747
+      ],
+      "median": 4.3134007940000005
+    },
+    "native": {
+      "sorted": [
+        1.014202583000002,
+        1.0393280420000028,
+        1.0519644579999985
+      ],
+      "median": 1.0393280420000028
+    },
+    "pairedNativeMinusGraft": {
+      "sorted": [
+        -3.4150822890000017,
+        -3.2740727519999977,
+        -3.235733041000003
+      ],
+      "median": -3.2740727519999977
+    }
+  },
+  "totalBytesAfterCleanup": {
+    "graft": {
+      "sorted": [
+        80723968,
+        81195008,
+        81461248
+      ],
+      "median": 81195008
+    },
+    "native": {
+      "sorted": [
+        -151552,
+        704512,
+        8142848
+      ],
+      "median": 704512
+    },
+    "pairedNativeMinusGraft": {
+      "sorted": [
+        -80875520,
+        -80756736,
+        -73052160
+      ],
+      "median": -80756736
+    }
+  },
+  "pairs": [
+    {
+      "graft": {
+        "stages": {
+          "cache-setup": {
+            "seconds": 0.0000037079999999605205,
+            "deltaBytes": "0",
+            "cumulativeBytes": "0",
+            "commands": [],
+            "receipts": []
+          },
+          "seed": {
+            "seconds": 0.2075685840000001,
+            "deltaBytes": "-700416",
+            "cumulativeBytes": "-700416",
+            "commands": [
+              {
+                "name": "git graft seed-layer",
+                "seconds": 0.20685741600000004
+              }
+            ],
+            "receipts": [
+              {
+                "cloned_bytes": 8389053,
+                "copied_bytes": 0,
+                "logical_bytes": 8389053,
+                "backend": "copy-on-write",
+                "action": "save"
+              }
+            ]
+          },
+          "first": {
+            "seconds": 1.2501128340000003,
+            "deltaBytes": "28180480",
+            "cumulativeBytes": "27480064",
+            "readySeconds": 1.2499117499999997,
+            "commands": [
+              {
+                "name": "git graft spawn",
+                "seconds": 1.249888208
+              }
+            ],
+            "receipts": [
+              {
+                "cloned_bytes": 25165824,
+                "cloned_files": 3,
+                "parent_reused_bytes": 0,
+                "parent_reused_files": 0,
+                "primary_reused_files": 3,
+                "primary_reused_bytes": 25165824,
+                "private_files": 407,
+                "private_bytes": 7687,
+                "snapshot_reused": false,
+                "backend": "clonefile",
+                "objects": {
+                  "method": "local-pack",
+                  "source": "local-export",
+                  "object_format": "sha1",
+                  "bytes": 25207992,
+                  "pack_bytes": 25195272,
+                  "index_bytes": 12720,
+                  "shared_bytes": 25207992,
+                  "cache_bytes": 25207992,
+                  "pack_count": 1,
+                  "timings": {
+                    "cache_publish_seconds": 0.048408167,
+                    "reachability_seconds": 0.008330167,
+                    "transfer_seconds": 0.691640875,
+                    "verify_seconds": 0.005733833,
+                    "total_seconds": 0.7643515
+                  }
+                }
+              },
+              {
+                "cloned_bytes": 8389053,
+                "copied_bytes": 0,
+                "logical_bytes": 8389053,
+                "backend": "copy-on-write",
+                "action": "restore"
+              }
+            ]
+          },
+          "additional": {
+            "seconds": 0.4539966669999999,
+            "deltaBytes": "2994176",
+            "cumulativeBytes": "30474240",
+            "readySeconds": 0.45386020899999996,
+            "commands": [
+              {
+                "name": "git graft spawn",
+                "seconds": 0.4538455830000003
+              }
+            ],
+            "receipts": [
+              {
+                "cloned_bytes": 25165824,
+                "cloned_files": 3,
+                "parent_reused_bytes": 0,
+                "parent_reused_files": 0,
+                "primary_reused_files": 0,
+                "primary_reused_bytes": 0,
+                "private_files": 407,
+                "private_bytes": 7687,
+                "snapshot_reused": true,
+                "backend": "clonefile",
+                "objects": {
+                  "method": "clonefile",
+                  "source": "cache",
+                  "object_format": "sha1",
+                  "bytes": 25207992,
+                  "pack_bytes": 25195272,
+                  "index_bytes": 12720,
+                  "shared_bytes": 25207992,
+                  "cache_bytes": 0,
+                  "pack_count": 1,
+                  "timings": {
+                    "cache_seconds": 0.015602833,
+                    "total_seconds": 0.0309525
+                  }
+                }
+              },
+              {
+                "cloned_bytes": 8389053,
+                "copied_bytes": 0,
+                "logical_bytes": 8389053,
+                "backend": "copy-on-write",
+                "action": "restore"
+              }
+            ]
+          },
+          "add-package": {
+            "seconds": 0.31633608300000016,
+            "deltaBytes": "167936",
+            "cumulativeBytes": "30642176",
+            "commands": [
+              {
+                "name": "git graft add-dep package",
+                "seconds": 0.316166792
+              }
+            ],
+            "receipts": [
+              {
+                "exit_code": 0,
+                "success": true
+              }
+            ]
+          },
+          "add-package-reset": {
+            "seconds": 0.0003148750000000291,
+            "deltaBytes": "0",
+            "cumulativeBytes": "30642176",
+            "commands": [],
+            "receipts": []
+          },
+          "edit-build-test": {
+            "seconds": 0.26589237500000035,
+            "deltaBytes": "-12288",
+            "cumulativeBytes": "30629888",
+            "commands": [
+              {
+                "name": "git graft exec npm run build",
+                "seconds": 0.12651745800000025
+              },
+              {
+                "name": "git graft exec npm test",
+                "seconds": 0.1388243749999997
+              }
+            ],
+            "receipts": [
+              {
+                "exit_code": 0,
+                "success": true
+              },
+              {
+                "exit_code": 0,
+                "success": true
+              }
+            ]
+          },
+          "land-drop": {
+            "seconds": 1.7522424589999996,
+            "deltaBytes": "50581504",
+            "cumulativeBytes": "81211392",
+            "commands": [
+              {
+                "name": "git graft land",
+                "seconds": 1.6537392079999995
+              },
+              {
+                "name": "git graft drop",
+                "seconds": 0.08785241700000006
+              }
+            ],
+            "receipts": [
+              {
+                "removed": true,
+                "action": "land"
+              },
+              {
+                "removed": true,
+                "action": "drop"
+              }
+            ]
+          },
+          "cleanup": {
+            "seconds": 0.0669332089999998,
+            "deltaBytes": "-16384",
+            "cumulativeBytes": "81195008",
+            "commands": [
+              {
+                "name": "git graft gc --purge-cache --apply",
+                "seconds": 0.0611582499999995
+              }
+            ],
+            "receipts": []
+          }
+        },
+        "totalSeconds": 4.3134007940000005,
+        "firstReadyIncludingSeedSeconds": 1.4574840419999997,
+        "dependencyMode": "shared-layer",
+        "npmVersion": "11.5.1",
+        "testOutput": "WORKFLOW_TEST_PASSED",
+        "validation": [
+          "private data excluded",
+          "source and build isolation",
+          "build and test passed",
+          "landed change",
+          "workspace retirement",
+          "original local data and install preserved"
+        ]
+      },
+      "native": {
+        "stages": {
+          "cache-setup": {
+            "seconds": 8.330000000569271e-7,
+            "deltaBytes": "0",
+            "cumulativeBytes": "0",
+            "commands": [],
+            "receipts": []
+          },
+          "seed": {
+            "seconds": 0.0003826250000001892,
+            "deltaBytes": "8192",
+            "cumulativeBytes": "8192",
+            "commands": [],
+            "receipts": []
+          },
+          "first": {
+            "seconds": 0.24622941700000048,
+            "deltaBytes": "35586048",
+            "cumulativeBytes": "35594240",
+            "readySeconds": 0.2461215830000001,
+            "commands": [
+              {
+                "name": "git worktree add",
+                "seconds": 0.07478404099999988
+              },
+              {
+                "name": "npm ci --offline",
+                "seconds": 0.1713245420000003
+              }
+            ],
+            "receipts": []
+          },
+          "additional": {
+            "seconds": 0.23546254200000022,
+            "deltaBytes": "35512320",
+            "cumulativeBytes": "71106560",
+            "readySeconds": 0.23537116700000024,
+            "commands": [
+              {
+                "name": "git worktree add",
+                "seconds": 0.07210258299999987
+              },
+              {
+                "name": "npm ci --offline",
+                "seconds": 0.16325791699999992
+              }
+            ],
+            "receipts": []
+          },
+          "add-package": {
+            "seconds": 0.16206966600000033,
+            "deltaBytes": "36864",
+            "cumulativeBytes": "71143424",
+            "commands": [
+              {
+                "name": "npm install package --offline",
+                "seconds": 0.16193562500000008
+              }
+            ],
+            "receipts": []
+          },
+          "add-package-reset": {
+            "seconds": 0.0003704170000000886,
+            "deltaBytes": "-8192",
+            "cumulativeBytes": "71135232",
+            "commands": [],
+            "receipts": []
+          },
+          "edit-build-test": {
+            "seconds": 0.20827199999999993,
+            "deltaBytes": "-241664",
+            "cumulativeBytes": "70893568",
+            "commands": [
+              {
+                "name": "npm run build",
+                "seconds": 0.10326450000000023
+              },
+              {
+                "name": "npm test",
+                "seconds": 0.10459983400000056
+              }
+            ],
+            "receipts": []
+          },
+          "land-drop": {
+            "seconds": 0.18077612500000123,
+            "deltaBytes": "-62750720",
+            "cumulativeBytes": "8142848",
+            "commands": [
+              {
+                "name": "git add",
+                "seconds": 0.056770416999999726
+              },
+              {
+                "name": "git commit",
+                "seconds": 0.019822250000000166
+              },
+              {
+                "name": "git update-ref integration",
+                "seconds": 0.00608154100000047
+              },
+              {
+                "name": "git worktree remove",
+                "seconds": 0.02642754200000036
+              },
+              {
+                "name": "git update-ref delete branch",
+                "seconds": 0.005373583999999937
+              },
+              {
+                "name": "git worktree remove",
+                "seconds": 0.029067915999999968
+              },
+              {
+                "name": "git update-ref delete branch",
+                "seconds": 0.005264624999999796
+              }
+            ],
+            "receipts": []
+          },
+          "cleanup": {
+            "seconds": 0.005764417000000322,
+            "deltaBytes": "0",
+            "cumulativeBytes": "8142848",
+            "commands": [],
+            "receipts": []
+          }
+        },
+        "totalSeconds": 1.0393280420000028,
+        "firstReadyIncludingSeedSeconds": 0.24650504100000034,
+        "dependencyMode": "npm-install",
+        "npmVersion": "11.5.1",
+        "testOutput": "WORKFLOW_TEST_PASSED",
+        "validation": [
+          "private data excluded",
+          "source and build isolation",
+          "build and test passed",
+          "landed change",
+          "workspace retirement",
+          "original local data and install preserved"
+        ]
+      }
+    },
+    {
+      "graft": {
+        "stages": {
+          "cache-setup": {
+            "seconds": 3.3299999995506366e-7,
+            "deltaBytes": "0",
+            "cumulativeBytes": "0",
+            "commands": [],
+            "receipts": []
+          },
+          "seed": {
+            "seconds": 0.3373412500000013,
+            "deltaBytes": "-540672",
+            "cumulativeBytes": "-540672",
+            "commands": [
+              {
+                "name": "git graft seed-layer",
+                "seconds": 0.336578125
+              }
+            ],
+            "receipts": [
+              {
+                "cloned_bytes": 8389053,
+                "copied_bytes": 0,
+                "logical_bytes": 8389053,
+                "backend": "copy-on-write",
+                "action": "save"
+              }
+            ]
+          },
+          "first": {
+            "seconds": 1.2713655,
+            "deltaBytes": "28192768",
+            "cumulativeBytes": "27652096",
+            "readySeconds": 1.2712417089999999,
+            "commands": [
+              {
+                "name": "git graft spawn",
+                "seconds": 1.2712260839999998
+              }
+            ],
+            "receipts": [
+              {
+                "cloned_bytes": 25165824,
+                "cloned_files": 3,
+                "parent_reused_bytes": 0,
+                "parent_reused_files": 0,
+                "primary_reused_files": 3,
+                "primary_reused_bytes": 25165824,
+                "private_files": 407,
+                "private_bytes": 7687,
+                "snapshot_reused": false,
+                "backend": "clonefile",
+                "objects": {
+                  "method": "local-pack",
+                  "source": "local-export",
+                  "object_format": "sha1",
+                  "bytes": 25207997,
+                  "pack_bytes": 25195277,
+                  "index_bytes": 12720,
+                  "shared_bytes": 25207997,
+                  "cache_bytes": 25207997,
+                  "pack_count": 1,
+                  "timings": {
+                    "cache_publish_seconds": 0.047482,
+                    "reachability_seconds": 0.007951542,
+                    "transfer_seconds": 0.695885208,
+                    "verify_seconds": 0.005907875,
+                    "total_seconds": 0.771593583
+                  }
+                }
+              },
+              {
+                "cloned_bytes": 8389053,
+                "copied_bytes": 0,
+                "logical_bytes": 8389053,
+                "backend": "copy-on-write",
+                "action": "restore"
+              }
+            ]
+          },
+          "additional": {
+            "seconds": 0.445960583,
+            "deltaBytes": "2101248",
+            "cumulativeBytes": "29753344",
+            "readySeconds": 0.4458382499999989,
+            "commands": [
+              {
+                "name": "git graft spawn",
+                "seconds": 0.4458244169999998
+              }
+            ],
+            "receipts": [
+              {
+                "cloned_bytes": 25165824,
+                "cloned_files": 3,
+                "parent_reused_bytes": 0,
+                "parent_reused_files": 0,
+                "primary_reused_files": 0,
+                "primary_reused_bytes": 0,
+                "private_files": 407,
+                "private_bytes": 7687,
+                "snapshot_reused": true,
+                "backend": "clonefile",
+                "objects": {
+                  "method": "clonefile",
+                  "source": "cache",
+                  "object_format": "sha1",
+                  "bytes": 25207997,
+                  "pack_bytes": 25195277,
+                  "index_bytes": 12720,
+                  "shared_bytes": 25207997,
+                  "cache_bytes": 0,
+                  "pack_count": 1,
+                  "timings": {
+                    "cache_seconds": 0.015295625,
+                    "total_seconds": 0.030688167
+                  }
+                }
+              },
+              {
+                "cloned_bytes": 8389053,
+                "copied_bytes": 0,
+                "logical_bytes": 8389053,
+                "backend": "copy-on-write",
+                "action": "restore"
+              }
+            ]
+          },
+          "add-package": {
+            "seconds": 0.32485783300000004,
+            "deltaBytes": "12038144",
+            "cumulativeBytes": "41791488",
+            "commands": [
+              {
+                "name": "git graft add-dep package",
+                "seconds": 0.3247440000000006
+              }
+            ],
+            "receipts": [
+              {
+                "exit_code": 0,
+                "success": true
+              }
+            ]
+          },
+          "add-package-reset": {
+            "seconds": 0.0003175409999985277,
+            "deltaBytes": "16384",
+            "cumulativeBytes": "41807872",
+            "commands": [],
+            "receipts": []
+          },
+          "edit-build-test": {
+            "seconds": 0.25031945799999994,
+            "deltaBytes": "15085568",
+            "cumulativeBytes": "56893440",
+            "commands": [
+              {
+                "name": "git graft exec npm run build",
+                "seconds": 0.12518925000000128
+              },
+              {
+                "name": "git graft exec npm test",
+                "seconds": 0.12469866600000024
+              }
+            ],
+            "receipts": [
+              {
+                "exit_code": 0,
+                "success": true
+              },
+              {
+                "exit_code": 0,
+                "success": true
+              }
+            ]
+          },
+          "land-drop": {
+            "seconds": 1.7682585409999994,
+            "deltaBytes": "23834624",
+            "cumulativeBytes": "80728064",
+            "commands": [
+              {
+                "name": "git graft land",
+                "seconds": 1.6583130840000013
+              },
+              {
+                "name": "git graft drop",
+                "seconds": 0.09787395800000014
+              }
+            ],
+            "receipts": [
+              {
+                "removed": true,
+                "action": "land"
+              },
+              {
+                "removed": true,
+                "action": "drop"
+              }
+            ]
+          },
+          "cleanup": {
+            "seconds": 0.0686257080000014,
+            "deltaBytes": "-4096",
+            "cumulativeBytes": "80723968",
+            "commands": [
+              {
+                "name": "git graft gc --purge-cache --apply",
+                "seconds": 0.06289262499999859
+              }
+            ],
+            "receipts": []
+          }
+        },
+        "totalSeconds": 4.467046747,
+        "firstReadyIncludingSeedSeconds": 1.6085832920000012,
+        "dependencyMode": "shared-layer",
+        "npmVersion": "11.5.1",
+        "testOutput": "WORKFLOW_TEST_PASSED",
+        "validation": [
+          "private data excluded",
+          "source and build isolation",
+          "build and test passed",
+          "landed change",
+          "workspace retirement",
+          "original local data and install preserved"
+        ]
+      },
+      "native": {
+        "stages": {
+          "cache-setup": {
+            "seconds": 9.589999990566866e-7,
+            "deltaBytes": "0",
+            "cumulativeBytes": "0",
+            "commands": [],
+            "receipts": []
+          },
+          "seed": {
+            "seconds": 0.0003676670000004378,
+            "deltaBytes": "8192",
+            "cumulativeBytes": "8192",
+            "commands": [],
+            "receipts": []
+          },
+          "first": {
+            "seconds": 0.24939141699999892,
+            "deltaBytes": "34672640",
+            "cumulativeBytes": "34680832",
+            "readySeconds": 0.24928112500000135,
+            "commands": [
+              {
+                "name": "git worktree add",
+                "seconds": 0.08429937499999869
+              },
+              {
+                "name": "npm ci --offline",
+                "seconds": 0.16497112500000002
+              }
+            ],
+            "receipts": []
+          },
+          "additional": {
+            "seconds": 0.264271041,
+            "deltaBytes": "35454976",
+            "cumulativeBytes": "70135808",
+            "readySeconds": 0.2641735420000004,
+            "commands": [
+              {
+                "name": "git worktree add",
+                "seconds": 0.09399195800000053
+              },
+              {
+                "name": "npm ci --offline",
+                "seconds": 0.17017279099999905
+              }
+            ],
+            "receipts": []
+          },
+          "add-package": {
+            "seconds": 0.16066291599999932,
+            "deltaBytes": "598016",
+            "cumulativeBytes": "70733824",
+            "commands": [
+              {
+                "name": "npm install package --offline",
+                "seconds": 0.1605406669999993
+              }
+            ],
+            "receipts": []
+          },
+          "add-package-reset": {
+            "seconds": 0.0003372909999998228,
+            "deltaBytes": "0",
+            "cumulativeBytes": "70733824",
+            "commands": [],
+            "receipts": []
+          },
+          "edit-build-test": {
+            "seconds": 0.20209758300000066,
+            "deltaBytes": "24576",
+            "cumulativeBytes": "70758400",
+            "commands": [
+              {
+                "name": "npm run build",
+                "seconds": 0.09986533400000007
+              },
+              {
+                "name": "npm test",
+                "seconds": 0.10180949999999939
+              }
+            ],
+            "receipts": []
+          },
+          "land-drop": {
+            "seconds": 0.16906562499999928,
+            "deltaBytes": "-70909952",
+            "cumulativeBytes": "-151552",
+            "commands": [
+              {
+                "name": "git add",
+                "seconds": 0.053850291999999175
+              },
+              {
+                "name": "git commit",
+                "seconds": 0.01632774999999856
+              },
+              {
+                "name": "git update-ref integration",
+                "seconds": 0.006276582999998936
+              },
+              {
+                "name": "git worktree remove",
+                "seconds": 0.025214208999999755
+              },
+              {
+                "name": "git update-ref delete branch",
+                "seconds": 0.005761833000000479
+              },
+              {
+                "name": "git worktree remove",
+                "seconds": 0.02610345800000141
+              },
+              {
+                "name": "git update-ref delete branch",
+                "seconds": 0.004911417000001165
+              }
+            ],
+            "receipts": []
+          },
+          "cleanup": {
+            "seconds": 0.005769959000001108,
+            "deltaBytes": "0",
+            "cumulativeBytes": "-151552",
+            "commands": [],
+            "receipts": []
+          }
+        },
+        "totalSeconds": 1.0519644579999985,
+        "firstReadyIncludingSeedSeconds": 0.24964975100000084,
+        "dependencyMode": "npm-install",
+        "npmVersion": "11.5.1",
+        "testOutput": "WORKFLOW_TEST_PASSED",
+        "validation": [
+          "private data excluded",
+          "source and build isolation",
+          "build and test passed",
+          "landed change",
+          "workspace retirement",
+          "original local data and install preserved"
+        ]
+      }
+    },
+    {
+      "graft": {
+        "stages": {
+          "cache-setup": {
+            "seconds": 6.250000005820766e-7,
+            "deltaBytes": "0",
+            "cumulativeBytes": "0",
+            "commands": [],
+            "receipts": []
+          },
+          "seed": {
+            "seconds": 0.19716491600000155,
+            "deltaBytes": "-749568",
+            "cumulativeBytes": "-749568",
+            "commands": [
+              {
+                "name": "git graft seed-layer",
+                "seconds": 0.1965573750000003
+              }
+            ],
+            "receipts": [
+              {
+                "cloned_bytes": 8389053,
+                "copied_bytes": 0,
+                "logical_bytes": 8389053,
+                "backend": "copy-on-write",
+                "action": "save"
+              }
+            ]
+          },
+          "first": {
+            "seconds": 1.2725848750000004,
+            "deltaBytes": "28459008",
+            "cumulativeBytes": "27709440",
+            "readySeconds": 1.2724133330000005,
+            "commands": [
+              {
+                "name": "git graft spawn",
+                "seconds": 1.2723942919999973
+              }
+            ],
+            "receipts": [
+              {
+                "cloned_bytes": 25165824,
+                "cloned_files": 3,
+                "parent_reused_bytes": 0,
+                "parent_reused_files": 0,
+                "primary_reused_files": 3,
+                "primary_reused_bytes": 25165824,
+                "private_files": 407,
+                "private_bytes": 7687,
+                "snapshot_reused": false,
+                "backend": "clonefile",
+                "objects": {
+                  "method": "local-pack",
+                  "source": "local-export",
+                  "object_format": "sha1",
+                  "bytes": 25207995,
+                  "pack_bytes": 25195275,
+                  "index_bytes": 12720,
+                  "shared_bytes": 25207995,
+                  "cache_bytes": 25207995,
+                  "pack_count": 1,
+                  "timings": {
+                    "cache_publish_seconds": 0.051268791,
+                    "reachability_seconds": 0.007410625,
+                    "transfer_seconds": 0.698328584,
+                    "verify_seconds": 0.006689,
+                    "total_seconds": 0.777909667
+                  }
+                }
+              },
+              {
+                "cloned_bytes": 8389053,
+                "copied_bytes": 0,
+                "logical_bytes": 8389053,
+                "backend": "copy-on-write",
+                "action": "restore"
+              }
+            ]
+          },
+          "additional": {
+            "seconds": 0.44506062499999827,
+            "deltaBytes": "2990080",
+            "cumulativeBytes": "30699520",
+            "readySeconds": 0.44492124999999944,
+            "commands": [
+              {
+                "name": "git graft spawn",
+                "seconds": 0.44490224999999917
+              }
+            ],
+            "receipts": [
+              {
+                "cloned_bytes": 25165824,
+                "cloned_files": 3,
+                "parent_reused_bytes": 0,
+                "parent_reused_files": 0,
+                "primary_reused_files": 0,
+                "primary_reused_bytes": 0,
+                "private_files": 407,
+                "private_bytes": 7687,
+                "snapshot_reused": true,
+                "backend": "clonefile",
+                "objects": {
+                  "method": "clonefile",
+                  "source": "cache",
+                  "object_format": "sha1",
+                  "bytes": 25207995,
+                  "pack_bytes": 25195275,
+                  "index_bytes": 12720,
+                  "shared_bytes": 25207995,
+                  "cache_bytes": 0,
+                  "pack_count": 1,
+                  "timings": {
+                    "cache_seconds": 0.015430709,
+                    "total_seconds": 0.03431475
+                  }
+                }
+              },
+              {
+                "cloned_bytes": 8389053,
+                "copied_bytes": 0,
+                "logical_bytes": 8389053,
+                "backend": "copy-on-write",
+                "action": "restore"
+              }
+            ]
+          },
+          "add-package": {
+            "seconds": 0.2951547080000018,
+            "deltaBytes": "147456",
+            "cumulativeBytes": "30846976",
+            "commands": [
+              {
+                "name": "git graft add-dep package",
+                "seconds": 0.2950178750000014
+              }
+            ],
+            "receipts": [
+              {
+                "exit_code": 0,
+                "success": true
+              }
+            ]
+          },
+          "add-package-reset": {
+            "seconds": 0.000318583000000217,
+            "deltaBytes": "0",
+            "cumulativeBytes": "30846976",
+            "commands": [],
+            "receipts": []
+          },
+          "edit-build-test": {
+            "seconds": 0.25650020900000164,
+            "deltaBytes": "4096",
+            "cumulativeBytes": "30851072",
+            "commands": [
+              {
+                "name": "git graft exec npm run build",
+                "seconds": 0.13326574999999866
+              },
+              {
+                "name": "git graft exec npm test",
+                "seconds": 0.1228326249999991
+              }
+            ],
+            "receipts": [
+              {
+                "exit_code": 0,
+                "success": true
+              },
+              {
+                "exit_code": 0,
+                "success": true
+              }
+            ]
+          },
+          "land-drop": {
+            "seconds": 1.697581833,
+            "deltaBytes": "50597888",
+            "cumulativeBytes": "81448960",
+            "commands": [
+              {
+                "name": "git graft land",
+                "seconds": 1.6039980829999987
+              },
+              {
+                "name": "git graft drop",
+                "seconds": 0.0841461670000026
+              }
+            ],
+            "receipts": [
+              {
+                "removed": true,
+                "action": "land"
+              },
+              {
+                "removed": true,
+                "action": "drop"
+              }
+            ]
+          },
+          "cleanup": {
+            "seconds": 0.08556925000000047,
+            "deltaBytes": "12288",
+            "cumulativeBytes": "81461248",
+            "commands": [
+              {
+                "name": "git graft gc --purge-cache --apply",
+                "seconds": 0.07991116700000202
+              }
+            ],
+            "receipts": []
+          }
+        },
+        "totalSeconds": 4.249935624000005,
+        "firstReadyIncludingSeedSeconds": 1.4695788740000026,
+        "dependencyMode": "shared-layer",
+        "npmVersion": "11.5.1",
+        "testOutput": "WORKFLOW_TEST_PASSED",
+        "validation": [
+          "private data excluded",
+          "source and build isolation",
+          "build and test passed",
+          "landed change",
+          "workspace retirement",
+          "original local data and install preserved"
+        ]
+      },
+      "native": {
+        "stages": {
+          "cache-setup": {
+            "seconds": 5.420000015874393e-7,
+            "deltaBytes": "0",
+            "cumulativeBytes": "0",
+            "commands": [],
+            "receipts": []
+          },
+          "seed": {
+            "seconds": 0.00033979199999885167,
+            "deltaBytes": "8192",
+            "cumulativeBytes": "8192",
+            "commands": [],
+            "receipts": []
+          },
+          "first": {
+            "seconds": 0.23722691699999995,
+            "deltaBytes": "35893248",
+            "cumulativeBytes": "35901440",
+            "readySeconds": 0.23712174999999844,
+            "commands": [
+              {
+                "name": "git worktree add",
+                "seconds": 0.0687746249999982
+              },
+              {
+                "name": "npm ci --offline",
+                "seconds": 0.1683401249999988
+              }
+            ],
+            "receipts": []
+          },
+          "additional": {
+            "seconds": 0.23638908300000186,
+            "deltaBytes": "35504128",
+            "cumulativeBytes": "71405568",
+            "readySeconds": 0.23630729100000097,
+            "commands": [
+              {
+                "name": "git worktree add",
+                "seconds": 0.06810629199999675
+              },
+              {
+                "name": "npm ci --offline",
+                "seconds": 0.16819658399999754
+              }
+            ],
+            "receipts": []
+          },
+          "add-package": {
+            "seconds": 0.16595337500000096,
+            "deltaBytes": "57344",
+            "cumulativeBytes": "71462912",
+            "commands": [
+              {
+                "name": "npm install package --offline",
+                "seconds": 0.1658453750000008
+              }
+            ],
+            "receipts": []
+          },
+          "add-package-reset": {
+            "seconds": 0.00027345799999966403,
+            "deltaBytes": "-8192",
+            "cumulativeBytes": "71454720",
+            "commands": [],
+            "receipts": []
+          },
+          "edit-build-test": {
+            "seconds": 0.19969058299999962,
+            "deltaBytes": "212992",
+            "cumulativeBytes": "71667712",
+            "commands": [
+              {
+                "name": "npm run build",
+                "seconds": 0.10038495899999907
+              },
+              {
+                "name": "npm test",
+                "seconds": 0.09891483399999924
+              }
+            ],
+            "receipts": []
+          },
+          "land-drop": {
+            "seconds": 0.16872983300000124,
+            "deltaBytes": "-70963200",
+            "cumulativeBytes": "704512",
+            "commands": [
+              {
+                "name": "git add",
+                "seconds": 0.05304570799999783
+              },
+              {
+                "name": "git commit",
+                "seconds": 0.016071250000000873
+              },
+              {
+                "name": "git update-ref integration",
+                "seconds": 0.005871291999999812
+              },
+              {
+                "name": "git worktree remove",
+                "seconds": 0.02565820800000074
+              },
+              {
+                "name": "git update-ref delete branch",
+                "seconds": 0.00563854100000026
+              },
+              {
+                "name": "git worktree remove",
+                "seconds": 0.02574175000000105
+              },
+              {
+                "name": "git update-ref delete branch",
+                "seconds": 0.005453792000000249
+              }
+            ],
+            "receipts": []
+          },
+          "cleanup": {
+            "seconds": 0.005598999999998341,
+            "deltaBytes": "0",
+            "cumulativeBytes": "704512",
+            "commands": [],
+            "receipts": []
+          }
+        },
+        "totalSeconds": 1.014202583000002,
+        "firstReadyIncludingSeedSeconds": 0.23746208399999888,
+        "dependencyMode": "npm-install",
+        "npmVersion": "11.5.1",
+        "testOutput": "WORKFLOW_TEST_PASSED",
+        "validation": [
+          "private data excluded",
+          "source and build isolation",
+          "build and test passed",
+          "landed change",
+          "workspace retirement",
+          "original local data and install preserved"
+        ]
+      }
+    }
+  ]
+}

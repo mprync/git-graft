@@ -1,4 +1,4 @@
-/** Each scenario owns a real repository, its sibling worktrees and an isolated home. */
+/** Each scenario owns a real repository, its sibling workspaces and an isolated home. */
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -83,8 +83,8 @@ export class Context {
   }
   spawn(name: string, extra: string[]=[], cwd=this.repo) {
     const result=this.cli(['spawn',name,...extra],cwd);
-    assert(typeof result.lease==='string' && typeof result.worktree_path==='string');
-    return {path:result.worktree_path,lease:result.lease,result};
+    assert(typeof result.lease==='string' && typeof result.path==='string');
+    return {path:result.path,lease:result.lease,result};
   }
   coverCli(name: string) {this.commands.add(name);}
   coverTool(name: string) {this.tools.add(name);}

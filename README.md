@@ -1,49 +1,70 @@
 # git-graft
 
-Give each coding agent its own Git branch, checkout and build outputs, with a suggested port unique among active workspaces in the project. On filesystems with copy-on-write support, worktrees can share unchanged source data. Agents and people use the same Rust binary through `git graft` or a local MCP server.
+Graft gives each task a standalone local Git repository. You can fix a bug in your main checkout while an agent works on the same branch name in a graft. Each checkout has its own files, index, branches, stash and object database. When a task is ready, `git graft land` brings its commits back to a branch you choose.
 
-## Try it
+Graft uses ordinary Git repositories and runs locally. You can open a graft in your editor, commit with Git and inspect its history even after the original checkout moves. Graft manages creation, integration and recovery through a command-line interface and a stdio MCP server.
 
-From a fresh clone of this project, install the Git subcommand with Rust 1.89 or newer. Use Git 2.46 or newer for retirement and recovery. `git graft doctor` checks the installed Git's transaction support.
+## Install
+
+Build from a clone of this repository with Rust 1.89 or newer. Git 2.46 or newer must be on your `PATH`.
 
 ```sh
 cargo install --locked --path .
+git graft --version
 ```
 
-In a repository with at least one commit, run the following. The examples use a destination branch named `main`.
+## Create a workspace and land a change
+
+From a repository with a committed `main` branch, check the filesystem capabilities and create a workspace.
 
 ```sh
 git graft doctor
 git graft spawn fix-parser --base main
 ```
 
-`spawn` returns the actual checkout path, branch, resolved commit, storage receipt and a lease for that instance. Edit the files in `worktree_path` with your usual tools. In a POSIX shell, export the lease once. In PowerShell, set `$env:GIT_GRAFT_LEASE` or pass `--lease` to each command.
+The JSON result includes an absolute `path` and a secret `lease`. Open the path in your editor and make your changes. Git commands inside that directory operate on the task's repository.
 
 ```sh
-export GIT_GRAFT_LEASE="<lease from spawn>"
-git graft exec fix-parser -- git status --short
-git graft status fix-parser
-git graft land fix-parser --into main --commit "Fix parser handling of empty input"
+git status
+git add -p
+git commit -m "Fix parser"
 ```
 
-The optional `--commit` stages all nonignored changes in the agent's workspace. Without it, land expects the agent's changes to be committed. A successful land returns the integrated commit and a recovery lease, then releases the workspace name. A conflict returns the affected paths and preserves the workspace.
+From the original checkout, use the lease returned by `spawn` to land the commit. Substitute your destination branch if it has a different name.
 
-## What is shared
+```sh
+git graft status fix-parser
+git graft land fix-parser --into main --lease "<workspace lease>"
+```
+
+A successful land updates the destination and archives the workspace. Keep the returned `recovery_lease`. You can reopen the archive with `git graft restore fix-parser --lease "<recovery lease>"`. If the destination still points at the landed commit, `git graft undo-land` can append a reversal. Conflicts and local edits that need attention are reported before retirement. [Operations and recovery](docs/operations.md)
+
+## What a workspace contains
 
 | Resource | Behavior |
 | --- | --- |
-| Source files | On eligible volumes, even the first workspace can share the primary checkout's existing data blocks. Graft checks candidate bytes against the requested Git revision and checkout settings. A verified snapshot can supply later workspaces at the same commit or its child. |
-| Other filesystems and sparse checkouts | Git populates an ordinary private worktree. Use repeated `--sparse DIR` arguments to request cone-mode sparse checkout. The receipt records the selected backend and fallback reason. |
-| Package downloads | npm, pnpm, Bun, Cargo and uv have project-scoped caches. Installs run on request. An empty package list requests a locked install, sync or fetch, depending on the manager. |
-| Installed Node packages | Seed a relocatable install from the primary checkout with `git graft seed-layer --key KEY`, or save one from a managed workspace. Restore it with `git graft layer NAME restore --key KEY`. Each workspace can edit its own files. |
-| Build and runtime state | Scoped commands receive a private Cargo target/build directory, a private uv environment and a project-unique suggested `PORT`. Cargo can use a shared sccache when available. |
-| Local developer data | Source snapshots come from committed content. Untracked and ignored files from the developer's checkout stay there. Committed secrets and symlinks retain normal Git behavior. |
+| Git history | The selected commit and its locally available ancestry. Private branches and stashes created in the graft stay there. |
+| Source files | Files from the selected commit. Edits, staged changes and untracked files in the original checkout stay in place. |
+| Storage | Graft reuses verified Git packs and eligible files through filesystem copy-on-write. It also supports native Git checkout and private copies. |
+| Dependencies | Each task has private build outputs. Compatible tasks can start with a writable copy-on-write view of a trusted npm installation. |
+| Recovery | Land and drop archive the complete workspace, including its local Git state and ignored files. `git graft gc` previews eligible cleanup. |
 
-On macOS APFS, two agents starting from one populated checkout and reusing its npm install needed **0.69 MiB of additional disk**, compared with **67.77 MiB** for native Git worktrees and npm. Median paired savings were **98.99%** over three runs. The second spawn took 0.279 s with Graft and 0.067 s with native Git. On NTFS and Linux volumes without reflinks, a full source checkout can cost as much storage as plain Git. [Workload, timings and platform verification](docs/verification.md)
+For an installed npm project with a committed, supported lockfile, register the installation once. Choose a compatibility key that identifies the Node and npm versions, install options and environment used to create it.
 
-## Connect an agent
+```sh
+git graft seed-layer --shared --key node24-npm11-default
+git graft spawn test-parser --base main
+```
 
-Use a stdio client configuration pointing at the installed binary and the absolute path to the repository.
+Inspect `storage.dependencies.status` in the spawn result to see whether Graft attached the installation. `git graft add-dep` supports npm, pnpm, Bun, Cargo and uv. [Dependency setup](docs/operations.md#reuse-an-npm-installation) · [Workspace options and compatibility](docs/workspaces.md)
+
+## Performance
+
+On macOS/APFS, the release created a standalone checkout of Homebrew’s 53,716-commit history in 3.86 seconds and repeated it in 0.57 seconds. Native `git worktree add` took 0.36 seconds for each. With a reusable npm installation, two active tasks added 3.53 MB of physical file data with Graft and 70.64 MB with native checkouts. Homebrew’s full private history used more disk than native Git. [Benchmarks, methodology and raw results](docs/benchmarks.md)
+
+## Use with an MCP client
+
+Configure a local stdio server with the installed binary and an absolute path to the original repository.
 
 ```json
 {
@@ -56,31 +77,10 @@ Use a stdio client configuration pointing at the installed binary and the absolu
 }
 ```
 
-Append `--allow-exec` to enable command execution, dependency installation, installed layers and opt-in offline lockfile reconciliation. Use trusted repositories and clients. Git hooks, filters and configured merge drivers can execute local code during Git operations. Worktrees share the repository and run with the operating system permissions of the server process.
+The host can grant command execution, dependency tools and npm lockfile reconciliation with `--allow-exec`. For retryable spawns, supply a cryptographically random UUIDv4 as `request_id`. It also acts as the workspace lease. Keep leases out of logs and issue reports. [Agent workflow](skills/git-graft/SKILL.md)
 
-Agents can generate a UUID and supply it as `request_id` to retry a spawn after a disconnect. Discovery exposes typed parameters, tool permissions and structured results. [Agent workflow skill](skills/git-graft/SKILL.md)
+## Trust and development
 
-## Inspect and reclaim space
+Run Graft with trusted local repositories and clients. Git hooks, checkout filters and package scripts can run with your operating-system permissions. Archives may contain credentials and other private files. Protect the storage directory and keep independent backups of important work. [Safety](docs/safety.md) · [Security reporting](SECURITY.md)
 
-```sh
-git graft list
-git graft status fix-parser
-git graft gc
-git graft gc --apply
-```
-
-Garbage collection previews stale, clean workspaces and verified unused source snapshots. A dirty, locked, busy or unmerged workspace is retained. After a land or drop, `git graft restore NAME --lease RECOVERY_LEASE` reopens the workspace. To reverse a land while its destination still points to the landed commit, `git graft undo-land NAME --lease RECOVERY_LEASE` appends a reversal commit. Recovery data has no automatic expiry. [File safety, permissions and recovery](docs/safety.md)
-
-## Develop and verify
-
-```sh
-cargo test --locked
-npm test
-npm run bench
-npm run bench:workflow
-npm run coverage
-```
-
-The TypeScript end-to-end suite builds the release binary, drives real Git repositories and MCP clients, and writes a JSON report under `target/e2e/`. It requires the package managers it exercises. The ordinary CLI and MCP server require only the binary, Git and whichever tools a workspace uses. [Test prerequisites and coverage definitions](docs/verification.md)
-
-[Operations and recovery](docs/operations.md) · [Review of the proposed architecture](docs/research.md) · [Contributing](CONTRIBUTING.md) · [MIT license](LICENSE)
+Run `cargo test --locked` for the Rust suite. With Node.js 24.5 or newer and the documented package managers installed, `npm test` builds the release binary and exercises the CLI and MCP server in disposable repositories. [Verification](docs/verification.md) · [Contributing](CONTRIBUTING.md) · [MIT license](LICENSE)

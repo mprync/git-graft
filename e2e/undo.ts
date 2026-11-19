@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { objectResult, type Context, type Scenario } from './harness.ts';
+import { leaveIndexedCheckoutJournal } from './checkout-journal.ts';
+import type { Context, Scenario } from './harness.ts';
 
 type Workspace = ReturnType<Context['spawn']>;
 
@@ -24,6 +25,17 @@ function undo(name: string, lease: string): string[] {
   return ['undo-land', name, '--lease', lease];
 }
 
+function planStore(ctx: Context): string {
+  const admin = ctx.git(['rev-parse', '--absolute-git-dir']);
+  const format = ctx.git(['rev-parse', '--show-object-format']);
+  return join(admin, 'graft', 'land-plans', format + '-full');
+}
+
+function undoPins(ctx: Context, store: string): string[] {
+  return ctx.git(['for-each-ref', '--format=%(refname)', 'refs/graft/workspaces'], store)
+    .split('\n').filter(ref => ref.includes('/undo/'));
+}
+
 function assertUndo(ctx: Context, dest: string, previous: string, landed: string, reverted: unknown) {
   assert.equal(typeof reverted, 'string');
   assert.equal(ctx.git(['rev-parse', dest]), reverted);
@@ -33,7 +45,7 @@ function assertUndo(ctx: Context, dest: string, previous: string, landed: string
 
 export const cases: Scenario[] = [
   {
-    name: 'undo reverses an entire fast-forward after restoration and receipt expiry',
+    name: 'undo reverses an entire fast-forward after restore and garbage collection',
     run(ctx) {
       const name = 'multiple-commits';
       const old = ctx.git(['rev-parse', 'HEAD']);
@@ -46,12 +58,10 @@ export const cases: Scenario[] = [
       const privateFile = join(ws.path, 'local.txt');
       writeFileSync(privateFile, 'restored workspace data\n');
 
-      const common = ctx.git(['rev-parse', '--path-format=absolute', '--git-common-dir']);
-      const receiptPath = join(common, 'graft', 'completed', `${ws.lease}.json`);
-      const receipt = objectResult(JSON.parse(readFileSync(receiptPath, 'utf8')));
-      writeFileSync(receiptPath, JSON.stringify({ ...receipt, at: 0 }));
       ctx.cli(['gc', '--apply']);
-      assert.equal(existsSync(receiptPath), false);
+      ctx.git(['gc', '--prune=now']);
+      ctx.git(['fsck', '--full']);
+      ctx.git(['fsck', '--full'], ws.path);
 
       const args = undo(name, ws.lease);
       const result = ctx.cli(args);
@@ -66,6 +76,40 @@ export const cases: Scenario[] = [
       assert.equal(ctx.git(['rev-parse', 'HEAD'], ws.path), last);
       assert.equal(readFileSync(privateFile, 'utf8'), 'restored workspace data\n');
       assert.deepEqual(ctx.cli(args), result);
+    },
+  },
+  {
+    name: 'undo replay clears its indexed checkout journal and unblocks the next landing',
+    run(ctx) {
+      const name = 'indexed-undo';
+      const base = ctx.git(['rev-parse', 'HEAD']);
+      const ws = ctx.spawn(name);
+      const tip = commit(ctx, ws.path, 'feature.txt', 'workspace feature\n');
+      assert.equal(land(ctx, name, ws), tip);
+      const args = undo(name, ws.lease);
+      const journal = leaveIndexedCheckoutJournal(ctx, args);
+      const reversed = ctx.git(['rev-parse', 'HEAD']);
+      assert.deepEqual(journal.plan, { target: 'main', old: tip, new: reversed, tip });
+      assertUndo(ctx, 'HEAD', base, tip, reversed);
+      assert.equal(existsSync(join(ctx.repo, 'feature.txt')), false);
+      const index = readFileSync(join(ctx.repo, '.git', 'index'));
+
+      const replayed = ctx.cli(args);
+      assert.deepEqual(replayed, { action: 'undo', name, target: 'main', previous: tip, commit: reversed });
+      assert.equal(existsSync(journal.path), false);
+      assert.equal(ctx.git(['rev-parse', 'HEAD']), reversed);
+      assert.deepEqual(readFileSync(join(ctx.repo, '.git', 'index')), index);
+      assert.equal(existsSync(join(ctx.repo, 'feature.txt')), false);
+      assert.equal(readFileSync(join(ctx.repo, 'tracked.txt'), 'utf8'), 'initial\n');
+
+      const followup = ctx.spawn('after-undo');
+      assert.equal(followup.result.base, reversed);
+      const next = commit(ctx, followup.path, 'followup.txt', 'next landing\n');
+      assert.equal(land(ctx, 'after-undo', followup), next);
+      assert.equal(ctx.git(['rev-parse', 'HEAD^']), reversed);
+      assert.equal(readFileSync(join(ctx.repo, 'followup.txt'), 'utf8'), 'next landing\n');
+      assert.equal(existsSync(journal.path), false);
+      ctx.git(['fsck', '--full']);
     },
   },
   ...['merge', 'squash'].map((strategy): Scenario => ({
@@ -132,7 +176,8 @@ export const cases: Scenario[] = [
       assert.deepEqual(failure.details, { target: 'main', expected: landed, actual: advanced });
       assert.equal(ctx.git(['rev-parse', 'HEAD']), advanced);
       assert.equal(readFileSync(join(ctx.repo, 'later.txt'), 'utf8'), 'later user commit\n');
-      assert.doesNotMatch(ctx.git(['for-each-ref', '--format=%(refname)', 'refs/graft/recovery']), /\/undo$/m);
+      assert.deepEqual(undoPins(ctx, planStore(ctx)), []);
+      assert.equal(ctx.git(['for-each-ref', '--format=%(refname)', 'refs/graft']), '');
     },
   },
   {
@@ -155,11 +200,15 @@ export const cases: Scenario[] = [
       } finally {
         rmSync(lock);
       }
-      const refs = ctx.git(['for-each-ref', '--format=%(refname)', 'refs/graft/recovery']);
-      const pinned = refs.split('\n').find(ref => ref.endsWith('/undo'));
-      assert.ok(pinned);
-      assert.ok(!refs.includes(ws.lease));
-      const candidate = ctx.git(['rev-parse', pinned]);
+      const store = planStore(ctx);
+      const pins = undoPins(ctx, store);
+      assert.equal(pins.length, 1);
+      const [pinned] = pins;
+      assert.ok(!pinned.includes(ws.lease));
+      assert.equal(ctx.git(['for-each-ref', '--format=%(refname)', 'refs/graft']), '');
+      const candidate = ctx.git(['rev-parse', pinned], store);
+      assert.equal(ctx.git(['rev-parse', candidate + '^'], store), landed);
+      assert.equal(ctx.git(['rev-parse', candidate + '^{tree}'], store), ctx.git(['rev-parse', old + '^{tree}']));
       ctx.env.GIT_COMMITTER_DATE = '2025-01-01T00:00:00Z';
       const result = ctx.cli(args);
       assert.equal(result.commit, candidate);
@@ -167,6 +216,9 @@ export const cases: Scenario[] = [
       assert.deepEqual(ctx.cli(args), result);
       assert.equal(ctx.git(['rev-parse', 'HEAD']), old);
       assert.equal(existsSync(join(ctx.repo, 'feature.txt')), false);
+      assert.equal(ctx.git(['for-each-ref', '--format=%(refname)', 'refs/graft']), '');
+      ctx.git(['fsck', '--full'], store);
+      ctx.git(['fsck', '--full']);
 
       const tree = ctx.git(['rev-parse', 'target^{tree}']);
       const later = ctx.git(['commit-tree', tree, '-p', candidate, '-m', 'later native commit']);
@@ -180,12 +232,12 @@ export const cases: Scenario[] = [
     run(ctx) {
       const dropped = ctx.spawn('dropped');
       ctx.cli(['drop', 'dropped', '--lease', dropped.lease]);
-      assert.equal(ctx.fail(undo('dropped', dropped.lease)).code, 'landing_not_found');
+      assert.match(String(ctx.fail(undo('dropped', dropped.lease)).message), /not retired by landing/i);
       const unchanged = ctx.spawn('unchanged');
       const old = ctx.git(['rev-parse', 'HEAD']);
       assert.equal(land(ctx, 'unchanged', unchanged), old);
-      assert.equal(ctx.fail(undo('other', unchanged.lease)).code, 'landing_not_found');
-      assert.equal(ctx.fail(undo('unchanged', randomUUID())).code, 'landing_not_found');
+      assert.equal(ctx.fail(undo('other', unchanged.lease)).code, 'lease_mismatch');
+      assert.equal(ctx.fail(undo('unchanged', randomUUID())).code, 'lease_mismatch');
       assert.equal(ctx.fail(undo('unchanged', unchanged.lease)).code, 'nothing_to_undo');
       assert.equal(ctx.git(['rev-parse', 'HEAD']), old);
     },
