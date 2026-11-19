@@ -52,6 +52,12 @@ Graft now asks Git which attributes are set before copying source files. On Home
 
 When a shallow export fits in one pack and the primary has no reusable pack, Git uses path names from the selected revision to find similar objects for compression. On the preceding release this reduced median pack transfer from 253 ms to 188 ms. [Pack export measurements](measurements/macos-arm64/homebrew-tip-pack-export.json)
 
+### External Git attributes
+
+With the user attribute `*.rb linguist-language=Ruby`, the previous release wrote private copies of all 3,318 regular Homebrew files. The updated release shares all 3,318. Additional APFS file data for two single-commit grafts fell from 64,954,368 to 6,012,928 bytes, including their Git data and Graft records. Working files accounted for zero new file-data blocks in both measured rounds. Two native worktrees used 59,883,520 bytes. Reproduce with `npm run bench:source:real -- --history tip --clean-primary --rounds 2 --apfs-file-data --global-attribute '*.rb linguist-language=Ruby'`.
+
+Six separate timing pairs without the external rule put median first spawn at 0.596 s before and 0.591 s after. The paired native worktrees took 0.346 s in the updated release runs. [Timing samples and APFS allocation](measurements/macos-arm64/homebrew-tip-external-attributes.json)
+
 ### What happens after a one-file commit?
 
 The first two grafts share a selected pack and pack index occupying 5,353,472 bytes. When the primary advances by one file, Graft can share existing blocks from the parent’s cached pack while excluding the parent commit and superseded objects. On Homebrew, the third checkout allocated **458,752 bytes**, down from **5,672,960 bytes** on the previous release. The first two grafts added zero working-file data blocks. These measurements count physical file data across the fixture, including Git indexes and Graft records. They exclude filesystem metadata. [APFS measurements and release samples](measurements/macos-arm64/homebrew-tip-parent-reuse.json)

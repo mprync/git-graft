@@ -2,6 +2,7 @@
  * node e2e/real-source-bench.ts [--repo /opt/homebrew] [--bin PATH]
  *   [--output PATH] [--apfs-file-data] [--rounds N] [--advance-base] [--include-revisions]
  *   [--history local|isolated|tip] [--project-history local|isolated|tip] [--clean-primary] [--no-deps]
+ *   [--global-attribute 'PATTERN ATTRIBUTES']
  * The source is read only. Local clones copy the original pack files without repacking;
  * all configuration, branches, and test commits are created in temporary repositories.
  */
@@ -15,7 +16,7 @@ import { Context, objectResult } from './harness.ts';
 import { objectBootstrap } from './benchmark-receipts.ts';
 
 const {values} = parseArgs({options:{repo:{type:'string'},bin:{type:'string'},output:{type:'string'},history:{type:'string'},'project-history':{type:'string'},
-  rounds:{type:'string'},'apfs-file-data':{type:'boolean'},'advance-base':{type:'boolean'},'include-revisions':{type:'boolean'},'clean-primary':{type:'boolean'},'no-deps':{type:'boolean'}}});
+  rounds:{type:'string'},'apfs-file-data':{type:'boolean'},'advance-base':{type:'boolean'},'include-revisions':{type:'boolean'},'clean-primary':{type:'boolean'},'no-deps':{type:'boolean'},'global-attribute':{type:'string'}}});
 const repo = resolve(values.repo ?? '/opt/homebrew');
 const bin = resolve(values.bin ?? process.env.GIT_GRAFT_BIN ?? join(import.meta.dirname,'../target/release',
   process.platform === 'win32' ? 'git-graft.exe' : 'git-graft'));
@@ -34,6 +35,12 @@ assert(existsSync(repo), 'Source repository does not exist');
 
 const fixture = new Context(bin);
 try {
+  const globalAttribute = values['global-attribute'];
+  if (globalAttribute !== undefined) {
+    const configDir = join(fixture.root, 'home', '.config', 'git');
+    mkdirSync(configDir, {recursive:true});
+    writeFileSync(join(configDir, 'attributes'), globalAttribute + '\n');
+  }
   const envPath = Object.keys(fixture.env).find(key => key.toUpperCase() === 'PATH') ?? 'PATH';
   fixture.env[envPath] = [dirname(bin),fixture.env[envPath] ?? ''].join(delimiter);
   fixture.env.GIT_NO_LAZY_FETCH = '1';
@@ -325,7 +332,7 @@ try {
       commits:Number(command(['rev-list','--count',head],template)),hasUnrelatedSourceCommit:Boolean(existingUnrelated)},
     preparation:{templateCloneSeconds:prepSeconds,method:'local clone --no-hardlinks; source pack layout preserved; no source configuration copied'},
     requestedHistory:history ?? 'default',primaryCheckout:values['clean-primary'] ? 'clean' : 'dirty',apfsCalibration:calibration,summary,runs,
-    projectHistory,dependencyDiscovery:!values['no-deps'],
+    projectHistory,globalAttribute,dependencyDiscovery:!values['no-deps'],
     scope:'Each round starts from a fresh populated clone. Spawn timings include the entire CLI process and cold object setup. The first git status is timed separately for each workspace. Clone preparation and advanced commit creation are outside both timers. Checks verify source contents, primary state and object visibility for the actual history mode. Signed statfs deltas cover the volume. Separately timed APFS scans can warm caches and exclude metadata, forks and xattrs.'};
   mkdirSync(dirname(output),{recursive:true});
   writeFileSync(output,JSON.stringify(report,null,2)+'\n');
