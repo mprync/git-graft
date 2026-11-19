@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { existsSync, lstatSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readdirSync, readlinkSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { assertSeparateRegularFiles, objectResult, type Context, type Scenario } from './harness.ts';
@@ -46,6 +46,85 @@ function read(path: string, file: string): string {
 }
 
 export const cases: Scenario[] = [
+  {
+    name: 'cold tip checkout preserves dirty donor files and falls back for a missing file',
+    run(ctx) {
+      ctx.git(['config', 'core.autocrlf', 'false']);
+      writeFileSync(join(ctx.repo, '.gitattributes'), '*.txt text eol=crlf\n');
+      writeFileSync(join(ctx.repo, 'converted.txt'), 'selected\n');
+      ctx.git(['add', '.gitattributes', 'converted.txt']);
+      const link = looseBlob(ctx, ctx.repo, 'link-target', 'converted.txt');
+      ctx.git(['update-index', '--add', '--cacheinfo', '120000', link, 'selected-link']);
+      ctx.git(['commit', '-qm', 'selected checkout']);
+      const base = ctx.git(['rev-parse', 'HEAD']);
+      const tree = ctx.git(['rev-parse', `${base}^{tree}`]);
+      const expected = [...new Set([base, tree,
+        ...ctx.git(['ls-tree', '-rt', '--format=%(objectname)', base]).split('\n')])].sort();
+      ctx.git(['switch', '-c', 'unrelated']);
+      const unrelated = commitFile(ctx, ctx.repo, 'other.txt', 'other branch\n');
+      ctx.git(['switch', 'main']);
+      const reference = join(ctx.root, 'native-reference');
+      ctx.git(['clone', '-q', '--no-hardlinks', '--no-checkout', ctx.repo, reference], ctx.root);
+      ctx.git(['checkout', '-q', '--detach', base], reference);
+      assert.equal(read(reference, 'converted.txt'), 'selected\r\n');
+
+      ctx.git(['update-index', '--assume-unchanged', 'tracked.txt']);
+      writeFileSync(join(ctx.repo, 'tracked.txt'), 'changed\n');
+      writeFileSync(join(ctx.repo, 'staged.txt'), 'staged only\n');
+      ctx.git(['add', 'staged.txt']);
+      const staged = ctx.git(['rev-parse', ':staged.txt']);
+      const orphan = looseBlob(ctx, ctx.repo, 'orphan-tip', 'orphan only\n');
+      const index = join(ctx.repo, '.git', 'index');
+      const indexBytes = readFileSync(index);
+      const dirty = join(ctx.repo, 'tracked.txt');
+      const before = lstatSync(dirty, { bigint: true });
+      const originalBytes = readFileSync(dirty);
+      const stagedFile = join(ctx.repo, 'staged.txt');
+      const stagedBytes = readFileSync(stagedFile);
+      const stagedBefore = lstatSync(stagedFile, { bigint: true });
+      assert.equal(originalBytes.length, Buffer.byteLength('initial\n'));
+
+      const check = (path: string, name: string) => {
+        checkout(ctx, path, base, `refs/heads/graft/${name}`);
+        assert.equal(ctx.git(['rev-parse', 'HEAD^{tree}'], path), tree);
+        assert.deepEqual(objects(ctx, path), expected);
+        assert([unrelated, staged, orphan].every(id => !objects(ctx, path).includes(id)));
+        for (const file of ['tracked.txt', 'converted.txt', '.gitattributes']) {
+          assert.deepEqual(readFileSync(join(path, file)), readFileSync(join(reference, file)), file);
+        }
+        const expectedLink = join(reference, 'selected-link');
+        const actualLink = join(path, 'selected-link');
+        assert.equal(lstatSync(actualLink).isSymbolicLink(), lstatSync(expectedLink).isSymbolicLink());
+        if (lstatSync(expectedLink).isSymbolicLink()) assert.equal(readlinkSync(actualLink), readlinkSync(expectedLink));
+        else assert.deepEqual(readFileSync(actualLink), readFileSync(expectedLink));
+        assert(!existsSync(join(path, 'staged.txt')));
+        assertSeparateRegularFiles([index, join(path, '.git', 'index')]);
+        assert.deepEqual(readFileSync(index), indexBytes);
+        assert.deepEqual(readFileSync(dirty), originalBytes);
+        const after = lstatSync(dirty, { bigint: true });
+        assert.deepEqual([after.dev, after.ino, after.mode, after.size, after.mtimeNs, after.ctimeNs],
+          [before.dev, before.ino, before.mode, before.size, before.mtimeNs, before.ctimeNs]);
+        assert.deepEqual(readFileSync(stagedFile), stagedBytes);
+        const stagedAfter = lstatSync(stagedFile, { bigint: true });
+        assert.deepEqual([stagedAfter.dev, stagedAfter.ino, stagedAfter.mode, stagedAfter.size, stagedAfter.mtimeNs, stagedAfter.ctimeNs],
+          [stagedBefore.dev, stagedBefore.ino, stagedBefore.mode, stagedBefore.size, stagedBefore.mtimeNs, stagedBefore.ctimeNs]);
+      };
+
+      const first = ctx.spawn('cold-tip', ['--history', 'tip', '--base', base]);
+      check(first.path, 'cold-tip');
+      assertSeparateRegularFiles([dirty, join(first.path, 'tracked.txt')]);
+
+      // The selected path is absent in the donor, so checkout must materialize it from Git.
+      unlinkSync(join(ctx.repo, 'converted.txt'));
+      const fallback = ctx.spawn('missing-tip', ['--history', 'tip', '--base', base]);
+      check(fallback.path, 'missing-tip');
+      assert(!existsSync(join(ctx.repo, 'converted.txt')));
+      writeFileSync(join(fallback.path, 'tracked.txt'), 'edited!\n');
+      assert.match(ctx.git(['status', '--porcelain'], fallback.path), / M tracked\.txt/);
+      assert.deepEqual(readFileSync(index), indexBytes);
+      assert.deepEqual(readFileSync(dirty), originalBytes);
+    },
+  },
   {
     name: 'tip history exposes exactly the selected commit and tree, and lands back onto full history',
     run(ctx) {
