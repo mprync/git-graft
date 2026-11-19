@@ -129,7 +129,9 @@ fn spawn(p: &Project, origin: &Path, mut args: Spawn) -> Result<Value> {
                 .unwrap_or_else(|| format!("graft/{}", args.name)),
         )
     };
-    if let Some(name) = &branch {
+    // The generated graft/<name> uses the portable name validated above.
+    // Reject invalid caller-supplied branches before reserving a workspace.
+    if let Some(name) = args.orphan.as_ref().or(args.branch.as_ref()) {
         ensure!(
             !name.starts_with('-') && !name.starts_with("refs/") && name != "HEAD",
             "invalid branch name"
@@ -164,7 +166,13 @@ fn spawn(p: &Project, origin: &Path, mut args: Spawn) -> Result<Value> {
     }
     let build = (|| -> Result<()> {
         registry::verify(p, &r)?;
-        let objects = objects::initialize(
+        let local = args.history == Some(api::History::Local);
+        let initialize = if local {
+            objects::initialize_local
+        } else {
+            objects::initialize
+        };
+        let objects = initialize(
             &source,
             &r.path,
             &p.state,
@@ -173,7 +181,12 @@ fn spawn(p: &Project, origin: &Path, mut args: Spawn) -> Result<Value> {
         )?;
         let mut checkout = match &base {
             Some(oid) if !args.no_checkout => {
-                storage::materialize(&r.path, &p.state, oid, &args.sparse, origin)?
+                let materialize = if local {
+                    storage::materialize_local
+                } else {
+                    storage::materialize
+                };
+                materialize(&r.path, &p.state, oid, &args.sparse, origin)?
             }
             _ => json!({"backend":"empty","files":0,"logical_bytes":0}),
         };

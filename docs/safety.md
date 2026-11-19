@@ -6,6 +6,8 @@ The selected commit determines the initial source tree. Local edits, untracked f
 
 A standalone workspace owns its Git objects, refs, reflogs, stash and index. It does not automatically receive new refs from the original repository. Landing transfers the selected committed work back. Graft declines unsupported histories and checkout configurations rather than silently changing their meaning.
 
+`spawn --history local` treats the invoking clone’s complete Git object database as trusted input. An agent can enumerate objects from other branches, staged files, deleted branches and dropped stashes if those objects still exist. Only the selected commit supplies the checkout. The snapshot has its own object files and remains readable if the primary runs garbage collection or moves. New commits and edits in one graft stay private until explicitly transferred. For work that requires a narrower history boundary, use `--history isolated`. If a local snapshot cannot be made, Graft uses the selected-history path and reports the actual source in `storage.objects.source`.
+
 When reusing a mixed pack, Graft edits an unlinked copy, has Git index its contents, and verifies the object IDs before publishing the pack. On macOS, creating that copy briefly requires an owner-controlled, writable source pack directory. An interruption before unlinking can leave a private temporary directory there, eligible for Git’s normal expiry. The source pack stays intact. If the filesystem or directory cannot support this operation, Graft exports the selected objects through Git.
 
 ## Recover work

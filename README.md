@@ -49,6 +49,8 @@ A successful land updates the destination and archives the workspace. Keep the r
 | Dependencies | Package downloads can be shared across grafts. Supported filesystems can also share the disk blocks of a trusted installation while giving each graft its own writable files. |
 | Recovery | Land and drop archive the complete workspace, including its local Git state and ignored files. `git graft gc` previews eligible cleanup. |
 
+For a trusted local clone, `git graft spawn fix-parser --history local` can reuse the existing Git packs, their indexes and eligible source files through copy-on-write. Each graft still owns its files and can commit independently. The local snapshot includes other branches’ objects, staged blobs and dangling objects. Use `--history isolated` to limit readable objects to the selected history. The JSON field `storage.objects.source` reports `local-snapshot` when the filesystem and repository support it. [History and recovery](docs/safety.md#workspace-contents)
+
 For an installed npm project with a committed, supported lockfile, register the installation once. Choose a compatibility key that identifies the Node and npm versions, install options and environment used to create it.
 
 ```sh

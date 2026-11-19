@@ -26,7 +26,7 @@ const defaultTools = [
   'workspace_restore', 'workspace_undo_land', 'workspace_lock', 'workspace_unlock', 'workspace_move',
   'workspace_repair', 'workspace_list_managers',
 ];
-const spawnOptions = ['base', 'branch', 'detach', 'lock', 'name', 'no_checkout', 'no_deps', 'orphan',
+const spawnOptions = ['base', 'branch', 'detach', 'history', 'lock', 'name', 'no_checkout', 'no_deps', 'orphan',
   'reason', 'request_id', 'sparse'];
 const leaseTools = new Set([
   'workspace_add_dependency', 'workspace_discard', 'workspace_exec', 'workspace_heartbeat',
@@ -444,6 +444,7 @@ export const cases: Scenario[] = [
 
       await invalidCall(client, 'workspace_status', { name: 7 });
       await invalidCall(client, 'workspace_status', {});
+      await invalidCall(client, 'workspace_spawn', { name: 'unknown-history', history: 'remote' });
       await invalidCall(client, 'workspace_list', { unexpected: true });
       await invalidCall(client, 'workspace_unknown', {});
       assert.equal((await call(client, 'workspace_status', { name: 'missing' }, true)).code, 'not_found');

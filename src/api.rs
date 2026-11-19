@@ -24,6 +24,11 @@ pub struct Spawn {
     #[arg(long, default_value = "HEAD")]
     #[serde(default = "head")]
     pub base: String,
+    /// Select isolated commit history or a fast snapshot of the local Git object database.
+    /// Local mode can read other branches' and unreferenced objects by ID.
+    #[arg(long, value_enum)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history: Option<History>,
     /// Include this directory using Git cone-mode sparse checkout. Repeatable.
     #[arg(long, value_name = "DIR")]
     #[serde(default)]
@@ -52,6 +57,15 @@ pub struct Spawn {
     pub lock: bool,
     #[arg(long, requires = "lock")]
     pub reason: Option<String>,
+}
+
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum, Deserialize, Serialize, JsonSchema,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum History {
+    Isolated,
+    Local,
 }
 
 impl Spawn {
