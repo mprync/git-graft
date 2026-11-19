@@ -6,13 +6,15 @@
 
 ## Local release checks on November 19, 2026
 
-On macOS arm64, all 105 Rust tests passed. The release passed all 103 end-to-end scenarios on APFS with Git 2.56.0. They exercised all 20 advertised CLI operations and all 19 MCP tools, including restricted and execution-enabled hosts. The same scenarios passed on an instrumented build, covering 8,251 of 9,774 Rust source lines (84.42%). The native and Windows GNU targets passed strict Clippy. Native Windows/NTFS and Linux filesystem execution are separate checks in the CI matrix.
+On macOS arm64, a clean local clone of commit `20043a4334bb` produced the installed release used for testing and benchmarking. Its SHA-256 begins with `42daa20d32d5`. It passed all **132 TypeScript end-to-end scenarios** on both the minimum Git 2.46.0 and Git 2.56.0. Each run exercised all 23 advertised CLI operations and all 22 MCP tools. [Scenario results and executable identity](measurements/macos-arm64/verification.json)
 
-With Apple Git 2.50.1, a separate run exercised spawn, ordinary Git commits, checked-out landing, undo, restore and `git fsck` on repositories using both loose/packed refs and reftable. Runtime testing of the declared Git 2.46.0 minimum remains open.
+All 125 Rust tests passed. A separate instrumented macOS build passed the same 132 scenarios and covered **10,192 of 11,812 mapped Rust lines (86.29%)**. The macOS build and the Linux and Windows GNU cross-targets passed strict Clippy for the application and test targets. Native Windows/NTFS, Linux/ext4 and Linux/Btrfs execution remains unverified for this release. [Platform test matrix](../.github/workflows/ci.yml)
 
-The recovery tests cover partially staged files, ignored-file collisions, ref and index contention, interrupted land and undo, and native checkouts associated with a workspace. Privacy tests verify that a squashed private tip and its transient blob stay outside the primary repository and its Git mirrors. Dependency tests exercise real package managers in moved, nested and whitespace-named workspaces.
+Recovery tests terminate a real landing process, verify the original branch and staged edits, and retry with the same workspace lease. They also cover ignored-file collisions, ref and index contention, interrupted undo and edits in an unrelated native checkout. Privacy tests check the exact objects transferred into SHA-1 and SHA-256 grafts and check that squashed private commits and transient blobs stay outside the primary repository and its Git mirrors.
 
-The dependency audit found three advisories in the previous `rmcp` version. After the upgrade to 3.11.0, the RustSec scan reported zero known vulnerabilities across 123 locked entries. It retained one maintenance advisory for the transitive `chrono` 0.4.45 dependency. The npm audit reported zero vulnerabilities across the three locked development dependencies. These results apply to the lockfiles and advisory data used on the date above. [RustSec database revision](https://github.com/RustSec/advisory-db/tree/472a4c9a785030434f15d7da84964d60fbe789ab) · [Chrono maintenance advisory](https://rustsec.org/advisories/RUSTSEC-2026-0543.html)
+Dependency tests cover registration through CLI and MCP, reuse after the upstream package is removed, private writes, changed lockfiles, damaged caches and cleanup that preserves foreign data. Tests also change Git ignore rules between attachment and landing and verify that installed files stay out of the resulting commit. [Manager scenarios](../e2e/registered-managers.ts) · [Offline .NET proof](../e2e/nuget.ts)
+
+The RustSec scan reported zero known vulnerabilities across 124 locked entries. It retained one maintenance advisory for the transitive `chrono` 0.4.45 dependency. The npm audit reported zero vulnerabilities across the three locked development dependencies. These results apply to the lockfiles and advisory data used on the date above. [RustSec database revision](https://github.com/RustSec/advisory-db/tree/7133866a6b44d6d3e1994ae6a48a296553c3c3da) · [Chrono maintenance advisory](https://rustsec.org/advisories/RUSTSEC-2026-0543.html)
 
 ## Toolchain requirements
 
@@ -33,6 +35,8 @@ npm test
 It requires Node.js 24.5 or newer, npm, Git, Rust/Cargo, pnpm, Bun, uv and Python. Windows symlink cases require appropriate privileges. `npm ci` installs the locked development dependencies for `npm run typecheck`. The Rust suite runs with `cargo test --locked`. For instrumented coverage, install `llvm-tools-preview` or provide matching `LLVM_COV` and `LLVM_PROFDATA`, then run `npm run coverage`. Reports are written under `target/e2e/`.
 
 The suite exercises workspace isolation, Git operations, dependency handling, integration, recovery and MCP stdio. Failures and missing prerequisites should be investigated on the target system. Set `GIT_GRAFT_TEST_VOLUME` to an existing writable directory to select the fixture filesystem.
+
+For a real third-party manager check, build the release binary and run `node e2e/nuget.ts` with a .NET SDK 8 or newer and Python on the path. The fixture registers NuGet, removes a package from its offline feed, restores it from the project cache in a second graft, then upgrades one graft and builds both. [NuGet fixture](../e2e/nuget.ts)
 
 ## Measure a workflow
 

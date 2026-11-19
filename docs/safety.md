@@ -30,6 +30,8 @@ Graft is not a sandbox. Git hooks, filters, merge drivers, package scripts and e
 
 Package manager registration stores cache routing and compatibility settings in the project’s private Graft state. Keep credentials out of these settings. Choose a manager cache designed for concurrent access within the project’s trust boundary. Package builds and installers control which files they write. A registered installation can attach only at an unoccupied checkout-relative path with matching committed inputs. [Manager registration](operations.md#register-a-package-manager)
 
+After a power loss, a registered install cache can contain incomplete files. Graft verifies the saved generation before reuse and preserves a damaged one for inspection. The workspace can run a fresh package restore. A cache purge interrupted after quarantine also retains its quarantine directory and reports it on the next preview.
+
 Use `git graft gc` to preview cleanup before applying it with `git graft gc --apply`. Close editors and builds that can write into a workspace before moving or retiring it. If other native Git checkouts share the primary, finish any checkout creation or branch switch before landing. Git tracks their branch occupancy separately from the destination ref lock.
 
 On macOS, Graft rejects extended allow ACL entries on its primary private registry and managed workspace root, including entries inherited before publication. It does not change permission entries, and it does not walk ordinary source ACLs outside these gates.
