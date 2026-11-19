@@ -1,9 +1,9 @@
 {
-  "sourceCommit": "20043a4334bb2fb0eab1aac0a5bc01e7ac771b05",
+  "sourceCommit": "2db7f5a4ba3ced8796c0778328a9aeeceb4e40e1",
   "installedRelease": {
     "version": "git-graft 0.1.0",
-    "bytes": 4015376,
-    "sha256": "42daa20d32d5a2422f453daf8da386746c446bc5b6b57aa41673d60a813e3634"
+    "bytes": 4031920,
+    "sha256": "054cc1f44f7fd52d7a453f3312dc9d8504eb0cf319961df5855fe0e3331edbfb"
   },
   "host": {
     "platform": "darwin",
@@ -15,19 +15,19 @@
   "releaseRuns": [
     {
       "git": "git version 2.46.0",
-      "finishedAt": "2026-11-19T10:35:09.578Z",
-      "passed": 132,
+      "finishedAt": "2026-11-19T10:54:58.820Z",
+      "passed": 134,
       "failed": 0,
       "unavailable": 0,
-      "total": 132
+      "total": 134
     },
     {
       "git": "git version 2.56.0",
-      "finishedAt": "2026-11-19T10:35:19.794Z",
-      "passed": 132,
+      "finishedAt": "2026-11-19T10:55:05.856Z",
+      "passed": 134,
       "failed": 0,
       "unavailable": 0,
-      "total": 132
+      "total": 134
     }
   ],
   "exercisedOperations": {
@@ -85,27 +85,27 @@
     "git": "git version 2.56.0",
     "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
     "finishedScenarios": {
-      "passed": 132,
+      "passed": 134,
       "failed": 0,
       "unavailable": 0,
-      "total": 132
+      "total": 134
     },
     "scope": "Mappings from src/**/*.rs in the macOS arm64 non-test debug executable, exercised by the TypeScript suite.",
     "totals": {
       "lines": {
-        "count": 11812,
-        "covered": 10192,
-        "percent": 86.28513376227565
+        "count": 11863,
+        "covered": 10247,
+        "percent": 86.3778133692995
       },
       "functions": {
-        "count": 1002,
-        "covered": 890,
-        "percent": 88.82235528942115
+        "count": 1005,
+        "covered": 894,
+        "percent": 88.95522388059702
       },
       "regions": {
-        "count": 22906,
-        "covered": 18022,
-        "percent": 78.67807561337641
+        "count": 23025,
+        "covered": 18153,
+        "percent": 78.84039087947883
       }
     },
     "filesWithoutMappings": []
@@ -156,6 +156,8 @@
       "seed refuses a replaced dependency tree without touching its target"
     ],
     "registered-managers": [
+      "land commit refuses a Unicode case-renamed registered installation",
+      "land commit stages source beside protected top-level and nested installs",
       "manager discovery does not create missing state or replace foreign state",
       "manager discovery does not recreate removed cache directories",
       "checkout-local donor excludes cannot introduce dependencies into a landed commit",
