@@ -348,7 +348,7 @@ impl Source {
                         && *entry == Stamp::from(&file.metadata()?),
                     "Git object changed during cloning"
                 );
-                cloned.sync_all()?;
+                sync_snapshot_entry(&cloned)?;
                 match listing.kind {
                     Kind::Pack if filename.as_bytes().ends_with(b".pack") => {
                         pack_bytes += entry.size;
@@ -371,9 +371,9 @@ impl Source {
                     check_pack_pair(&target.join(name), width)?;
                 }
             }
-            super::sync_directory(&target)?;
+            sync_snapshot_entry(&File::open(&target)?)?;
         }
-        super::sync_directory(destination)?;
+        finish_snapshot_writeback(destination)?;
         let bytes = pack_bytes + index_bytes + loose_bytes;
         Ok(json!({
             "method": if cfg!(target_os = "macos") { "clonefile" } else { "reflink" },
@@ -389,6 +389,39 @@ impl Source {
             "object_format": format,
         }))
     }
+}
+
+// All staged files and directories are on the same device. On macOS fsync
+// waits for writeback, and F_FULLFSYNC then drains the device cache once for
+// the batch. A failed final flush disqualifies the unpublished snapshot.
+fn sync_snapshot_entry(file: &File) -> io::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        loop {
+            if unsafe { libc::fsync(file.as_raw_fd()) } == 0 {
+                return Ok(());
+            }
+            let error = io::Error::last_os_error();
+            if error.kind() != io::ErrorKind::Interrupted {
+                return Err(error);
+            }
+        }
+    }
+    #[cfg(target_os = "linux")]
+    file.sync_all()
+}
+
+fn finish_snapshot_writeback(directory: &Path) -> io::Result<()> {
+    let root = File::open(directory)?;
+    #[cfg(target_os = "macos")]
+    {
+        if unsafe { libc::fcntl(root.as_raw_fd(), libc::F_FULLFSYNC) } == -1 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+    #[cfg(target_os = "linux")]
+    root.sync_all()
 }
 
 #[derive(Debug, PartialEq, Eq)]
