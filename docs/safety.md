@@ -22,9 +22,13 @@ Land and drop archive the workspace, including its private repository and files.
 
 Archives and recovery records have no automatic expiry and can use disk. Deleting the original repository or Graft's recovery state can prevent recovery. Maintain independent backups for disk failure and accidental deletion.
 
+The first landing prepares its history store privately before publishing it. After an interruption Graft can reclaim first-store scratch whose recorded identity and contents still match. It preserves unrecognized or changed scratch and reports its path on a later landing. Interrupted merge-planning directories can also be left for inspection.
+
 ## Trust and cleanup
 
 Graft is not a sandbox. Git hooks, filters, merge drivers, package scripts and explicitly requested commands have the user's operating-system permissions. The MCP host must opt in to execution and dependency tools with `--allow-exec`. Leases coordinate cooperating clients; they do not protect data from another process running as the same user. Share active and recovery leases only with trusted local tools. Treat leases as sensitive and remove them from logs, issue reports and other shared material. Shell history and process listings may expose command-line arguments. Installed dependency layers must be trusted, relocatable and free of private data.
+
+Package manager registration stores cache routing and compatibility settings in the project’s private Graft state. Keep credentials out of these settings. Choose a manager cache designed for concurrent access within the project’s trust boundary. Package builds and installers control which files they write. A registered installation can attach only at an unoccupied checkout-relative path with matching committed inputs. [Manager registration](operations.md#register-a-package-manager)
 
 Use `git graft gc` to preview cleanup before applying it with `git graft gc --apply`. Close editors and builds that can write into a workspace before moving or retiring it. If other native Git checkouts share the primary, finish any checkout creation or branch switch before landing. Git tracks their branch occupancy separately from the destination ref lock.
 

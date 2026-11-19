@@ -12,7 +12,7 @@ If the selected commit itself tracks a symlink, Git's normal checkout rules appl
 
 Git stores earlier revisions separately from checked-out files, often with several branches mixed into one pack. Graft reuses whole eligible packs. For a suitable mixed pack it keeps the selected records at their existing offsets, rebuilds the index and asks Git to verify the result. Layouts outside its time, memory or filesystem limits use Git’s selective export. The first graft pays for any private base data. Later grafts at the same revision can share that verified base.
 
-A compatible registered npm installation works the same way. Each graft gets writable files backed by the existing installation’s blocks. Adding a package writes the new package and whatever manifests, lockfiles or existing dependencies npm changes. The spawn receipt reports the storage backend, source counts and dependency attachment. [Dependency setup](operations.md#reuse-an-npm-installation) · [Measured space per checkout](benchmarks.md#disk-use-with-two-active-workspaces)
+An agent can register a manager’s package cache, an installed directory or both. A cache stores packages per project and can hold multiple versions. A compatible installed directory gives each graft writable files backed by the existing data blocks. Adding a package writes its new data and whatever manifests, lockfiles or existing packages the resolver changes. The spawn receipt reports the source backend and each installation attachment. [Dependency setup](operations.md#register-a-package-manager) · [Measured space per checkout](benchmarks.md#disk-use-with-two-active-workspaces)
 
 ### Git compatibility
 
