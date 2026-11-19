@@ -430,9 +430,24 @@ fn extend_generation(
 ) -> Result<Option<AncestorTransfer>> {
     let mut first_parent = transfer_git(primary);
     set_shallow(&mut first_parent, None);
-    first_parent.args(["rev-list", "--first-parent", "--max-count=17", oid, "--"]);
+    first_parent.args([
+        "rev-list",
+        "--first-parent",
+        "--parents",
+        "--max-count=17",
+        oid,
+        "--",
+    ]);
     let lineage = checked(first_parent).context("inspect nearby Git ancestors")?;
-    for ancestor in output_text(&lineage)?.lines().skip(1) {
+    let mut lineage = output_text(&lineage)?.lines();
+    let tip = lineage
+        .next()
+        .context("missing Git tip in ancestor search")?;
+    for row in lineage {
+        let ancestor = row
+            .split_ascii_whitespace()
+            .next()
+            .context("missing Git ancestor")?;
         ObjectId::from_hex(ancestor.as_bytes(), width)?;
         let cached = cache.for_base(ancestor);
         if !cached.has_entry() {
@@ -449,12 +464,24 @@ fn extend_generation(
             return Ok(None);
         }
         let reused = packs.len();
+        // Everything behind this ancestor is already present and verified.
+        // With skewed commit timestamps Git may otherwise walk its entire
+        // history to exclude it. Use a process-local boundary for the common
+        // single-parent advance. Other parent lines retain the normal walk.
+        let boundary = if tip.split_ascii_whitespace().eq([oid, ancestor]) {
+            let mut file = tempfile::NamedTempFile::new_in(stage)?;
+            writeln!(file, "{ancestor}")?;
+            Some(file)
+        } else {
+            None
+        };
+        let boundary = boundary.as_ref().map(|file| file.path());
         let delta = reachable(
             transfer_git(primary),
             oid,
             width,
             Some(ancestor),
-            None,
+            boundary,
             false,
         )?;
         if delta.len() >= 85_000 {
@@ -484,12 +511,12 @@ fn extend_generation(
         // bytes. The ancestor pack set already proves its own full closure.
         let mut ancestry = transfer_git(root);
         ancestry.env("GIT_OBJECT_DIRECTORY", &objects);
-        set_shallow(&mut ancestry, None);
+        set_shallow(&mut ancestry, boundary);
         ancestry.args(["merge-base", "--is-ancestor", ancestor, oid]);
         checked(ancestry).context("verify cached base is a Git ancestor")?;
         let mut combined = transfer_git(root);
         combined.env("GIT_OBJECT_DIRECTORY", &objects);
-        for id in reachable(combined, oid, width, Some(ancestor), None, false)? {
+        for id in reachable(combined, oid, width, Some(ancestor), boundary, false)? {
             new.remove(&id);
         }
         ensure!(
