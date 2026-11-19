@@ -59,9 +59,10 @@ fn bounded_bytes(mut file: impl Read, size: u64) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
+type OffsetAndIndexRow = (usize, usize);
 // v2 indexes put sorted IDs, CRCs and 32-bit pack offsets after the fanout
 // table. The size limit makes large-offset entries unnecessary here.
-fn offsets(index: &[u8], width: usize) -> Result<(&[u8], Vec<(usize, usize)>)> {
+fn offsets(index: &[u8], width: usize) -> Result<(&[u8], Vec<OffsetAndIndexRow>)> {
     let mut table = index;
     let count = index_count(&mut table)?;
     ensure!(
