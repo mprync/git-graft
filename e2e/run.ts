@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { Context, Unavailable, execute, objectResult, type Scenario } from './harness.ts';
 
 const project = fileURLToPath(new URL('../', import.meta.url));
-const groups = ['lifecycle', 'storage', 'mixed-history', 'dependencies', 'dependency-reuse', 'landing', 'recovery', 'undo', 'safety', 'edge-cases', 'mcp', 'workspace', 'space'];
+const groups = ['lifecycle', 'storage', 'mixed-history', 'dependencies', 'dependency-reuse', 'registered-managers', 'landing', 'recovery', 'undo', 'safety', 'edge-cases', 'mcp', 'workspace', 'space'];
 const args = process.argv.slice(2);
 const group = args[0] === '--group' ? args[1] : undefined;
 if (args.length && (args.length !== 2 || !groups.includes(group ?? ''))) {
@@ -93,8 +93,8 @@ assert.equal(help.status, 0, help.stderr);
 const advertisedCli = [...help.stdout.matchAll(/^  ([a-z][a-z-]+)\s{2,}/gm)]
   .map(match => match[1]).filter(name => name !== 'help').sort();
 // Keep the advertised contract even when a regression removes a command from discovery.
-const publicCli = 'add-dep doctor drop env exec gc heartbeat land layer list lock mcp move repair restore seed-layer spawn status undo-land unlock'.split(' ');
-const publicTools = 'add_dependency discard doctor env exec gc heartbeat land_and_wipe layer list lock move repair restore seed_layer spawn status undo_land unlock'
+const publicCli = 'add-dep doctor drop env exec gc heartbeat land layer list list-managers lock mcp move register-manager repair restore seed-layer spawn status undo-land unregister-manager unlock'.split(' ');
+const publicTools = 'add_dependency discard doctor env exec gc heartbeat land_and_wipe layer list list_managers lock move register_manager repair restore seed_layer spawn status undo_land unregister_manager unlock'
   .split(' ').map(name => 'workspace_' + name);
 const coveredCli = new Set<string>();
 const coveredTools = new Set<string>();

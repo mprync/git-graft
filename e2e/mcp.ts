@@ -18,12 +18,13 @@ type Pending = {
 const protocol = '2025-06-18';
 const requestTimeoutMs = 30_000;
 const maxRequestBytes = 256 * 1024;
-const executionTools = ['workspace_exec', 'workspace_add_dependency', 'workspace_layer', 'workspace_seed_layer'];
+const executionTools = ['workspace_exec', 'workspace_add_dependency', 'workspace_layer', 'workspace_seed_layer',
+  'workspace_register_manager', 'workspace_unregister_manager'];
 const defaultTools = [
   'workspace_doctor', 'workspace_list', 'workspace_spawn', 'workspace_status',
   'workspace_heartbeat', 'workspace_env', 'workspace_land_and_wipe', 'workspace_discard', 'workspace_gc',
   'workspace_restore', 'workspace_undo_land', 'workspace_lock', 'workspace_unlock', 'workspace_move',
-  'workspace_repair',
+  'workspace_repair', 'workspace_list_managers',
 ];
 const spawnOptions = ['base', 'branch', 'detach', 'lock', 'name', 'no_checkout', 'no_deps', 'orphan',
   'reason', 'request_id', 'sparse'];
@@ -324,6 +325,68 @@ function prepareNpmFixture(ctx: Context): string {
 
 export const cases: Scenario[] = [
   {
+    name: 'MCP registered managers expose shared cache and preserve it on removal',
+    run: async ctx => withClient(ctx, true, async client => {
+      await initialize(client);
+      const catalog = await discover(client, true);
+      ctx.measure('advertised_tools', [...catalog.keys()]);
+      const scriptPath = join(ctx.root, 'fixture script.cjs');
+      writeFileSync(scriptPath, 'process.stdout.write(JSON.stringify({cache:process.env.FIXTURE_CACHE,graft:process.env.GRAFT_PACKAGE_CACHE,argv:process.argv.slice(2)}))');
+      const registration = { manager: 'fixture-manager', cache_env: 'FIXTURE_CACHE',
+        cache_args: [scriptPath, 'literal with spaces', '{cache}'] };
+      const added = await call(client, 'workspace_register_manager', registration);
+      assert.equal(added.manager, registration.manager);
+      const cache = string(added.cache_dir, 'registered cache');
+      const listed = await call(client, 'workspace_list_managers');
+      assert(Array.isArray(listed.managers));
+      assert(listed.managers.some(item => object(item, 'manager').manager === registration.manager));
+      const workspace = await spawnWorkspace(client, 'registered-mcp');
+      const executed = await call(client, 'workspace_exec', { name: 'registered-mcp', lease: workspace.lease,
+        manager: registration.manager, argv: [process.execPath, 'argument with spaces'] });
+      const output = object(JSON.parse(string(executed.stdout, 'registered exec output')), 'registered output');
+      assert.equal(output.cache, cache);
+      assert.equal(output.graft, cache);
+      assert.deepEqual(output.argv, ['literal with spaces', cache, 'argument with spaces']);
+      const removed = await call(client, 'workspace_unregister_manager', { manager: registration.manager });
+      assert.deepEqual(removed, { manager: registration.manager, registered: false, cache_retained: true });
+      assert(existsSync(cache));
+      for (const tool of ['workspace_register_manager', 'workspace_list_managers', 'workspace_unregister_manager']) ctx.coverTool(tool);
+    }),
+  },
+  {
+    name: 'restricted MCP cannot mutate registrations or attach their installations',
+    async run(ctx) {
+      writeFileSync(join(ctx.repo, 'fixture.lock'), 'locked\n');
+      writeFileSync(join(ctx.repo, '.gitignore'), 'vendor/\n');
+      ctx.git(['add', 'fixture.lock', '.gitignore']);
+      ctx.git(['commit', '-qm', 'registered input']);
+      mkdirSync(join(ctx.repo, 'vendor/bundle'), { recursive: true });
+      writeFileSync(join(ctx.repo, 'vendor/bundle/package'), 'seed');
+      const registration = ctx.cli(['register-manager', 'restricted-fixture', '--cache-env', 'FIXTURE_CACHE',
+        '--install-dir', 'vendor/bundle', '--input', 'fixture.lock', '--key', 'restricted']);
+      await withClient(ctx, false, async client => {
+        await initialize(client);
+        await discover(client, false);
+        const before = await call(client, 'workspace_list_managers');
+        for (const [name, args] of [
+          ['workspace_register_manager', { manager: 'forbidden', cache_env: 'FIXTURE_CACHE' }],
+          ['workspace_unregister_manager', { manager: 'restricted-fixture' }],
+        ] as const) {
+          const denied = await call(client, name, args, true);
+          assert.match(string(denied.message, 'restricted manager error'), /--allow-exec/);
+        }
+        assert.deepEqual(await call(client, 'workspace_list_managers'), before);
+        const spawned = await call(client, 'workspace_spawn', { name: 'restricted-seed', no_deps: false });
+        const storage = object(spawned.storage, 'restricted spawn storage');
+        assert(!('registered_dependencies' in storage) ||
+          (Array.isArray(storage.registered_dependencies) && storage.registered_dependencies.every(item => object(item, 'receipt').status !== 'attached')));
+        assert(!existsSync(join(workspacePath(spawned), 'vendor/bundle')));
+      });
+      assert.equal(readFileSync(join(ctx.repo, 'vendor/bundle/package'), 'utf8'), 'seed');
+      assert(existsSync(string(registration.cache_dir, 'registered cache')));
+    },
+  },
+  {
     name: 'MCP negotiates stdio, validates requests and gates execution',
     run: async (ctx) => withClient(ctx, false, async (client) => {
       const initialized = await initialize(client);
@@ -382,6 +445,8 @@ export const cases: Scenario[] = [
         ['workspace_add_dependency', { ...owned, manager: 'npm', offline: true, packages: [] }],
         ['workspace_layer', { ...owned, action: 'save', key: 'test-toolchain' }],
         ['workspace_seed_layer', { key: 'test-toolchain' }],
+        ['workspace_register_manager', { manager: 'fixture', cache_env: 'FIXTURE_CACHE' }],
+        ['workspace_unregister_manager', { manager: 'fixture' }],
         ['workspace_land_and_wipe', { ...owned, into: 'main', reconcile: true }],
       ];
       for (const [name, args] of denied) {
