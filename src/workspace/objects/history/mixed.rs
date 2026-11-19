@@ -10,11 +10,13 @@ use anyhow::{Context, Result, bail, ensure};
 use sha2::Digest;
 use std::{
     collections::HashSet,
-    fs::File,
     io::{Read, Seek, SeekFrom, Write},
     ops::Range,
     path::Path,
+    process::Stdio,
 };
+
+mod scratch;
 
 pub(super) const MIN_PACK_BYTES: u64 = 1 << 20;
 const MAX_PACK_BYTES: u64 = 256 << 20;
@@ -46,7 +48,7 @@ fn check_budget(pack: u64, index: u64, width: usize) -> Result<()> {
     Ok(())
 }
 
-fn bounded_bytes(mut file: File, size: u64) -> Result<Vec<u8>> {
+fn bounded_bytes(mut file: impl Read, size: u64) -> Result<Vec<u8>> {
     let size = usize::try_from(size)?;
     let mut bytes = Vec::new();
     bytes.try_reserve_exact(size)?;
@@ -224,20 +226,13 @@ pub(super) fn filter(
         pack: scratch.join("filtered.pack"),
         index: scratch.join("filtered.idx"),
     };
-    clone_file(&input, &pack.pack)?;
-    let mut bytes = bounded_bytes(open_regular(&pack.pack)?, input_size)?;
+    let mut file = scratch::create(&input, &donor.pack, scratch)?;
+    let mut bytes = bounded_bytes(&file, input_size)?;
     let index = bounded_bytes(index, index_size)?;
     let plan = select(&bytes, &index, width, wanted)?;
     drop(index);
 
-    // Only this CoW clone is writable. It stays in the primary's private
-    // registry until Git has independently confirmed every output object ID.
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&pack.pack, std::fs::Permissions::from_mode(0o600))?;
-    }
-    let mut file = File::options().write(true).open(&pack.pack)?;
+    // Edit the unlinked clone. Only the sanitized bytes get an output name.
     let count = u32::try_from(plan.ids.len())?.to_be_bytes();
     bytes[8..12].copy_from_slice(&count);
     file.seek(SeekFrom::Start(8))?;
@@ -265,14 +260,19 @@ pub(super) fn filter(
     let mut permissions = file.metadata()?.permissions();
     permissions.set_readonly(true);
     file.set_permissions(permissions)?;
-    drop(file);
 
+    // Git verifies the anonymous pack as a regular file and writes only the
+    // index in private staging. Name the pack after its membership is proven.
+    file.rewind()?;
     let mut command = transfer_git(root);
     command
-        .args(["index-pack", "--index-version=2", "--threads=4"])
-        .arg(&pack.pack);
+        .args(["index-pack", "--index-version=2", "--threads=4", "-o"])
+        .arg(&pack.index)
+        .arg("/dev/fd/0")
+        .stdin(Stdio::from(file.try_clone()?));
     let output = checked(command).context("index filtered Git pack")?;
     verify_membership(std::slice::from_ref(&pack), &plan.ids, width)?;
+    clone_file(&file, &pack.pack)?;
     Ok(Filtered {
         hash: output_text(&output)?.into(),
         pack,
