@@ -908,9 +908,10 @@ fn parent_candidate(
         .split_whitespace()
         .next()?;
     crate::git::checked_oid(parent).ok()?;
-    // Every reused record is checked around its clone. Entries that the new
-    // commit does not need are still checked by GC when reclaiming a snapshot.
-    cache::Snapshot::load(&bases.join(parent).join(settings), secret, parent, settings).ok()
+    let snapshot =
+        cache::Snapshot::load(&bases.join(parent).join(settings), secret, parent, settings).ok()?;
+    snapshot.verify().ok()?;
+    Some(snapshot)
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
