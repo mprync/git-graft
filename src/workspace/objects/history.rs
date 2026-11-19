@@ -511,7 +511,9 @@ fn read_index_ids(
 }
 
 fn verify_membership(packs: &[Pack], expected: &[ObjectId], width: usize) -> Result<()> {
-    let mut remaining: HashSet<_> = expected.iter().copied().collect();
+    let mut remaining = HashSet::new();
+    remaining.try_reserve(expected.len())?;
+    remaining.extend(expected.iter().copied());
     ensure!(
         remaining.len() == expected.len(),
         "Git returned duplicate reachable objects"
@@ -558,6 +560,9 @@ fn pack_with_donors(
     let mut packs = Vec::new();
     let mut candidates_to_filter = Vec::new();
     for path in candidates {
+        if remaining.is_empty() {
+            break;
+        }
         let hash = path
             .file_stem()
             .and_then(|name| name.to_str())
@@ -603,6 +608,9 @@ fn pack_with_donors(
         ..Default::default()
     };
     for donor in candidates_to_filter {
+        if remaining.is_empty() {
+            break;
+        }
         // A crash before filtering finishes must never leave mixed primary
         // history in the task or its archive. Stage under the primary registry.
         let scratch = cache::private_tempdir_in(source.state)?;

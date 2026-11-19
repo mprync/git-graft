@@ -10,7 +10,7 @@ use anyhow::{Context, Result, bail, ensure};
 use sha2::Digest;
 use std::{
     collections::HashSet,
-    fs::{self, File},
+    fs::File,
     io::{Read, Seek, SeekFrom, Write},
     ops::Range,
     path::Path,
@@ -19,6 +19,7 @@ use std::{
 pub(super) const MIN_PACK_BYTES: u64 = 1 << 20;
 const MAX_PACK_BYTES: u64 = 256 << 20;
 const MAX_INDEX_BYTES: u64 = 40 << 20;
+const MAX_WORKING_BYTES: u64 = 192 << 20;
 // A large run of empty blocks would make subsequent reads of the preceding
 // object expensive. Let Git export these layouts in its usual compact form.
 const MAX_ALIGNMENT_BYTES: usize = 64 << 10;
@@ -30,12 +31,28 @@ pub(super) struct Filtered {
     pub(super) unchanged_bytes: u64,
 }
 
-fn bounded_bytes(file: File, max: u64) -> Result<Vec<u8>> {
-    let size = file.metadata()?.len();
-    ensure!(size <= max, "pack exceeds the in-memory filter limit");
-    let mut bytes = Vec::with_capacity(size as usize);
-    file.take(size + 1).read_to_end(&mut bytes)?;
-    ensure!(bytes.len() as u64 == size, "Git file changed size");
+fn check_budget(pack: u64, index: u64, width: usize) -> Result<()> {
+    ensure!(
+        (MIN_PACK_BYTES..=MAX_PACK_BYTES).contains(&pack) && index <= MAX_INDEX_BYTES,
+        "unsupported donor size"
+    );
+    let max_records = index / (width as u64 + 8);
+    // The offset/ID table, selection, occupancy set (including spare hash
+    // buckets) and gap list together require less than 128 bytes per record.
+    ensure!(
+        pack + index + max_records * 128 <= MAX_WORKING_BYTES,
+        "pack and index exceed the filter working memory budget"
+    );
+    Ok(())
+}
+
+fn bounded_bytes(mut file: File, size: u64) -> Result<Vec<u8>> {
+    let size = usize::try_from(size)?;
+    let mut bytes = Vec::new();
+    bytes.try_reserve_exact(size)?;
+    bytes.resize(size, 0);
+    file.read_exact(&mut bytes)?;
+    ensure!(file.read(&mut [0])? == 0, "Git file changed size");
     Ok(bytes)
 }
 
@@ -55,7 +72,8 @@ fn offsets(index: &[u8], width: usize) -> Result<Vec<(usize, ObjectId)>> {
     );
     let (ids, rest) = table.split_at(count * width);
     let starts = &rest[count * 4..count * 8];
-    let mut records = Vec::with_capacity(count);
+    let mut records = Vec::new();
+    records.try_reserve_exact(count)?;
     for (id, start) in ids.chunks_exact(width).zip(starts.as_chunks::<4>().0) {
         let mut value = ObjectId([0; 32]);
         value.0[..width].copy_from_slice(id);
@@ -143,9 +161,12 @@ fn select(
         "pack and index disagree"
     );
     let payload_end = bytes.len() - width;
-    let mut kept = HashSet::with_capacity(records.len());
+    let mut kept = HashSet::new();
+    kept.try_reserve(records.len())?;
     let mut ids = Vec::new();
+    ids.try_reserve_exact(records.len())?;
     let mut gaps = Vec::new();
+    gaps.try_reserve_exact(records.len() / 2)?;
     let mut previous = 12..12;
     let mut rewrite = 0;
     for (i, &(start, id)) in records.iter().enumerate() {
@@ -177,7 +198,7 @@ fn select(
         previous = stream + 2..end;
     }
     ensure!(
-        !ids.is_empty() && ids.len() < records.len() && rewrite < bytes.len() / 4,
+        !ids.is_empty() && ids.len() < records.len() && rewrite < previous.end / 4,
         "mixed pack has insufficient reusable data"
     );
     Ok(Selection {
@@ -195,25 +216,26 @@ pub(super) fn filter(
     width: usize,
 ) -> Result<Filtered> {
     let input = open_regular(&donor.pack)?;
-    ensure!(
-        (MIN_PACK_BYTES..=MAX_PACK_BYTES).contains(&input.metadata()?.len()),
-        "unsupported donor size"
-    );
+    let input_size = input.metadata()?.len();
+    let index = open_regular(&donor.index)?;
+    let index_size = index.metadata()?.len();
+    check_budget(input_size, index_size, width)?;
     let pack = Pack {
         pack: scratch.join("filtered.pack"),
         index: scratch.join("filtered.idx"),
     };
     clone_file(&input, &pack.pack)?;
-    let mut bytes = bounded_bytes(open_regular(&pack.pack)?, MAX_PACK_BYTES)?;
-    let index = bounded_bytes(open_regular(&donor.index)?, MAX_INDEX_BYTES)?;
+    let mut bytes = bounded_bytes(open_regular(&pack.pack)?, input_size)?;
+    let index = bounded_bytes(index, index_size)?;
     let plan = select(&bytes, &index, width, wanted)?;
+    drop(index);
 
     // Only this CoW clone is writable. It stays in the primary's private
     // registry until Git has independently confirmed every output object ID.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&pack.pack, fs::Permissions::from_mode(0o600))?;
+        std::fs::set_permissions(&pack.pack, std::fs::Permissions::from_mode(0o600))?;
     }
     let mut file = File::options().write(true).open(&pack.pack)?;
     let count = u32::try_from(plan.ids.len())?.to_be_bytes();
@@ -238,6 +260,7 @@ pub(super) fn filter(
     };
     file.seek(SeekFrom::Start(plan.end as u64))?;
     file.write_all(&trailer)?;
+    drop(bytes);
     file.set_len((plan.end + width) as u64)?;
     let mut permissions = file.metadata()?.permissions();
     permissions.set_readonly(true);
