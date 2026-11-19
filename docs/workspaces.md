@@ -6,7 +6,9 @@ Each Graft workspace is a standalone local Git repository with its own object da
 
 ### What takes space
 
-On a compatible volume, an unchanged tracked file can have a separate writable name in every workspace while its contents occupy the same physical blocks. This applies to small files too. An edit allocates blocks for the writes the editor performs. An editor that replaces a whole file can allocate the size of that file. New files, Git indexes and workspace records also take space.
+On a compatible volume, a regular tracked file gets its own writable file identity in each workspace. APFS cloning or Linux reflinks let those files share the same physical data blocks, including for small files. Graft creates no symlink or hard link back to the primary file. Edit `src/config.ts` in a graft and the filesystem allocates blocks for the writes the editor performs. The primary and sibling grafts keep their original contents. An editor that replaces a whole file can allocate the size of that file. New files, Git indexes and workspace records also take space.
+
+If the selected commit itself tracks a symlink, Git's normal checkout rules apply. A trusted npm layer can also contain relative symlinks such as a package's command in `node_modules/.bin`. The layer checks that these links resolve inside the installation.
 
 Git stores earlier revisions separately from checked-out files, often with several branches mixed into one pack. Graft reuses whole eligible packs. For a suitable mixed pack it keeps the selected records at their existing offsets, rebuilds the index and asks Git to verify the result. Layouts outside its time, memory or filesystem limits use Git’s selective export. The first graft pays for any private base data. Later grafts at the same revision can share that verified base.
 

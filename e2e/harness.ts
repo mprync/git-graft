@@ -1,13 +1,24 @@
 /** Each scenario owns a real repository, its sibling workspaces and an isolated home. */
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 export type ObjectResult = Record<string, unknown>;
 export type Scenario = { name: string; run(ctx: Context): void | Promise<void> };
 export class Unavailable extends Error {}
+
+export function assertSeparateRegularFiles(paths: string[]): void {
+  const identities = new Set<string>();
+  for (const path of paths) {
+    const file = lstatSync(path, { bigint: true });
+    assert(file.isFile(), 'expected a regular file at ' + path);
+    assert.equal(file.nlink, 1n, 'unexpected hard link at ' + path);
+    identities.add(`${file.dev}/${file.ino}`);
+  }
+  assert.equal(identities.size, paths.length, 'expected a separate file identity for each checkout');
+}
 
 export function objectResult(value: unknown): ObjectResult {
   assert(value !== null && typeof value === 'object' && !Array.isArray(value), 'Expected a JSON object');

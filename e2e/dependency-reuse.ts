@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statfsSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join, relative } from 'node:path';
-import { objectResult, type Context, type Scenario } from './harness.ts';
+import { assertSeparateRegularFiles, objectResult, type Context, type Scenario } from './harness.ts';
 import { npmArchive } from './dependencies.ts';
 
 // Use a real npm install and an isolated cache containing only the fixture.
@@ -106,6 +106,10 @@ export const cases: Scenario[] = [{
     writeFileSync(cachedLock,cachedLockBytes);
     const firstLarge = join(first.path,'node_modules/graft-fixture/payload.bin');
     const siblingLarge = join(sibling.path,'node_modules/graft-fixture/payload.bin');
+    for (const root of [ctx.repo, first.path, sibling.path]) {
+      assert(lstatSync(join(root, 'node_modules')).isDirectory());
+    }
+    assertSeparateRegularFiles([original, cached, firstLarge, siblingLarge]);
     const before = statSync(firstLarge,{bigint:true});
     const fault = ctx.fail(['add-dep','first','--lease',first.lease,'--manager','npm','--offline']);
     assert.equal(fault.code,'dependencies_already_attached');

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { constants, copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync, chmodSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Scenario } from './harness.ts';
+import { assertSeparateRegularFiles, type Scenario } from './harness.ts';
 
 function object(value: unknown): Record<string, unknown> {
   assert.ok(value !== null && typeof value === 'object' && !Array.isArray(value));
@@ -184,6 +184,7 @@ export const cases: Scenario[] = [
       assert.equal(warmReceipt.primary_reused_bytes, 0);
       if (probe) assert.equal(warmReceipt.private_bytes, 0);
       assert.equal(ctx.git(['status', '--porcelain'], warm.path), '');
+      assertSeparateRegularFiles([ctx.repo, first.path, warm.path].map(root => join(root, 'large.bin')));
       writeFileSync(join(first.path, 'large.bin'), 'workspace change');
       assert.deepEqual(file(join(warm.path, 'large.bin')), large);
       assert.deepEqual(file(join(ctx.repo, 'large.bin')), large);
