@@ -182,6 +182,25 @@ export const cases: Scenario[] = [
     },
   },
   {
+    name: 'landing an unchecked branch leaves an unrelated native worktree intact',
+    run(ctx) {
+      ctx.git(['branch', 'target']);
+      const dest = join(ctx.root, 'unrelated native worktree');
+      ctx.git(['worktree', 'add', '-b', 'other', dest]);
+      write(dest, 'tracked.txt', 'native local edit\n');
+      const workspace = ctx.spawn('native-other');
+      write(workspace.path, 'feature.txt', 'workspace feature\n');
+      const tip = commit(ctx, workspace.path, 'feature');
+      const old = ctx.git(['rev-parse', 'HEAD']);
+      assert.equal(ctx.cli(landArgs(workspace, 'native-other', '--into', 'target')).commit, tip);
+      assert.equal(ctx.git(['rev-parse', 'target']), tip);
+      assert.equal(ctx.git(['rev-parse', 'HEAD'], dest), old);
+      assert.equal(read(dest, 'tracked.txt'), 'native local edit\n');
+      assert.equal(existsSync(join(dest, 'feature.txt')), false);
+      assert.equal(ctx.git(['rev-parse', 'HEAD']), old);
+    },
+  },
+  {
     name: 'unchecked branch ref lock rejects landing and retry replans',
     run(ctx) {
       ctx.git(['branch', 'target']);

@@ -164,6 +164,38 @@ export const cases: Scenario[] = [
     },
   },
   {
+    name: 'undo waits for a native worktree to release the destination and preserves its edits',
+    run(ctx) {
+      const name = 'native-undo';
+      const old = ctx.git(['rev-parse', 'HEAD']);
+      ctx.git(['branch', 'target']);
+      const ws = ctx.spawn(name);
+      const tip = commit(ctx, ws.path, 'feature.txt', 'workspace feature\n');
+      const landed = land(ctx, name, ws, '--into', 'target');
+      assert.equal(landed, tip);
+      const dest = join(ctx.root, 'native destination');
+      ctx.git(['worktree', 'add', dest, 'target']);
+      const local = join(dest, 'tracked.txt');
+      writeFileSync(local, 'native staged edit\n');
+      ctx.git(['add', '--', 'tracked.txt'], dest);
+      writeFileSync(local, 'native unstaged edit\n');
+      const args = undo(name, ws.lease);
+      assert.match(String(ctx.fail(args).message), /external linked worktree/i);
+      assert.equal(ctx.git(['rev-parse', 'target']), landed);
+      assert.equal(ctx.git(['show', ':tracked.txt'], dest), 'native staged edit');
+      assert.equal(readFileSync(local, 'utf8'), 'native unstaged edit\n');
+      assert.equal(readFileSync(join(dest, 'feature.txt'), 'utf8'), 'workspace feature\n');
+      // Detaching at the same commit leaves both staged and unstaged edits intact.
+      ctx.git(['switch', '--detach'], dest);
+      assertUndo(ctx, 'target', old, landed, ctx.cli(args).commit);
+      assert.equal(ctx.git(['show', ':tracked.txt'], dest), 'native staged edit');
+      assert.equal(readFileSync(local, 'utf8'), 'native unstaged edit\n');
+      assert.equal(ctx.git(['rev-parse', 'HEAD'], dest), landed);
+      assert.equal(ctx.git(['rev-parse', 'HEAD']), old);
+      ctx.git(['fsck', '--full']);
+    },
+  },
+  {
     name: 'undo rejects a moved target before creating an undo commit',
     run(ctx) {
       const name = 'advanced';
