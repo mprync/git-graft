@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { leaveIndexedCheckoutJournal } from './checkout-journal.ts';
-import type { Context, Scenario } from './harness.ts';
+import { objectResult, type Context, type Scenario } from './harness.ts';
 
 type Workspace = ReturnType<Context['spawn']>;
 
@@ -50,7 +50,7 @@ export const cases: Scenario[] = [
       const ws = ctx.spawn('foreign-cache');
       const admin = ctx.git(['rev-parse', '--absolute-git-dir']);
       const marker = join(admin, 'graft', 'independent-packs-v2', 'graft-pack-cache');
-      if (!existsSync(marker)) ctx.unavailable('verified history cache is unavailable on this filesystem');
+      mkdirSync(dirname(marker), { recursive: true });
       writeFileSync(marker, 'foreign cache marker\n');
       const tip = commit(ctx, ws.path, 'feature.txt', 'preserved feature\n');
       assert.equal(land(ctx, 'foreign-cache', ws), tip);
@@ -61,7 +61,7 @@ export const cases: Scenario[] = [
     },
   },
   {
-    name: 'landing reuses verified delta history without duplicate objects and survives recovery',
+    name: 'landing uses the available history backend without duplicate objects and survives recovery',
     run(ctx) {
       writeFileSync(join(ctx.repo, 'history.bin'), randomBytes(1024 * 1024));
       ctx.git(['add', 'history.bin']);
@@ -72,10 +72,13 @@ export const cases: Scenario[] = [
       const old = ctx.git(['rev-parse', 'HEAD']);
       const ws = ctx.spawn('cache-delta');
       const admin = ctx.git(['rev-parse', '--absolute-git-dir']);
-      const cache = join(admin, 'graft', 'independent-packs-v2', `sha1-${old}`);
-      if (!existsSync(cache)) ctx.unavailable('verified history cache is unavailable on this filesystem');
-      const cachedPacks = readdirSync(cache).filter(name => name.endsWith('.pack'));
-      assert(cachedPacks.length >= 2, 'expected inherited and delta packs');
+      const format = ctx.git(['rev-parse', '--show-object-format']);
+      const cache = join(admin, 'graft', 'independent-packs-v2', `${format}-${old}`);
+      const canClone = objectResult(ctx.cli(['doctor']).source_storage).native_clone;
+      assert.equal(typeof canClone, 'boolean');
+      assert.equal(existsSync(cache), canClone, 'verified generation must match this volume’s clone capability');
+      const cachedPacks = canClone ? readdirSync(cache).filter(name => name.endsWith('.pack')) : [];
+      if (canClone) assert(cachedPacks.length >= 2, 'expected inherited and delta packs');
       const tip = commit(ctx, ws.path, 'feature.txt', 'landed change\n');
       assert.equal(land(ctx, 'cache-delta', ws), tip);
       const store = planStore(ctx);

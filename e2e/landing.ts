@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { promisify } from 'node:util';
 import { leaveIndexedCheckoutJournal } from './checkout-journal.ts';
 import type { Scenario } from './harness.ts';
 
@@ -232,19 +234,57 @@ export const cases: Scenario[] = [
     },
   },
   {
+    name: 'concurrent first landings preserve both private commits on distinct destination branches',
+    async run(ctx) {
+      const primary = ctx.git(['rev-parse', 'HEAD']);
+      const tasks = ['alpha', 'beta'].map(name => {
+        ctx.git(['branch', name, primary]);
+        const ws = ctx.spawn(name);
+        write(ws.path, name, name + '\n');
+        return { name, ws, tip: commit(ctx, ws.path, name) };
+      });
+      const run = promisify(execFile);
+      // Finish both processes before inspecting refs or releasing the fixture.
+      const attempts = await Promise.allSettled(tasks.map(({ name, ws }) =>
+        run(ctx.bin, ['--repo', ctx.repo, '--json', ...landArgs(ws, name, '--into', name)],
+          { cwd: ctx.repo, env: ctx.env, timeout: 60_000 })));
+      for (const [i, result] of attempts.entries()) {
+        // The public command arguments contain the lease. Keep diagnostics to stderr.
+        assert.equal(result.status, 'fulfilled', result.status === 'rejected' ? String(result.reason?.stderr ?? 'landing failed') : undefined);
+        const { name, ws, tip } = tasks[i];
+        assert.equal(field(JSON.parse(result.value.stdout)).commit, tip);
+        assert.equal(ctx.git(['rev-parse', name]), tip);
+        assert.deepEqual(parents(ctx, name), [primary]);
+        const restored = ctx.cli(['restore', name, '--lease', ws.lease]);
+        assert.equal(read(String(restored.path), name), name + '\n');
+      }
+      assert.equal(ctx.git(['rev-parse', 'HEAD']), primary);
+      ctx.git(['fsck', '--full']);
+    },
+  },
+  {
     name: 'landing reports real conflict paths and preserves unmerged work',
     run(ctx) {
       const workspace = ctx.spawn('conflict');
       write(ctx.repo, 'tracked.txt', 'ours\n');
       const old = commit(ctx, ctx.repo, 'ours');
+      write(workspace.path, 'private.txt', 'discarded intermediate content\n');
+      const intermediate = commit(ctx, workspace.path, 'private intermediate');
+      const privateBlob = ctx.git(['rev-parse', 'HEAD:private.txt'], workspace.path);
+      rmSync(join(workspace.path, 'private.txt'));
       write(workspace.path, 'tracked.txt', 'theirs\n');
       const tip = commit(ctx, workspace.path, 'theirs');
       const fault = ctx.fail(landArgs(workspace, 'conflict', '--reconcile'));
       assert.equal(fault.code, 'merge_conflict');
+      assert.equal(ctx.fail(landArgs(workspace, 'conflict', '--squash')).code, 'merge_conflict');
+      for (const id of [tip, intermediate, privateBlob]) {
+        assert.equal(ctx.command('git', ['cat-file', '-e', id], ctx.repo).status, 1);
+        assert.equal(ctx.command('git', ['cat-file', '-e', id], workspace.path).status, 0);
+      }
       const admin = ctx.git(['rev-parse', '--absolute-git-dir']);
       const format = ctx.git(['rev-parse', '--show-object-format']);
       const store = join(admin, 'graft', 'land-plans', `${format}-full`);
-      assert.equal(ctx.git(['for-each-ref', '--format=%(refname)', 'refs/graft/import'], store), '');
+      if (existsSync(store)) assert.equal(ctx.git(['for-each-ref', '--format=%(refname)', 'refs/graft/import'], store), '');
       const details = field(fault.details);
       assert.deepEqual(details.paths, ['tracked.txt']);
       assert.ok(Array.isArray(details.conflicts));
