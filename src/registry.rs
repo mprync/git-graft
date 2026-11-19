@@ -259,6 +259,37 @@ pub fn check_owned_tree(path: &Path) -> Result<()> {
 /// connected. Reject nested metadata instead of opening or rewriting it.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub(crate) fn check_relocation_tree(root: &Path) -> Result<()> {
+    verify_relocation(root, scan_relocation_tree)
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+fn verify_relocation(root: &Path, mut scan: impl FnMut(&Path) -> Result<()>) -> Result<()> {
+    let identity = crate::cache::directory_identity(root)?;
+    let mut attempts = 0;
+    loop {
+        let result = scan(root);
+        ensure!(
+            crate::cache::directory_identity(root)? == identity,
+            "workspace directory changed during relocation checks"
+        );
+        attempts += 1;
+        // Native Git maintenance can rename a pack index between readdir and
+        // lstat. A fresh scan must validate every current entry before moving.
+        if attempts < 3
+            && result.as_ref().is_err_and(|error| {
+                error
+                    .downcast_ref::<io::Error>()
+                    .is_some_and(|e| e.kind() == io::ErrorKind::NotFound)
+            })
+        {
+            continue;
+        }
+        return result;
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+fn scan_relocation_tree(root: &Path) -> Result<()> {
     check_unmounted_directory(root, true)?;
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     let tree = crate::storage::NoFollowRoot::open(root)?;
@@ -735,6 +766,47 @@ impl Project {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn relocation_rescans_every_entry_after_a_git_temporary_file_disappears() -> Result<()> {
+        let temporary = tempfile::tempdir()?;
+        let root = dunce::canonicalize(temporary.path())?;
+        let pack = root.join(".git").join("objects").join("pack");
+        fs::create_dir_all(&pack)?;
+        for add_nested in [false, true] {
+            let transient = pack.join("temporary.rev");
+            fs::write(&transient, b"index")?;
+            let mut attempts = 0;
+            let result = verify_relocation(&root, |root| {
+                attempts += 1;
+                if attempts == 1 {
+                    let path = fs::read_dir(&pack)?
+                        .next()
+                        .expect("temporary index")?
+                        .path();
+                    fs::remove_file(&path)?;
+                    if add_nested {
+                        fs::create_dir_all(root.join("child").join(".git"))?;
+                    }
+                    fs::symlink_metadata(path).context("inspect listed Git index")?;
+                }
+                scan_relocation_tree(root)
+            });
+            assert_eq!(attempts, 2);
+            if add_nested {
+                assert!(
+                    result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("nested Git metadata")
+                );
+            } else {
+                result?;
+            }
+        }
+        Ok(())
+    }
 
     #[test]
     fn existing_project_discovery_does_not_initialize_or_repair_state() -> Result<()> {
