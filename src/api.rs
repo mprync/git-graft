@@ -103,9 +103,86 @@ pub struct Exec {
     pub name: String,
     #[arg(long, env = "GIT_GRAFT_LEASE", hide_env_values = true)]
     pub lease: String,
+    /// Registered package manager profile to use for this command.
+    #[arg(long)]
+    pub manager: Option<String>,
     /// Program and arguments. Use -- before the program on the CLI.
     #[arg(last = true, num_args = 1.., required = true)]
     pub argv: Vec<String>,
+}
+
+/// Register a package manager's cache and optional reusable install.
+#[derive(Debug, Args, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RegisterManager {
+    pub manager: String,
+    #[arg(long)]
+    pub cache_env: Option<String>,
+    /// Cache argument template, containing {cache}; repeat for each argument.
+    #[arg(long = "cache-arg", allow_hyphen_values = true)]
+    #[serde(default)]
+    pub cache_args: Vec<String>,
+    #[arg(long)]
+    pub install_dir: Option<String>,
+    #[arg(long = "input")]
+    #[serde(default)]
+    pub inputs: Vec<String>,
+    #[arg(long)]
+    pub key: Option<String>,
+    #[arg(long)]
+    pub workspace: Option<String>,
+    #[arg(long)]
+    pub lease: Option<String>,
+}
+
+#[derive(Debug, Args, Deserialize, Serialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ManagerName {
+    pub manager: String,
+}
+
+#[cfg(test)]
+mod manager_tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser)]
+    struct RegisterCli {
+        #[command(flatten)]
+        args: RegisterManager,
+    }
+
+    #[test]
+    fn cli_accepts_repeated_cache_arguments_and_inputs() {
+        let parsed = RegisterCli::try_parse_from([
+            "test",
+            "pip",
+            "--cache-arg",
+            "--cache-dir={cache}",
+            "--cache-arg",
+            "{cache}",
+            "--input",
+            "requirements.txt",
+            "--input",
+            "pyproject.toml",
+        ])
+        .unwrap()
+        .args;
+        assert_eq!(parsed.cache_args, ["--cache-dir={cache}", "{cache}"]);
+        assert_eq!(parsed.inputs, ["requirements.txt", "pyproject.toml"]);
+        let json = serde_json::to_value(parsed).unwrap();
+        assert!(json.get("cache_args").is_some());
+        assert!(json.get("inputs").is_some());
+    }
+
+    #[test]
+    fn older_exec_json_and_minimal_registration_deserialize() {
+        let exec: Exec =
+            serde_json::from_value(json!({"name":"a","lease":"l","argv":["pwd"]})).unwrap();
+        assert!(exec.manager.is_none());
+        let args: RegisterManager = serde_json::from_value(json!({"manager":"pip"})).unwrap();
+        assert!(args.cache_args.is_empty() && args.inputs.is_empty());
+    }
 }
 
 #[derive(Debug, Args, Deserialize, Serialize, JsonSchema)]

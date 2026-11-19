@@ -35,6 +35,12 @@ pub enum Command {
     Env(api::Name),
     /// Execute a program in the workspace.
     Exec(api::Exec),
+    /// Register a package manager for cache and dependency reuse.
+    RegisterManager(api::RegisterManager),
+    /// List registered package managers.
+    ListManagers,
+    /// Remove a registered package manager.
+    UnregisterManager(api::ManagerName),
     /// Add dependencies or perform a locked install.
     AddDep(api::AddDep),
     /// Seed installed dependencies from the primary checkout.
@@ -179,6 +185,12 @@ fn spawn(p: &Project, origin: &Path, mut args: Spawn) -> Result<Value> {
             && let Some(deps) = layer::inherit_shared(&r.path, &p.state, &p.repo)?
         {
             checkout["dependencies"] = deps;
+        }
+        if base.is_some() && !args.no_checkout && args.sparse.is_empty() && !args.no_deps {
+            let registered = crate::package_manager::attach(p, &r.path)?;
+            if !registered.is_empty() {
+                checkout["registered_dependencies"] = json!(registered);
+            }
         }
         r.storage = checkout;
         if args.lock {
@@ -446,7 +458,11 @@ pub fn run(repo: &Path, command: Command) -> Result<Value> {
     let (p, lock) = Project::open(primary)?;
     let p = &p;
     match &command {
-        Command::Doctor | Command::List | Command::Status(_) | Command::Env(_) => {}
+        Command::Doctor
+        | Command::List
+        | Command::ListManagers
+        | Command::Status(_)
+        | Command::Env(_) => {}
         Command::Gc(args) if !args.apply => {}
         _ => {
             p.require_private_state()?;
@@ -464,6 +480,22 @@ pub fn run(repo: &Path, command: Command) -> Result<Value> {
                 json!({"workspaces":registry::list(p)?,"recoverable":registry::recoverable(p)?}),
             );
         }
+        Command::ListManagers => return crate::package_manager::list(p),
+        Command::UnregisterManager(a) => return crate::package_manager::unregister(p, &a.manager),
+        Command::RegisterManager(a) => match (&a.workspace, &a.lease) {
+            (Some(name), Some(lease)) => {
+                let source = registry::authenticate(p, name, lease)?;
+                ensure!(
+                    source.status == Status::Active && source.plan.is_none(),
+                    "workspace has a pending operation"
+                );
+                let _workspace_lock = registry::workspace_lock(p, name)?;
+                registry::verify(p, &source)?;
+                return crate::package_manager::register(p, &source.path, a);
+            }
+            (None, None) => return crate::package_manager::register(p, &p.repo, a),
+            _ => anyhow::bail!("workspace and lease must be supplied together"),
+        },
         Command::Status(a) => return report_status(p, &a.name),
         Command::Spawn(_) => {
             let Command::Spawn(args) = command else {
@@ -554,11 +586,13 @@ pub fn run(repo: &Path, command: Command) -> Result<Value> {
         Command::Heartbeat(_) => Ok(summary(&r)),
         Command::Layer(a) => layer::run(&r.path, &p.state, &a.action, &a.key, a.copy),
         Command::Exec(a) => {
+            ensure!(!a.argv.is_empty(), "program and arguments are required");
+            let profile = crate::package_manager::execution(p, a.manager.as_deref(), &a.argv[0])?;
             crate::cache::prepare_package_roots(p)?;
             let runtime = Runtime::new(&r.path, &p.state, r.port, &r.id)?;
             runtime.prepare_private_directory()?;
             drop(lock);
-            runtime.execute(&a.argv)
+            runtime.execute_registered(&a.argv, profile.as_ref())
         }
         Command::AddDep(a) => {
             let attached = engine::check_dependency(&r.path, &r.storage["dependencies"], &a)?;

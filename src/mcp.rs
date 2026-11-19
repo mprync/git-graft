@@ -14,7 +14,10 @@ use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader};
 
-use crate::api::{self, AddDep, DropWorkspace, Exec, Gc, Land, Layer, Name, Owned, SeedLayer};
+use crate::api::{
+    self, AddDep, DropWorkspace, Exec, Gc, Land, Layer, ManagerName, Name, Owned, RegisterManager,
+    SeedLayer,
+};
 use crate::workspace::{self, Command, Spawn};
 
 const MAX_REQUEST_BYTES: usize = 256 * 1024;
@@ -105,6 +108,12 @@ impl ServerHandler for Server {
                 true,
                 false,
             ),
+            tool::<Empty>(
+                "workspace_list_managers",
+                "List registered package managers.",
+                true,
+                false,
+            ),
             tool::<Owned>(
                 "workspace_restore",
                 "Reopen a retired workspace using its recovery lease.",
@@ -185,6 +194,18 @@ impl ServerHandler for Server {
             ),
         ];
         if self.allow_exec {
+            tools.push(tool::<RegisterManager>(
+                "workspace_register_manager",
+                "Register a package manager (enabled by host --allow-exec).",
+                false,
+                false,
+            ));
+            tools.push(tool::<ManagerName>(
+                "workspace_unregister_manager",
+                "Unregister a package manager (enabled by host --allow-exec).",
+                false,
+                true,
+            ));
             tools.push(tool::<Exec>(
                 "workspace_exec",
                 "Execute a command in a workspace (enabled by host --allow-exec).",
@@ -216,6 +237,8 @@ impl ServerHandler for Server {
                     | "workspace_add_dependency"
                     | "workspace_layer"
                     | "workspace_seed_layer"
+                    | "workspace_register_manager"
+                    | "workspace_unregister_manager"
             )
         {
             let error = anyhow::anyhow!("Tool {name} requires the host to start with --allow-exec");
@@ -231,6 +254,12 @@ impl ServerHandler for Server {
                 parse::<Empty>(args)?;
                 Command::List
             }
+            "workspace_list_managers" => {
+                parse::<Empty>(args)?;
+                Command::ListManagers
+            }
+            "workspace_register_manager" => Command::RegisterManager(parse(args)?),
+            "workspace_unregister_manager" => Command::UnregisterManager(parse(args)?),
             "workspace_spawn" => {
                 Command::Spawn(Spawn::from_mcp(args, !self.allow_exec).map_err(|e| {
                     ErrorData::invalid_params(format!("Invalid tool arguments: {e}"), None)
