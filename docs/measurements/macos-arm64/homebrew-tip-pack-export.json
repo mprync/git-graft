@@ -1,0 +1,225 @@
+{
+  "fixture": "Homebrew bc63375ac3a4, clean local clone, macOS arm64 APFS, Git 2.56.0",
+  "release": {
+    "before": {
+      "bytes": 4149152,
+      "sha256": "e70078597e25977422278e0f2360e5899d8e36f19b91bae5d64e5a69d4f4f0dc"
+    },
+    "after": {
+      "bytes": 4149152,
+      "sha256": "d41d66f1b23234ee1ff94a9d2e8cfc4f2a3447e3985bd6f6d3d4a8fc907b860b"
+    }
+  },
+  "alternatingPairs": [
+    {
+      "old": {
+        "graftCold": 0.8846110829999998,
+        "nativeCold": 0.404078792,
+        "graftRepeat": 0.4869682090000006,
+        "nativeRepeat": 0.3903916250000002,
+        "graftFirstStatus": 0.523265625,
+        "packTransfer": 0.258784583,
+        "packBytes": 5260026,
+        "resources": {
+          "userSeconds": 0.92,
+          "systemSeconds": 1.05,
+          "peakRssBytes": 85475328
+        }
+      },
+      "new": {
+        "graftCold": 0.8150584170000001,
+        "nativeCold": 0.4383317089999998,
+        "graftRepeat": 0.47184862499999963,
+        "nativeRepeat": 0.39613099999999984,
+        "graftFirstStatus": 0.4219099159999996,
+        "packTransfer": 0.189517875,
+        "packBytes": 5243338,
+        "resources": {
+          "userSeconds": 0.53,
+          "systemSeconds": 1.28,
+          "peakRssBytes": 77742080
+        }
+      }
+    },
+    {
+      "old": {
+        "graftCold": 0.821809459,
+        "nativeCold": 0.39337279200000014,
+        "graftRepeat": 0.4855503330000001,
+        "nativeRepeat": 0.403574208,
+        "graftFirstStatus": 0.40693900000000033,
+        "packTransfer": 0.258156375,
+        "packBytes": 5260026,
+        "resources": {
+          "userSeconds": 0.92,
+          "systemSeconds": 0.94,
+          "peakRssBytes": 85229568
+        }
+      },
+      "new": {
+        "graftCold": 0.7394202919999998,
+        "nativeCold": 0.3607547079999999,
+        "graftRepeat": 0.5006970409999995,
+        "nativeRepeat": 0.36873800000000007,
+        "graftFirstStatus": 0.42352416699999956,
+        "packTransfer": 0.182784917,
+        "packBytes": 5243338,
+        "resources": {
+          "userSeconds": 0.52,
+          "systemSeconds": 1.01,
+          "peakRssBytes": 77774848
+        }
+      }
+    },
+    {
+      "old": {
+        "graftCold": 0.8105153749999999,
+        "nativeCold": 0.37050387499999987,
+        "graftRepeat": 0.4594457079999993,
+        "nativeRepeat": 0.381906375,
+        "graftFirstStatus": 0.425542375,
+        "packTransfer": 0.245550292,
+        "packBytes": 5260026,
+        "resources": {
+          "userSeconds": 0.92,
+          "systemSeconds": 0.95,
+          "peakRssBytes": 85409792
+        }
+      },
+      "new": {
+        "graftCold": 0.7200974999999998,
+        "nativeCold": 0.37791433299999994,
+        "graftRepeat": 0.4609896250000002,
+        "nativeRepeat": 0.3896167500000001,
+        "graftFirstStatus": 0.40186641599999984,
+        "packTransfer": 0.187817,
+        "packBytes": 5243441,
+        "resources": {
+          "userSeconds": 0.52,
+          "systemSeconds": 0.94,
+          "peakRssBytes": 77070336
+        }
+      }
+    },
+    {
+      "old": {
+        "graftCold": 0.7664187500000003,
+        "nativeCold": 0.36073016699999993,
+        "graftRepeat": 0.5085420420000001,
+        "nativeRepeat": 0.3677059999999999,
+        "graftFirstStatus": 0.4099213749999999,
+        "packTransfer": 0.248818291,
+        "packBytes": 5260026,
+        "resources": {
+          "userSeconds": 0.92,
+          "systemSeconds": 0.92,
+          "peakRssBytes": 86736896
+        }
+      },
+      "new": {
+        "graftCold": 0.6977758750000003,
+        "nativeCold": 0.3640622090000002,
+        "graftRepeat": 0.4796897919999992,
+        "nativeRepeat": 0.3529308749999998,
+        "graftFirstStatus": 0.44606858300000024,
+        "packTransfer": 0.184190792,
+        "packBytes": 5243681,
+        "resources": {
+          "userSeconds": 0.52,
+          "systemSeconds": 0.91,
+          "peakRssBytes": 77594624
+        }
+      }
+    },
+    {
+      "old": {
+        "graftCold": 0.8239470409999999,
+        "nativeCold": 0.357785834,
+        "graftRepeat": 0.46867662500000007,
+        "nativeRepeat": 0.43032120799999984,
+        "graftFirstStatus": 0.4182847499999998,
+        "packTransfer": 0.258468417,
+        "packBytes": 5260026,
+        "resources": {
+          "userSeconds": 0.93,
+          "systemSeconds": 1.04,
+          "peakRssBytes": 86605824
+        }
+      },
+      "new": {
+        "graftCold": 0.7527219170000004,
+        "nativeCold": 0.38702162499999987,
+        "graftRepeat": 0.44802345799999965,
+        "nativeRepeat": 0.365411167,
+        "graftFirstStatus": 0.4576387500000001,
+        "packTransfer": 0.187192875,
+        "packBytes": 5243576,
+        "resources": {
+          "userSeconds": 0.53,
+          "systemSeconds": 0.96,
+          "peakRssBytes": 78675968
+        }
+      }
+    },
+    {
+      "old": {
+        "graftCold": 0.8333000000000002,
+        "nativeCold": 0.3364353330000001,
+        "graftRepeat": 0.5512711669999999,
+        "nativeRepeat": 0.39655554200000004,
+        "graftFirstStatus": 0.4343919169999999,
+        "packTransfer": 0.24522275,
+        "packBytes": 5260026,
+        "resources": {
+          "userSeconds": 0.92,
+          "systemSeconds": 0.95,
+          "peakRssBytes": 85573632
+        }
+      },
+      "new": {
+        "graftCold": 0.7973964160000006,
+        "nativeCold": 1.3046695839999998,
+        "graftRepeat": 0.44876654099999996,
+        "nativeRepeat": 0.4054685829999998,
+        "graftFirstStatus": 0.41996987499999977,
+        "packTransfer": 0.192989291,
+        "packBytes": 5243441,
+        "resources": {
+          "userSeconds": 0.53,
+          "systemSeconds": 1.03,
+          "peakRssBytes": 78725120
+        }
+      }
+    }
+  ],
+  "physical": {
+    "graft": {
+      "bytesSincePopulatedCheckout": "6012928",
+      "firstCheckoutBytes": "5693440",
+      "additionalSecondCheckoutBytes": "319488",
+      "fileDataByPurpose": {
+        "historyPacks": "5246976",
+        "historyIndexes": "106496",
+        "checkoutIndexes": "573440",
+        "sourceFiles": "0",
+        "records": "86016",
+        "primaryChange": "0"
+      },
+      "observerSeconds": 1.3027649999999995,
+      "advance": {
+        "additionalCheckoutBytes": "5672960",
+        "observerSeconds": 1.239583458000001
+      }
+    },
+    "native": {
+      "bytesSincePopulatedCheckout": "59883520",
+      "firstCheckoutBytes": "29941760",
+      "additionalSecondCheckoutBytes": "29941760",
+      "observerSeconds": 1.1854233330000001,
+      "advance": {
+        "additionalCheckoutBytes": "29945856",
+        "observerSeconds": 1.2305766669999993
+      }
+    }
+  }
+}

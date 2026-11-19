@@ -32,17 +32,19 @@ The APFS local backend waits for writeback of each private object file and child
 
 ## How much does selecting one commit save?
 
-From a populated Homebrew clone, `--history isolated` keeps the selected ancestry for log and blame. `--history tip` exports one commit, its trees and blobs. The release CLI was timed on three fresh primaries for isolated history and five for tip history. The APFS block measurements ran separately.
+From a populated Homebrew clone, `--history isolated` keeps the selected ancestry for log and blame. `--history tip` exports one commit, its trees and blobs. The release CLI was timed on three fresh primaries for isolated history and six for tip history. The APFS block measurements ran separately.
 
 | Clean primary on APFS | Isolated ancestry | Single commit |
 | --- | ---: | ---: |
-| First spawn, median | 5.90 s | 0.875 s |
-| Native worktree in the paired timing runs | 0.41 s | 0.445 s |
-| Additional file data, first workspace | 15,482,880 bytes | 5,709,824 bytes |
+| First spawn, median | 5.90 s | 0.746 s |
+| Native worktree in the paired timing runs | 0.41 s | 0.382 s |
+| Additional file data, first workspace | 15,482,880 bytes | 5,693,440 bytes |
 | Additional file data, second workspace | 315,392 bytes | 319,488 bytes |
 | Additional working file data, both workspaces | 0 bytes | 0 bytes |
 
-Repeat spawns at the same tip took 0.511 s versus 0.407 s for Git. The two grafts shared one selected Git pack and pack index that occupied 5,369,856 bytes. After a one-file commit on a dirty primary, a third graft at the new tip allocated 5,693,440 additional bytes because it needed a different selection of objects. [Single-commit release measurements](measurements/macos-arm64/homebrew-tip-release.json) · [Isolated release measurements](measurements/macos-arm64/homebrew-selected-history.json)
+When a shallow export fits in one pack and the primary has no reusable pack, Git uses path names from the selected revision to find similar objects for compression. Six alternating release pairs reduced median pack transfer from 253 ms to 188 ms and first spawn from 823 ms to 746 ms. Every candidate pair improved. Repeat spawns at the same tip took 0.466 s versus 0.379 s for Git. [Paired release measurements](measurements/macos-arm64/homebrew-tip-pack-export.json)
+
+The two grafts shared a selected pack and pack index occupying 5,353,472 bytes. After a one-file commit, a third graft at the new tip allocated 5,672,960 additional bytes for the new selection and workspace. [APFS allocation samples](measurements/macos-arm64/homebrew-tip-pack-export.json) · [Previous tip release](measurements/macos-arm64/homebrew-tip-release.json) · [Isolated release](measurements/macos-arm64/homebrew-selected-history.json)
 
 ## Isolated history on the previous release
 
