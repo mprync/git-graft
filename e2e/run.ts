@@ -1,7 +1,8 @@
 /** Run the shipped binary in disposable repositories and check its live CLI and MCP surfaces. */
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { platform, release } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -87,7 +88,13 @@ function spaceSummary(samples: Record<string, unknown>[], installed: boolean): s
   ].join('\n');
 }
 
+function identifyBinary(path: string) {
+  const bytes = readFileSync(path);
+  return { bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') };
+}
+
 const binary = process.env.GIT_GRAFT_BIN ? resolve(process.env.GIT_GRAFT_BIN) : releaseBinary();
+const binaryIdentity = identifyBinary(binary);
 const help = execute(binary, ['--help'], project, process.env);
 assert.equal(help.status, 0, help.stderr);
 const advertisedCli = [...help.stdout.matchAll(/^  ([a-z][a-z-]+)\s{2,}/gm)]
@@ -145,6 +152,7 @@ const passed = results.filter(result => result.status === 'passed').length;
 const unavailable = results.filter(result => result.status === 'unavailable').length;
 const failed = results.length - passed - unavailable;
 const ok = passed === results.length && (group !== undefined || (cli.missing.length === 0 && mcp.missing.length === 0));
+assert.deepEqual(identifyBinary(binary), binaryIdentity, 'The executable changed during the end-to-end run');
 const report = {
   generated_at: new Date().toISOString(),
   platform: platform(),
@@ -153,6 +161,7 @@ const report = {
   node: process.version,
   git: execFileSync('git', ['--version'], { encoding: 'utf8' }).trim(),
   binary_version: execFileSync(binary, ['--version'], { encoding: 'utf8' }).trim(),
+  binary: binaryIdentity,
   build: process.env.GIT_GRAFT_BUILD_KIND ?? (process.env.GIT_GRAFT_BIN ? 'supplied binary' : 'release'),
   group: group ?? 'all',
   ok,
