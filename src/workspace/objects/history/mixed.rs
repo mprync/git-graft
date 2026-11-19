@@ -62,7 +62,11 @@ fn bounded_bytes(mut file: impl Read, size: u64) -> Result<Vec<u8>> {
 type OffsetAndIndexRow = (usize, usize);
 // v2 indexes put sorted IDs, CRCs and 32-bit pack offsets after the fanout
 // table. The size limit makes large-offset entries unnecessary here.
-fn offsets(index: &[u8], width: usize) -> Result<(&[u8], Vec<OffsetAndIndexRow>)> {
+fn offsets<'a>(
+    index: &'a [u8],
+    width: usize,
+    wanted: &HashSet<ObjectId>,
+) -> Result<(&'a [u8], Vec<OffsetAndIndexRow>)> {
     let mut table = index;
     let count = index_count(&mut table)?;
     ensure!(
@@ -76,6 +80,18 @@ fn offsets(index: &[u8], width: usize) -> Result<(&[u8], Vec<OffsetAndIndexRow>)
     );
     let (ids, rest) = table.split_at(count * width);
     let starts = &rest[count * 4..count * 8];
+    // Keeping compressed ranges in place requires the object immediately
+    // after the pack header. Rule out a donor using its index alone.
+    let first = starts
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .position(|start| *start == 12u32.to_be_bytes())
+        .context("missing first pack record")?;
+    ensure!(
+        wanted.contains(&object_id(&ids[first * width..(first + 1) * width], width)),
+        "first pack record is outside the selected history"
+    );
     let mut records = Vec::new();
     records.try_reserve_exact(count)?;
     for (row, start) in starts.as_chunks::<4>().0.iter().enumerate() {
@@ -155,11 +171,11 @@ struct Selection {
 
 fn select(
     bytes: &[u8],
-    index: &[u8],
+    table: &[u8],
+    records: &[OffsetAndIndexRow],
     width: usize,
     wanted: &HashSet<ObjectId>,
 ) -> Result<Selection> {
-    let (table, records) = offsets(index, width)?;
     ensure!(
         bytes.len() >= 12 + width
             && &bytes[..4] == b"PACK"
@@ -239,12 +255,14 @@ pub(super) fn prepare(
     let index = open_regular(&donor.index)?;
     let index_size = index.metadata()?.len();
     check_budget(input_size, index_size, width)?;
+    let index = bounded_bytes(index, index_size)?;
+    let (table, records) = offsets(&index, width, wanted)?;
     // Keep unfinished transfer artifacts in the primary registry.
     let scratch = cache::private_tempdir_in(state)?;
     let mut file = scratch::create(&input, &donor.pack, scratch.path())?;
     let mut bytes = bounded_bytes(&file, input_size)?;
-    let index = bounded_bytes(index, index_size)?;
-    let plan = select(&bytes, &index, width, wanted)?;
+    let plan = select(&bytes, table, &records, width, wanted)?;
+    drop(records);
     drop(index);
 
     // Edit the unlinked clone. Only the sanitized bytes get an output name.
