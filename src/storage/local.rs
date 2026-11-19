@@ -96,18 +96,46 @@ impl<'a> LocalCheckout<'a> {
         // cannot be overwritten.
         let staged = self.scratch.path().join("tree");
         fs::create_dir(&staged)?;
-        if !sparse.is_empty() {
+        // Git resolves relative core.attributesFile paths from GIT_WORK_TREE.
+        // Keep the workspace's effective attributes when using the scratch tree.
+        let attributes = crate::git::raw(
+            self.worktree,
+            &["config", "--null", "--path", "--get", "core.attributesFile"],
+        )?;
+        let relative_attributes = if attributes.status.success() {
+            let path = attributes
+                .stdout
+                .strip_suffix(b"\0")
+                .context("invalid Git attributes file path")?;
+            let path = Path::new(std::str::from_utf8(path)?);
+            (path.is_relative() && !path.as_os_str().is_empty()).then(|| self.worktree.join(path))
+        } else {
+            ensure!(
+                attributes.status.code() == Some(1),
+                "read checkout attributes: {}",
+                String::from_utf8_lossy(&attributes.stderr).trim()
+            );
+            None
+        };
+        let staged_command = || {
             let mut command = self.command();
+            command.env("GIT_WORK_TREE", &staged);
+            if let Some(path) = &relative_attributes {
+                command
+                    .env("GRAFT_CHECKOUT_ATTRIBUTES", path)
+                    .arg("--config-env=core.attributesFile=GRAFT_CHECKOUT_ATTRIBUTES");
+            }
             command
-                .env("GIT_WORK_TREE", &staged)
+        };
+        if !sparse.is_empty() {
+            let mut command = staged_command();
+            command
                 .args(["sparse-checkout", "set", "--cone", "--"])
                 .args(sparse);
             run(command)?;
         }
-        let mut command = parallel_checkout(self.command());
-        command
-            .env("GIT_WORK_TREE", &staged)
-            .args(["read-tree", "-m", "-u", oid]);
+        let mut command = parallel_checkout(staged_command());
+        command.args(["read-tree", "-m", "-u", oid]);
         run(command)?;
         let mut receipt = Receipt::default();
         count_native(&staged, files.iter(), &mut receipt.private);

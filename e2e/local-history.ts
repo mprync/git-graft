@@ -47,6 +47,18 @@ function read(path: string, file: string): string {
 
 export const cases: Scenario[] = [
   {
+    name: 'local checkout applies the copied attributes file from the workspace root',
+    run(ctx) {
+      writeFileSync(join(ctx.repo, 'custom attrs'), '*.txt text eol=crlf\n');
+      ctx.git(['config', '--local', 'core.attributesFile', 'custom attrs']);
+      ctx.git(['config', '--local', 'core.autocrlf', 'false']);
+      const ws = ctx.spawn('external-attrs', ['--history', 'local']);
+      assert.equal(read(ws.path, 'tracked.txt'), 'initial\r\n');
+      assert.equal(ctx.git(['show', ':tracked.txt'], ws.path), 'initial');
+      assert.equal(ctx.git(['status', '--porcelain'], ws.path), '');
+    },
+  },
+  {
     name: 'local and isolated spawns own independent objects, refs, indexes and checkouts',
     async run(ctx) {
       ctx.git(['config', 'core.autocrlf', 'true']);
