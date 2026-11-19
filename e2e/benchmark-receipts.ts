@@ -5,7 +5,7 @@ export function objectBootstrap(value: unknown, includeRevisions = true): Record
   const safe: Record<string, unknown> = {};
   const enums: Record<string,string[]> = {
     method:['clonefile','reflink','local-pack','none'],
-    source:['primary-pack','filtered-primary','cache','local-export','ancestor-cache','none'],
+    source:['primary-pack','filtered-primary','cache','local-export','ancestor-cache','local-snapshot','none'],
     object_format:['sha1','sha256'],
   };
   for (const [key,allowed] of Object.entries(enums)) {

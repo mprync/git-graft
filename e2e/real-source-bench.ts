@@ -1,6 +1,7 @@
 /** Compare release CLI processes on disposable local clones of a real repository.
  * node e2e/real-source-bench.ts [--repo /opt/homebrew] [--bin PATH]
  *   [--output PATH] [--apfs-file-data] [--rounds N] [--advance-base] [--include-revisions]
+ *   [--history local|isolated] [--clean-primary]
  * The source is read only. Local clones copy the original pack files without repacking;
  * all configuration, branches, and test commits are created in temporary repositories.
  */
@@ -13,13 +14,16 @@ import { parseArgs } from 'node:util';
 import { Context, objectResult } from './harness.ts';
 import { objectBootstrap } from './benchmark-receipts.ts';
 
-const {values} = parseArgs({options:{repo:{type:'string'},bin:{type:'string'},output:{type:'string'},
-  rounds:{type:'string'},'apfs-file-data':{type:'boolean'},'advance-base':{type:'boolean'},'include-revisions':{type:'boolean'}}});
+const {values} = parseArgs({options:{repo:{type:'string'},bin:{type:'string'},output:{type:'string'},history:{type:'string'},
+  rounds:{type:'string'},'apfs-file-data':{type:'boolean'},'advance-base':{type:'boolean'},'include-revisions':{type:'boolean'},'clean-primary':{type:'boolean'}}});
 const repo = resolve(values.repo ?? '/opt/homebrew');
 const bin = resolve(values.bin ?? process.env.GIT_GRAFT_BIN ?? join(import.meta.dirname,'../target/release',
   process.platform === 'win32' ? 'git-graft.exe' : 'git-graft'));
 const output = resolve(values.output ?? 'target/e2e/real-source-bench.json');
 const rounds = Number(values.rounds ?? 4);
+const history = values.history;
+assert(history === undefined || history === 'isolated' || history === 'local', 'Expected local or isolated history');
+const historyArgs = history ? ['--history', history] : [];
 assert(Number.isSafeInteger(rounds) && rounds > 0, '--rounds must be a positive integer');
 assert(existsSync(bin) && /^git-graft(?:\.exe)?$/i.test(basename(bin)), 'Expected release git-graft executable');
 assert(existsSync(repo), 'Source repository does not exist');
@@ -118,24 +122,47 @@ try {
     const prefix = `.graft-bench-${randomBytes(8).toString('hex')}`;
     const staged = `${prefix}-staged`, untracked = `${prefix}-untracked`, ignored = `${prefix}-ignored`;
     for (const name of [staged,untracked,ignored]) assert(!existsSync(join(primary,name)));
-    writeFileSync(join(primary,staged),'staged data\n');
-    command(['add','-f','--',staged],primary);
-    writeFileSync(join(primary,staged),'unstaged data\n');
-    writeFileSync(join(primary,untracked),'untracked data\n');
-    writeFileSync(join(primary,ignored),'ignored data\n');
-    mkdirSync(join(primary,'.git','info'),{recursive:true});
-    appendFileSync(join(primary,'.git','info','exclude'),`\n/${ignored}\n`);
+    const donorFiles = values['clean-primary'] ? [] :
+      [[staged,'unstaged data\n'],[untracked,'untracked data\n'],[ignored,'ignored data\n']];
+    if (donorFiles.length) {
+      writeFileSync(join(primary,staged),'staged data\n');
+      command(['add','-f','--',staged],primary);
+      for (const [file,content] of donorFiles) writeFileSync(join(primary,file),content);
+      mkdirSync(join(primary,'.git','info'),{recursive:true});
+      appendFileSync(join(primary,'.git','info','exclude'),`\n/${ignored}\n`);
+    }
     const primaryStatus = command(['--no-optional-locks','status','--porcelain','--untracked-files=all'],primary);
-    const metadata = ['HEAD','index','config','info/exclude'].map(file => [file,readFileSync(join(primary,'.git',file))] as const);
+    if (values['clean-primary']) assert.equal(primaryStatus,'');
+    const readMetadata = (name: string) => {
+      const path = join(primary,'.git',name);
+      return existsSync(path) ? readFileSync(path) : null;
+    };
+    const metadata = ['HEAD','index','config','info/exclude'].map(file => [file,readMetadata(file)] as const);
     const before = free();
     const beforeApfs = calibration?.available === true ? observe(root) : undefined;
     let firstApfs: ReturnType<typeof observe> | undefined;
     const workspacePaths: string[] = [];
+    const firstStatus = (path: string) => {
+      const start = performance.now();
+      assert.equal(command(['status','--porcelain','--untracked-files=all'],path),'');
+      return (performance.now()-start)/1000;
+    };
+    const checkHistory = (path: string, storage: Record<string,unknown>) => {
+      const objects = objectResult(storage.objects);
+      const local = objects.source === 'local-snapshot';
+      if (history === 'isolated') assert(!local, 'Isolated checkout used the whole donor database');
+      for (const oid of [branch,...(existingUnrelated ? [existingUnrelated] : [])]) {
+        const read = fixture.command('git',['cat-file','-e',oid],path);
+        if (local) assert.equal(read.status,0,'Local snapshot lost a primary Git object');
+        else assert([1,128].includes(read.status ?? -1),'Isolated checkout exposed an unrelated object');
+      }
+      assert.equal(command(['for-each-ref','refs/heads/unrelated-benchmark'],path),'','Primary ref was copied');
+    };
     const samples = [0,1].map(index => {
       const name = `agent-${index}`;
       const target = join(root,name);
       const args = arm === 'native' ? ['worktree','add','-b',`graft/${name}`,target,head]
-        : ['graft','--repo',primary,'--json','spawn',name,'--base',head,'--no-deps'];
+        : ['graft','--repo',primary,'--json','spawn',name,...historyArgs,'--base',head,'--no-deps'];
       const start = performance.now();
       const result = useResources ? fixture.command('/usr/bin/time',[...timeArgs,'git',...args],primary)
         : fixture.command('git',args,primary);
@@ -146,20 +173,15 @@ try {
       assert(typeof path === 'string');
       workspacePaths.push(path);
       const usedBytes = (before-free()).toString();
+      const firstStatusSeconds = firstStatus(path);
       assert.equal(command(['rev-parse','HEAD'],path),head);
       assert.equal(command(['rev-parse','HEAD^{tree}'],path),tree);
-      assert.equal(command(['status','--porcelain','--untracked-files=all'],path),'');
       for (const file of [staged,untracked,ignored]) assert(!existsSync(join(path,file)),`Private primary file appeared in workspace: ${file}`);
-      if (arm === 'graft') {
-        for (const oid of [branch,...(existingUnrelated ? [existingUnrelated] : [])]) {
-          const missing = fixture.command('git',['cat-file','-e',oid],path);
-          assert([1,128].includes(missing.status ?? -1),'Graft exposed an unrelated object');
-        }
-      }
       const storage = receipt ? objectResult(receipt.storage) : undefined;
+      if (storage) checkHistory(path, storage);
       const objectStorage = storage ? objectBootstrap(storage.objects,values['include-revisions'] === true) : undefined;
       if (index === 0 && beforeApfs?.available === true) firstApfs = observe(root);
-      return {seconds,resources:useResources ? resources(result.stderr) : null,bytesSincePopulatedCheckout:usedBytes,
+      return {seconds,firstStatusSeconds,resources:useResources ? resources(result.stderr) : null,bytesSincePopulatedCheckout:usedBytes,
         sourceStorage:storage ? sourceReceipt(storage) : undefined,objectBootstrap:objectStorage};
     });
     assert.equal(command(['rev-parse','HEAD'],primary),head);
@@ -167,8 +189,8 @@ try {
     assert.equal(command(['rev-parse','refs/heads/unrelated-benchmark'],primary),branch);
     if (existingUnrelated) assert.equal(command(['rev-parse','refs/heads/unrelated-source'],primary),existingUnrelated);
     assert.equal(command(['--no-optional-locks','status','--porcelain','--untracked-files=all'],primary),primaryStatus);
-    for (const [file,bytes] of metadata) assert.deepEqual(readFileSync(join(primary,'.git',file)),bytes,`Primary Git metadata changed: ${file}`);
-    for (const [file,expected] of [[staged,'unstaged data\n'],[untracked,'untracked data\n'],[ignored,'ignored data\n']])
+    for (const [file,bytes] of metadata) assert.deepEqual(readMetadata(file),bytes,`Primary Git metadata changed: ${file}`);
+    for (const [file,expected] of donorFiles)
       assert.equal(readFileSync(join(primary,file),'utf8'),expected,`Primary data changed: ${file}`);
     const afterApfs = beforeApfs?.available === true ? observe(root,false,arm === 'graft') : undefined;
     let fileDataByPurpose;
@@ -214,14 +236,14 @@ try {
       command(['update-index','--add','--cacheinfo',`100644,${blob},${file}`],primary);
       writeFileSync(join(primary,file),content);
       assert.equal(command(['--no-optional-locks','status','--porcelain','--untracked-files=all'],primary),primaryStatus);
-      const advancedMetadata = ['HEAD','index','config','info/exclude'].map(name => [name,readFileSync(join(primary,'.git',name))] as const);
+      const advancedMetadata = metadata.map(([name]) => [name,readMetadata(name)] as const);
       const preparationSeconds = (performance.now()-prepStart)/1000;
       // Start after the primary already owns the new file, commit and index.
       const advanceApfsBefore = calibration?.available === true ? observe(root) : undefined;
       const beforeAdvance = free();
       const target = join(root,'agent-2');
       const args = arm === 'native' ? ['worktree','add','-b','graft/agent-2',target,advanced]
-        : ['graft','--repo',primary,'--json','spawn','agent-2','--no-deps'];
+        : ['graft','--repo',primary,'--json','spawn','agent-2',...historyArgs,'--no-deps'];
       const start = performance.now();
       const result = useResources ? fixture.command('/usr/bin/time',[...timeArgs,'git',...args],primary)
         : fixture.command('git',args,primary);
@@ -231,34 +253,31 @@ try {
       const receipt = arm === 'graft' ? objectResult(JSON.parse(result.stdout)) : undefined;
       const path = receipt ? receipt.path : target;
       assert(typeof path === 'string');
+      const firstStatusSeconds = firstStatus(path);
       assert.equal(command(['rev-parse','HEAD'],path),advanced);
       assert.equal(command(['rev-parse','HEAD^{tree}'],path),advancedTree);
       assert.equal(command(['rev-parse','HEAD^'],path),head);
       assert.equal(readFileSync(join(path,file),'utf8'),content);
-      assert.equal(command(['status','--porcelain','--untracked-files=all'],path),'');
       for (const original of workspacePaths) {
         assert.equal(command(['rev-parse','HEAD'],original),head);
         assert.equal(command(['rev-parse','HEAD^{tree}'],original),tree);
         assert(!existsSync(join(original,file)));
       }
       for (const privateFile of [staged,untracked,ignored]) assert(!existsSync(join(path,privateFile)));
-      if (arm === 'graft') for (const oid of [branch,...(existingUnrelated ? [existingUnrelated] : [])]) {
-        const missing = fixture.command('git',['cat-file','-e',oid],path);
-        assert([1,128].includes(missing.status ?? -1),'Graft exposed an unrelated object');
-      }
       assert.equal(command(['symbolic-ref','HEAD'],primary),'refs/heads/benchmark-advanced');
       assert.equal(command(['rev-parse','HEAD'],primary),advanced);
       assert.equal(command(['--no-optional-locks','status','--porcelain','--untracked-files=all'],primary),primaryStatus);
-      for (const [name,bytes] of advancedMetadata) assert.deepEqual(readFileSync(join(primary,'.git',name)),bytes,`Advanced primary metadata changed: ${name}`);
-      for (const [name,expected] of [[staged,'unstaged data\n'],[untracked,'untracked data\n'],[ignored,'ignored data\n'],[file,content]])
+      for (const [name,bytes] of advancedMetadata) assert.deepEqual(readMetadata(name),bytes,`Advanced primary metadata changed: ${name}`);
+      for (const [name,expected] of [...donorFiles,[file,content]])
         assert.equal(readFileSync(join(primary,name),'utf8'),expected);
       const storage = receipt ? objectResult(receipt.storage) : undefined;
+      if (storage) checkHistory(path, storage);
       const advanceApfsAfter = advanceApfsBefore?.available === true ? observe(root) : undefined;
       const apfs = typeof advanceApfsBefore?.bytes === 'string' && typeof advanceApfsAfter?.bytes === 'string'
         ? {additionalCheckoutBytes:(BigInt(advanceApfsAfter.bytes)-BigInt(advanceApfsBefore.bytes)).toString(),
           observerSeconds:advanceApfsBefore.observerSeconds+advanceApfsAfter.observerSeconds}
         : values['apfs-file-data'] ? {unavailable:calibration?.reason ?? advanceApfsBefore?.reason ?? advanceApfsAfter?.reason ?? 'observer-failed'} : undefined;
-      advanceBase = {head:advanced,tree:advancedTree,preparationSeconds,seconds,resources:useResources ? resources(result.stderr) : null,deltaBytes,
+      advanceBase = {head:advanced,tree:advancedTree,preparationSeconds,seconds,firstStatusSeconds,resources:useResources ? resources(result.stderr) : null,deltaBytes,
         apfs,sourceStorage:storage ? sourceReceipt(storage) : undefined,objectBootstrap:storage ? objectBootstrap(storage.objects,values['include-revisions'] === true) : undefined};
     }
     rmSync(root,{recursive:true,force:true});
@@ -294,8 +313,8 @@ try {
     source:{...(values['include-revisions'] ? {head,tree} : {}),packCount:packs.length,packBytes:packs.reduce((n,p)=>n+statSync(join(sourceObjects,'pack',p)).size,0),
       commits:Number(command(['rev-list','--count',head],template)),hasUnrelatedSourceCommit:Boolean(existingUnrelated)},
     preparation:{templateCloneSeconds:prepSeconds,method:'local clone --no-hardlinks; source pack layout preserved; no source configuration copied'},
-    apfsCalibration:calibration,summary,runs,
-    scope:'Each round starts from a fresh sanitized populated clone with a cold Graft object cache. First and repeat time the full CLI process including object bootstrap; clone preparation is separate. With --advance-base, a one-file descendant commit advances the disposable primary branch and HEAD; third-workspace timing and commit preparation are reported separately. Signed statfs deltas are volume-wide. Optional APFS scans are separately timed and can warm caches; run without scans for timing. APFS excludes metadata, forks and xattrs. Unrelated commit refusal is checked outside timing. No fixed performance threshold.'};
+    requestedHistory:history ?? 'default',primaryCheckout:values['clean-primary'] ? 'clean' : 'dirty',apfsCalibration:calibration,summary,runs,
+    scope:'Each round starts from a fresh populated clone. Spawn timings include the entire CLI process and cold object setup. The first git status is timed separately for each workspace. Clone preparation and advanced commit creation are outside both timers. Checks verify source contents, primary state and object visibility for the actual history mode. Signed statfs deltas cover the volume. Separately timed APFS scans can warm caches and exclude metadata, forks and xattrs.'};
   mkdirSync(dirname(output),{recursive:true});
   writeFileSync(output,JSON.stringify(report,null,2)+'\n');
   process.stdout.write(`Real-source benchmark written to ${output}\n`);
