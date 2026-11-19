@@ -3,17 +3,20 @@
 use std::{
     cell::RefCell,
     ffi::{CStr, CString, OsStr, OsString},
-    fs::{self, File, Metadata, OpenOptions},
+    fs::{File, Metadata, OpenOptions},
     io,
     os::{
         fd::{AsRawFd, FromRawFd, IntoRawFd},
         unix::{
             ffi::{OsStrExt, OsStringExt},
-            fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+            fs::{MetadataExt, OpenOptionsExt},
         },
     },
     path::{Component, Path, PathBuf},
 };
+
+#[cfg(target_os = "macos")]
+use std::{fs, os::unix::fs::PermissionsExt};
 
 fn invalid(message: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
