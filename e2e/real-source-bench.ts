@@ -209,6 +209,8 @@ try {
       assert.equal(command(['--no-optional-locks','status','--porcelain','--untracked-files=all'],primary),primaryStatus);
       const advancedMetadata = ['HEAD','index','config','info/exclude'].map(name => [name,readFileSync(join(primary,'.git',name))] as const);
       const preparationSeconds = (performance.now()-prepStart)/1000;
+      // Start after the primary already owns the new file, commit and index.
+      const advanceApfsBefore = calibration?.available === true ? observe(root) : undefined;
       const beforeAdvance = free();
       const target = join(root,'agent-2');
       const args = arm === 'native' ? ['worktree','add','-b','graft/agent-2',target,advanced]
@@ -244,8 +246,13 @@ try {
       for (const [name,expected] of [[staged,'unstaged data\n'],[untracked,'untracked data\n'],[ignored,'ignored data\n'],[file,content]])
         assert.equal(readFileSync(join(primary,name),'utf8'),expected);
       const storage = receipt ? objectResult(receipt.storage) : undefined;
+      const advanceApfsAfter = advanceApfsBefore?.available === true ? observe(root) : undefined;
+      const apfs = typeof advanceApfsBefore?.bytes === 'string' && typeof advanceApfsAfter?.bytes === 'string'
+        ? {additionalCheckoutBytes:(BigInt(advanceApfsAfter.bytes)-BigInt(advanceApfsBefore.bytes)).toString(),
+          observerSeconds:advanceApfsBefore.observerSeconds+advanceApfsAfter.observerSeconds}
+        : values['apfs-file-data'] ? {unavailable:calibration?.reason ?? advanceApfsBefore?.reason ?? advanceApfsAfter?.reason ?? 'observer-failed'} : undefined;
       advanceBase = {head:advanced,tree:advancedTree,preparationSeconds,seconds,resources:useResources ? resources(result.stderr) : null,deltaBytes,
-        sourceStorage:storage ? sourceReceipt(storage) : undefined,objectBootstrap:storage ? objectBootstrap(storage.objects,values['include-revisions'] === true) : undefined};
+        apfs,sourceStorage:storage ? sourceReceipt(storage) : undefined,objectBootstrap:storage ? objectBootstrap(storage.objects,values['include-revisions'] === true) : undefined};
     }
     rmSync(root,{recursive:true,force:true});
     return {cloneSeconds,cold:samples[0],repeat:samples[1],apfs,...(advanceBase ? {advanceBase} : {})};
