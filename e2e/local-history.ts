@@ -47,12 +47,43 @@ function read(path: string, file: string): string {
 
 export const cases: Scenario[] = [
   {
+    name: 'a failed tip export leaves an unpublished index and a recoverable workspace',
+    run(ctx) {
+      const tip = commitFile(ctx, ctx.repo, 'selected', 'content missing from the export\n');
+      const blob = ctx.git(['rev-parse', tip + ':selected']);
+      const loose = join(ctx.repo, '.git', 'objects', blob.slice(0, 2), blob.slice(2));
+      const held = join(ctx.root, 'held-blob');
+      renameSync(loose, held);
+      let failure;
+      try {
+        failure = ctx.fail(['spawn', 'incomplete', '--base', tip, '--history', 'tip']);
+      } finally {
+        renameSync(held, loose);
+      }
+      assert.equal(failure.code, 'spawn_incomplete');
+      const {path, lease} = objectResult(failure.details);
+      assert(typeof path === 'string' && typeof lease === 'string');
+      assert(!existsSync(join(path, '.git', 'index')));
+      writeFileSync(join(path, 'my-recovery-note'), 'retain this file\n');
+      const args = ['incomplete', '--lease', lease];
+      ctx.cli(['drop', ...args, '--discard']);
+      assert(!existsSync(path));
+      const restored = ctx.cli(['restore', ...args]);
+      assert.equal(restored.path, path);
+      assert.equal(read(path, 'my-recovery-note'), 'retain this file\n');
+      assert.equal(read(ctx.repo, 'selected'), 'content missing from the export\n');
+      assert.equal(ctx.git(['rev-parse', 'HEAD']), tip);
+      assert.equal(ctx.git(['status', '--porcelain']), '');
+    },
+  },
+  {
     name: 'cold tip checkout preserves dirty donor files and falls back for a missing file',
     run(ctx) {
       ctx.git(['config', 'core.autocrlf', 'false']);
       writeFileSync(join(ctx.repo, '.gitattributes'), '*.txt text eol=crlf\n');
       writeFileSync(join(ctx.repo, 'converted.txt'), 'selected\n');
-      ctx.git(['add', '.gitattributes', 'converted.txt']);
+      writeFileSync(join(ctx.repo, 'plain'), 'original\n');
+      ctx.git(['add', '.gitattributes', 'converted.txt', 'plain']);
       const link = looseBlob(ctx, ctx.repo, 'link-target', 'converted.txt');
       ctx.git(['update-index', '--add', '--cacheinfo', '120000', link, 'selected-link']);
       ctx.git(['commit', '-qm', 'selected checkout']);
@@ -68,8 +99,11 @@ export const cases: Scenario[] = [
       ctx.git(['checkout', '-q', '--detach', base], reference);
       assert.equal(read(reference, 'converted.txt'), 'selected\r\n');
 
-      ctx.git(['update-index', '--assume-unchanged', 'tracked.txt']);
+      ctx.git(['update-index', '--assume-unchanged', 'tracked.txt', 'plain']);
       writeFileSync(join(ctx.repo, 'tracked.txt'), 'changed\n');
+      // This same-sized edit is eligible for direct cloning until its bytes are hashed.
+      writeFileSync(join(ctx.repo, 'plain'), 'modified\n');
+      unlinkSync(join(ctx.repo, 'converted.txt'));
       writeFileSync(join(ctx.repo, 'staged.txt'), 'staged only\n');
       ctx.git(['add', 'staged.txt']);
       const staged = ctx.git(['rev-parse', ':staged.txt']);
@@ -89,7 +123,7 @@ export const cases: Scenario[] = [
         assert.equal(ctx.git(['rev-parse', 'HEAD^{tree}'], path), tree);
         assert.deepEqual(objects(ctx, path), expected);
         assert([unrelated, staged, orphan].every(id => !objects(ctx, path).includes(id)));
-        for (const file of ['tracked.txt', 'converted.txt', '.gitattributes']) {
+        for (const file of ['plain', 'tracked.txt', 'converted.txt', '.gitattributes']) {
           assert.deepEqual(readFileSync(join(path, file)), readFileSync(join(reference, file)), file);
         }
         const expectedLink = join(reference, 'selected-link');
@@ -101,6 +135,8 @@ export const cases: Scenario[] = [
         assertSeparateRegularFiles([index, join(path, '.git', 'index')]);
         assert.deepEqual(readFileSync(index), indexBytes);
         assert.deepEqual(readFileSync(dirty), originalBytes);
+        assert.equal(read(ctx.repo, 'plain'), 'modified\n');
+        assert(!existsSync(join(ctx.repo, 'converted.txt')));
         const after = lstatSync(dirty, { bigint: true });
         assert.deepEqual([after.dev, after.ino, after.mode, after.size, after.mtimeNs, after.ctimeNs],
           [before.dev, before.ino, before.mode, before.size, before.mtimeNs, before.ctimeNs]);
@@ -114,8 +150,6 @@ export const cases: Scenario[] = [
       check(first.path, 'cold-tip');
       assertSeparateRegularFiles([dirty, join(first.path, 'tracked.txt')]);
 
-      // The selected path is absent in the donor, so checkout must materialize it from Git.
-      unlinkSync(join(ctx.repo, 'converted.txt'));
       const fallback = ctx.spawn('missing-tip', ['--history', 'tip', '--base', base]);
       check(fallback.path, 'missing-tip');
       assert(!existsSync(join(ctx.repo, 'converted.txt')));
