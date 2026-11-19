@@ -1,6 +1,6 @@
 /** Public registration and reuse contracts, using a local synthetic package manager. */
 import assert from 'node:assert/strict';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { objectResult, type Scenario } from './harness.ts';
 
@@ -33,8 +33,124 @@ function registered(receipt: Record<string, unknown>) {
   assert(Array.isArray(storage.registered_dependencies));
   return storage.registered_dependencies.map(objectResult).find(item => item.manager === manager);
 }
+function purgeFixture(ctx: Context) {
+  writeFileSync(join(ctx.repo, 'fixture.lock'), 'locked\n');
+  writeFileSync(join(ctx.repo, '.gitignore'), 'vendor/\n');
+  ctx.git(['add', 'fixture.lock', '.gitignore']);
+  ctx.git(['commit', '-qm', 'purge fixture']);
+  mkdirSync(join(ctx.repo, 'vendor/bundle'), { recursive: true });
+  writeFileSync(join(ctx.repo, 'vendor/bundle/package'), 'original package');
+  const args = registration(ctx, ['--install-dir', 'vendor/bundle', '--input', 'fixture.lock', '--key', 'purge']);
+  ctx.cli(args);
+  const native = objectResult(ctx.cli(['doctor']).source_storage).native_clone;
+  assert.equal(typeof native, 'boolean');
+  ctx.measure('native_clone', native);
+  const state = join(ctx.repo, '.git', 'graft');
+  const root = join(state, 'registered-installs');
+  const generations = existsSync(root) ? readdirSync(root).filter(name => /^[a-f0-9]{64}$/.test(name)) : [];
+  return { args, native, state, root, generations };
+}
 
 export const cases: Scenario[] = [{
+  name: 'registered install purge previews and retains unverified data while allowing reseed',
+  run(ctx) {
+    const fixture = purgeFixture(ctx);
+    if (!fixture.native) return;
+    assert.equal(fixture.generations.length, 1);
+    const generation = join(fixture.root, fixture.generations[0]);
+    const active = ctx.spawn('purge-active');
+    assert.equal(registered(active.result)?.status, 'attached');
+    for (const flags of [[], ['--apply']]) {
+      const live = objectResult(ctx.cli(['gc', '--purge-cache', ...flags]).cache);
+      assert.equal(live.eligible, false);
+      assert.equal(live.purged, false);
+      assert(existsSync(generation));
+    }
+    ctx.cli(['drop', 'purge-active', '--lease', active.lease, '--discard']);
+    const foreign = join(fixture.root, 'foreign-user-directory');
+    mkdirSync(foreign);
+    writeFileSync(join(foreign, 'keep'), 'user data');
+    const secondArgs = [...fixture.args];
+    secondArgs[1] = 'second-manager';
+    secondArgs[secondArgs.indexOf('--key') + 1] = 'second-purge';
+    ctx.cli(secondArgs);
+    const changedName = readdirSync(fixture.root).find(name => /^[a-f0-9]{64}$/.test(name) && name !== fixture.generations[0]);
+    assert(changedName);
+    const changed = join(fixture.root, changedName);
+    writeFileSync(join(changed, 'tree', 'package'), 'modified data');
+    for (const flags of [[], ['--apply']]) {
+      const receipt = objectResult(ctx.cli(['gc', '--purge-cache', ...flags]).cache);
+      assert(Array.isArray(receipt.candidates) && receipt.candidates.includes(generation));
+      assert(Array.isArray(receipt.blocked));
+      assert(receipt.blocked.map(objectResult).some(item => item.path === foreign));
+      assert(receipt.blocked.map(objectResult).some(item => item.path === changed));
+      assert.equal(readFileSync(join(foreign, 'keep'), 'utf8'), 'user data');
+      assert.equal(readFileSync(join(changed, 'tree', 'package'), 'utf8'), 'modified data');
+      assert.equal(existsSync(generation), flags.length === 0);
+      assert(Array.isArray(receipt.removed));
+      assert.equal(receipt.removed.includes(generation), flags.length > 0);
+    }
+    ctx.cli(fixture.args);
+    const reseeded = ctx.spawn('purge-reseeded');
+    assert.equal(registered(reseeded.result)?.status, 'attached');
+    assert.equal(readFileSync(join(reseeded.path, 'vendor/bundle/package'), 'utf8'), 'original package');
+    assert.equal(readFileSync(join(foreign, 'keep'), 'utf8'), 'user data');
+  },
+}, {
+  name: 'byte-identical replacement cannot replay original or copied install attestation',
+  run(ctx) {
+    const fixture = purgeFixture(ctx);
+    if (!fixture.native) return;
+    assert.equal(fixture.generations.length, 1);
+    const digest = fixture.generations[0];
+    const generation = join(fixture.root, digest);
+    const binding = join(fixture.state, `registered-install-${digest}-v1.json`);
+    const original = join(ctx.root, 'original generation');
+    renameSync(generation, original);
+    cpSync(original, generation, { recursive: true, preserveTimestamps: true });
+    const check = (name: string) => {
+      const ws = ctx.spawn(name);
+      assert.notEqual(registered(ws.result)?.status, 'attached');
+      assert(!existsSync(join(ws.path, 'vendor/bundle')));
+      ctx.cli(['drop', name, '--lease', ws.lease]);
+      for (const flags of [[], ['--apply']]) {
+        const receipt = objectResult(ctx.cli(['gc', '--purge-cache', ...flags]).cache);
+        assert(Array.isArray(receipt.blocked) && receipt.blocked.map(objectResult).some(item => item.path === generation));
+        assert(existsSync(join(generation, 'tree', 'package')));
+        assert.equal(readFileSync(join(original, 'tree', 'package'), 'utf8'), 'original package');
+      }
+    };
+    check('original-attestation');
+    const originalBinding = join(ctx.root, 'original binding');
+    renameSync(binding, originalBinding);
+    copyFileSync(originalBinding, binding);
+    check('copied-attestation');
+  },
+}, {
+  name: 'modified install trees are not attached',
+  run(ctx) {
+    const fixture = purgeFixture(ctx);
+    if (!fixture.native) return;
+    assert.equal(fixture.generations.length, 1);
+    const generation = join(fixture.root, fixture.generations[0]);
+    const cached = join(generation, 'tree', 'package');
+    writeFileSync(cached, 'tampered package');
+    const tampered = ctx.spawn('install-tampered');
+    assert.notEqual(registered(tampered.result)?.status, 'attached');
+    assert(!existsSync(join(tampered.path, 'vendor/bundle/package')));
+  },
+}, {
+  name: 'forged install provenance is not attached',
+  run(ctx) {
+    const fixture = purgeFixture(ctx);
+    if (!fixture.native) return;
+    assert.equal(fixture.generations.length, 1);
+    writeFileSync(join(fixture.root, fixture.generations[0], 'provenance.json'), '{"forged":true}');
+    const forged = ctx.spawn('install-forged');
+    assert.notEqual(registered(forged.result)?.status, 'attached');
+    assert(!existsSync(join(forged.path, 'vendor/bundle/package')));
+  },
+}, {
   name: 'registered cache is project-scoped and shared by explicit and implicit execution',
   run(ctx) {
     const args = registration(ctx);
@@ -140,24 +256,6 @@ export const cases: Scenario[] = [{
       assert.equal(readFileSync(join(tree, 'package'), 'utf8'), 'original package');
       const opted = ctx.spawn('install-opted', ['--no-deps']);
       assert(!existsSync(join(opted.path, 'vendor/bundle')));
-      const layers = join(ctx.repo, '.git', 'graft', 'registered-installs');
-      const generations = readdirSync(layers).filter(name => /^[a-f0-9]{64}$/.test(name));
-      assert.equal(generations.length, 1);
-      const generation = join(layers, generations[0]);
-      const cached = join(generation, 'tree', 'package');
-      const provenance = join(generation, 'provenance.json');
-      const contents = readFileSync(cached);
-      const proof = readFileSync(provenance);
-      writeFileSync(cached, 'tampered package');
-      const tampered = ctx.spawn('install-tampered');
-      assert.notEqual(registered(tampered.result)?.status, 'attached');
-      assert(!existsSync(join(tampered.path, 'vendor/bundle/package')));
-      writeFileSync(cached, contents);
-      writeFileSync(provenance, '{"forged":true}');
-      const forged = ctx.spawn('install-forged');
-      assert.notEqual(registered(forged.result)?.status, 'attached');
-      assert(!existsSync(join(forged.path, 'vendor/bundle/package')));
-      writeFileSync(provenance, proof);
       writeFileSync(join(tree, 'package'), 'tracked collision');
       ctx.git(['add', '-f', 'vendor/bundle/package']);
       ctx.git(['commit', '-qm', 'tracked install collision']);
