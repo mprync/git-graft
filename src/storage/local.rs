@@ -88,11 +88,14 @@ struct LocalCheckout<'a> {
     scratch: tempfile::TempDir,
     index: PathBuf,
     index_lock: tempfile::TempPath,
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     proof_objects: Option<&'a Path>,
 }
 
 impl<'a> LocalCheckout<'a> {
     fn reserve(worktree: &'a Path, proof_objects: Option<&'a Path>) -> Result<Self> {
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+        let _ = proof_objects;
         ensure_empty(worktree)?;
         let admin = worktree.join(".git");
         let index_lock = admin.join("index.lock");
@@ -115,10 +118,12 @@ impl<'a> LocalCheckout<'a> {
             scratch,
             index,
             index_lock,
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             proof_objects,
         })
     }
 
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     fn proof_command(&self) -> Command {
         let mut command = self.command();
         if let Some(objects) = self.proof_objects {

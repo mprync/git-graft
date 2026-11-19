@@ -844,7 +844,9 @@ mod tests {
                 Some(&base),
                 Some("topic"),
                 History::Local,
-            )?;
+                false,
+            )?
+            .0;
             assert_eq!(git::oid(&workspace, "HEAD")?, base);
             assert!(run(&workspace, &["remote"])?.is_empty());
             assert_eq!(
@@ -954,7 +956,9 @@ mod tests {
                 Some(&base),
                 None,
                 History::Local,
-            )?;
+                false,
+            )?
+            .0;
             assert_ne!(receipt["source"], "local-snapshot", "{name}: {receipt}");
             assert!(receipt["source"].is_string(), "{receipt}");
             assert!(run(&workspace, &["cat-file", "-e", &staged]).is_err());

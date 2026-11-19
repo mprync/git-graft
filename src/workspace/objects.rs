@@ -325,7 +325,8 @@ pub(super) fn initialize(
     base: Option<&str>,
     branch: Option<&str>,
     history: History,
-) -> Result<Value> {
+    allow_early_checkout: bool,
+) -> Result<(Value, Option<Value>)> {
     require_pristine(root)?;
     let Primary {
         path: primary,
@@ -357,9 +358,10 @@ pub(super) fn initialize(
     )?;
     let Some(base) = base else {
         copy_config(primary, root)?;
-        return Ok(
+        return Ok((
             json!({"method": "none", "source": "none", "bytes": 0, "pack_bytes": 0, "index_bytes": 0, "shared_bytes": 0, "cache_bytes": 0, "object_format": format}),
-        );
+            None,
+        ));
     };
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     let snapshot = if history == History::Local {
@@ -377,22 +379,49 @@ pub(super) fn initialize(
             } else {
                 shallow::initialize(primary, root, &base)?
             };
-            history::bootstrap(
-                primary,
-                root,
-                state,
-                format,
-                &base,
-                boundary.as_ref().map(shallow::Boundary::history),
-            )?
+            let boundary = boundary.as_ref().map(shallow::Boundary::history);
+            if allow_early_checkout
+                && history == History::Tip
+                && let Some(boundary) = &boundary
+                && history::tip::eligible(state, format, boundary)
+            {
+                return history::tip::checkout(
+                    source,
+                    root,
+                    state,
+                    &base,
+                    branch_ref.as_deref().unwrap_or("HEAD"),
+                    boundary,
+                );
+            }
+            history::bootstrap(primary, root, state, format, &base, boundary)?
         }
     };
-    let head = branch_ref.as_deref().unwrap_or("HEAD");
-    run(root, &["update-ref", "--no-deref", head, &base])?;
+    finish_head(
+        primary,
+        root,
+        branch_ref.as_deref().unwrap_or("HEAD"),
+        &base,
+        None,
+    )?;
+    Ok((receipt, None))
+}
+
+fn finish_head(
+    primary: &Path,
+    root: &Path,
+    reference: &str,
+    base: &str,
+    objects: Option<&Path>,
+) -> Result<()> {
+    let mut head = transfer_git(root);
+    if let Some(objects) = objects {
+        head.env("GIT_OBJECT_DIRECTORY", objects);
+    }
+    head.args(["update-ref", "--no-deref", reference, base]);
+    checked(head)?;
     // includeIf.onbranch must observe the final branch or detached HEAD.
-    copy_config(primary, root)?;
-    // The checkout phase owns index and worktree population.
-    Ok(receipt)
+    copy_config(primary, root)
 }
 
 pub(super) fn open_regular(path: &Path) -> io::Result<File> {
@@ -848,7 +877,9 @@ mod tests {
             base,
             branch,
             History::Isolated,
+            false,
         )
+        .map(|(objects, _)| objects)
     }
 
     fn commit(repo: &Path, text: &str) -> Result<String> {

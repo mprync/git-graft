@@ -211,16 +211,18 @@ fn spawn(p: &Project, origin: &Path, mut args: Spawn) -> Result<Value> {
     }
     let build = (|| -> Result<()> {
         registry::verify(p, &r)?;
-        let objects = objects::initialize(
+        let (objects, prepared_checkout) = objects::initialize(
             &source,
             &r.path,
             &p.state,
             base.as_deref(),
             branch.as_deref(),
             history,
+            !args.no_checkout && args.sparse.is_empty(),
         )?;
-        let mut checkout = match &base {
-            Some(oid) if !args.no_checkout => {
+        let mut checkout = match (prepared_checkout, &base) {
+            (Some(checkout), _) => checkout,
+            (None, Some(oid)) if !args.no_checkout => {
                 let materialize = if history != api::History::Isolated {
                     storage::materialize_local
                 } else {

@@ -20,11 +20,13 @@ use crate::{git, recovery::rename_exclusive};
 
 pub(super) mod cache;
 mod mixed;
+pub(super) mod tip;
 pub(crate) use cache::{
     DIR as HISTORY_CACHE_DIR, MARKER as HISTORY_CACHE_MARKER, history_cache_root,
     verify_history_cache_generation,
 };
 
+#[derive(Clone, Copy)]
 pub(super) struct Boundary<'a> {
     pub(super) file: &'a Path,
     pub(super) cache_key: &'a str,
