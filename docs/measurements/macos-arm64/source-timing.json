@@ -6,13 +6,13 @@
   "git": "git version 2.56.0",
   "graftBinary": {
     "name": "git-graft",
-    "bytes": 3782384,
-    "sha256": "14d7a90df28888562ed5c912d3bef08d1283ce362289c4787b004e89e7d48144"
+    "bytes": 4031920,
+    "sha256": "054cc1f44f7fd52d7a453f3312dc9d8504eb0cf319961df5855fe0e3331edbfb"
   },
   "fixture": {
-    "head": "ee27039af3e9c96a12c7598e16a619c7b2c8b380",
-    "tree": "39fa37647edb2bef71880effae904210bef354e1",
-    "sha256": "da9acf37ef85ba28b8c14d9e4689b3676159ac4652e6d6fd9f6b2ec108c32726",
+    "head": "2cd0589db94bccfd7df2804750e9d4de145bced7",
+    "tree": "7af8f61ec566cadddbe40db0e7a930b5afc5e059",
+    "sha256": "8e97d5e11b54e50196f7a0bed391aab36864f7144053803a96e1bda9243d9fbd",
     "trackedFiles": 4005,
     "smallFiles": 4000,
     "largeFiles": 3,
@@ -24,16 +24,16 @@
   "scope": "Cold is the first spawn in a fresh primary with no workspace state. Repeat follows immediately in that primary. Wall time covers only the Git or Graft CLI process. Fixture creation, validation, mutation after spawn, and disk observations are excluded. Signed disk deltas use volume-wide statfs. Optional APFS deltas count mapped regular-file allocation blocks once and exclude metadata, xattrs, and forks. Omit APFS scans for timing-only runs because scans can warm metadata caches.",
   "summary": {
     "native": {
-      "coldSeconds": 0.3021368340000008,
-      "repeatSeconds": 0.30030370900000164,
-      "coldStatfsBytes": 43827200,
-      "repeatStatfsBytes": 88317952
+      "coldSeconds": 0.30079654100000064,
+      "repeatSeconds": 0.3359551250000004,
+      "coldStatfsBytes": 43544576,
+      "repeatStatfsBytes": 87310336
     },
     "graft": {
-      "coldSeconds": 0.979867792000001,
-      "repeatSeconds": 0.6019856670000008,
-      "coldStatfsBytes": 19943424,
-      "repeatStatfsBytes": 38600704
+      "coldSeconds": 2.361420000000002,
+      "repeatSeconds": 1.1145065000000014,
+      "coldStatfsBytes": 4911104,
+      "repeatStatfsBytes": 301457408
     }
   },
   "runs": [
@@ -45,60 +45,60 @@
       "results": {
         "native": {
           "cold": {
-            "seconds": 0.30219450000000053,
-            "bytesSincePopulatedCheckout": "43827200"
+            "seconds": 0.30079654100000064,
+            "bytesSincePopulatedCheckout": "43544576"
           },
           "repeat": {
-            "seconds": 0.31758637499999987,
-            "bytesSincePopulatedCheckout": "88317952"
+            "seconds": 0.281049,
+            "bytesSincePopulatedCheckout": "87310336"
           },
-          "editedHead": "3a4cf70136c46d527195753552309c1277a22b0c"
+          "editedHead": "c0aff0412cd5a59f5ff3ce93c4d116e4752d79dd"
         },
         "graft": {
           "cold": {
-            "seconds": 0.9993008749999999,
-            "bytesSincePopulatedCheckout": "19202048",
+            "seconds": 1.9194015419999997,
+            "bytesSincePopulatedCheckout": "4911104",
             "objectBootstrap": {
               "method": "clonefile",
               "source": "primary-pack",
               "object_format": "sha1",
-              "bytes": 34306559,
-              "pack_bytes": 34191387,
+              "bytes": 34306472,
+              "pack_bytes": 34191300,
               "index_bytes": 115172,
-              "shared_bytes": 34306559,
-              "cache_bytes": 34306559,
+              "shared_bytes": 34306472,
+              "cache_bytes": 34306472,
               "pack_count": 1,
               "reused_primary_packs": 1,
-              "reused_primary_bytes": 34306559,
+              "reused_primary_bytes": 34306472,
               "timings": {
-                "cache_publish_seconds": 0.057819875,
-                "reachability_seconds": 0.007445292,
-                "transfer_seconds": 0.131287166,
-                "verify_seconds": 0.009223292,
-                "total_seconds": 0.215946708
+                "cache_publish_seconds": 0.048604584,
+                "reachability_seconds": 0.006792958,
+                "transfer_seconds": 0.128021667,
+                "verify_seconds": 0.006675708,
+                "total_seconds": 0.203250417
               }
             }
           },
           "repeat": {
-            "seconds": 0.6019856670000008,
-            "bytesSincePopulatedCheckout": "37949440",
+            "seconds": 1.3178633750000008,
+            "bytesSincePopulatedCheckout": "301457408",
             "objectBootstrap": {
               "method": "clonefile",
               "source": "cache",
               "object_format": "sha1",
-              "bytes": 34306559,
-              "pack_bytes": 34191387,
+              "bytes": 34306472,
+              "pack_bytes": 34191300,
               "index_bytes": 115172,
-              "shared_bytes": 34306559,
+              "shared_bytes": 34306472,
               "cache_bytes": 0,
               "pack_count": 1,
               "timings": {
-                "cache_seconds": 0.020732292,
-                "total_seconds": 0.035584958
+                "cache_seconds": 0.021146541,
+                "total_seconds": 0.045486541
               }
             }
           },
-          "editedHead": "3a4cf70136c46d527195753552309c1277a22b0c"
+          "editedHead": "c0aff0412cd5a59f5ff3ce93c4d116e4752d79dd"
         }
       }
     },
@@ -110,60 +110,60 @@
       "results": {
         "graft": {
           "cold": {
-            "seconds": 0.9462302080000009,
-            "bytesSincePopulatedCheckout": "23171072",
+            "seconds": 2.871414708,
+            "bytesSincePopulatedCheckout": "728297472",
             "objectBootstrap": {
               "method": "clonefile",
               "source": "primary-pack",
               "object_format": "sha1",
-              "bytes": 34306559,
-              "pack_bytes": 34191387,
+              "bytes": 34306472,
+              "pack_bytes": 34191300,
               "index_bytes": 115172,
-              "shared_bytes": 34306559,
-              "cache_bytes": 34306559,
+              "shared_bytes": 34306472,
+              "cache_bytes": 34306472,
               "pack_count": 1,
               "reused_primary_packs": 1,
-              "reused_primary_bytes": 34306559,
+              "reused_primary_bytes": 34306472,
               "timings": {
-                "cache_publish_seconds": 0.075099583,
-                "reachability_seconds": 0.007401041,
-                "transfer_seconds": 0.12761325,
-                "verify_seconds": 0.006925791,
-                "total_seconds": 0.227235958
+                "cache_publish_seconds": 0.070633042,
+                "reachability_seconds": 0.006916083,
+                "transfer_seconds": 0.132062417,
+                "verify_seconds": 0.006942625,
+                "total_seconds": 0.234761125
               }
             }
           },
           "repeat": {
-            "seconds": 0.6019458340000001,
-            "bytesSincePopulatedCheckout": "43106304",
+            "seconds": 1.1145065000000014,
+            "bytesSincePopulatedCheckout": "781553664",
             "objectBootstrap": {
               "method": "clonefile",
               "source": "cache",
               "object_format": "sha1",
-              "bytes": 34306559,
-              "pack_bytes": 34191387,
+              "bytes": 34306472,
+              "pack_bytes": 34191300,
               "index_bytes": 115172,
-              "shared_bytes": 34306559,
+              "shared_bytes": 34306472,
               "cache_bytes": 0,
               "pack_count": 1,
               "timings": {
-                "cache_seconds": 0.02084575,
-                "total_seconds": 0.037496291
+                "cache_seconds": 0.021457667,
+                "total_seconds": 0.054016834
               }
             }
           },
-          "editedHead": "3a4cf70136c46d527195753552309c1277a22b0c"
+          "editedHead": "c0aff0412cd5a59f5ff3ce93c4d116e4752d79dd"
         },
         "native": {
           "cold": {
-            "seconds": 0.3004240829999999,
-            "bytesSincePopulatedCheckout": "42856448"
+            "seconds": 0.3448248749999984,
+            "bytesSincePopulatedCheckout": "42000384"
           },
           "repeat": {
-            "seconds": 0.30030370900000164,
-            "bytesSincePopulatedCheckout": "86499328"
+            "seconds": 0.3656545409999999,
+            "bytesSincePopulatedCheckout": "75411456"
           },
-          "editedHead": "3a4cf70136c46d527195753552309c1277a22b0c"
+          "editedHead": "c0aff0412cd5a59f5ff3ce93c4d116e4752d79dd"
         }
       }
     },
@@ -175,60 +175,60 @@
       "results": {
         "native": {
           "cold": {
-            "seconds": 0.3021368340000008,
-            "bytesSincePopulatedCheckout": "45510656"
+            "seconds": 0.29310762500000054,
+            "bytesSincePopulatedCheckout": "43749376"
           },
           "repeat": {
-            "seconds": 0.29714474999999946,
-            "bytesSincePopulatedCheckout": "89276416"
+            "seconds": 0.3359551250000004,
+            "bytesSincePopulatedCheckout": "87666688"
           },
-          "editedHead": "3a4cf70136c46d527195753552309c1277a22b0c"
+          "editedHead": "c0aff0412cd5a59f5ff3ce93c4d116e4752d79dd"
         },
         "graft": {
           "cold": {
-            "seconds": 0.979867792000001,
-            "bytesSincePopulatedCheckout": "19943424",
+            "seconds": 2.361420000000002,
+            "bytesSincePopulatedCheckout": "4538368",
             "objectBootstrap": {
               "method": "clonefile",
               "source": "primary-pack",
               "object_format": "sha1",
-              "bytes": 34306559,
-              "pack_bytes": 34191387,
+              "bytes": 34306472,
+              "pack_bytes": 34191300,
               "index_bytes": 115172,
-              "shared_bytes": 34306559,
-              "cache_bytes": 34306559,
+              "shared_bytes": 34306472,
+              "cache_bytes": 34306472,
               "pack_count": 1,
               "reused_primary_packs": 1,
-              "reused_primary_bytes": 34306559,
+              "reused_primary_bytes": 34306472,
               "timings": {
-                "cache_publish_seconds": 0.056849042,
-                "reachability_seconds": 0.007417209,
-                "transfer_seconds": 0.130353709,
-                "verify_seconds": 0.006732833,
-                "total_seconds": 0.21820625
+                "cache_publish_seconds": 0.048002083,
+                "reachability_seconds": 0.006973625,
+                "transfer_seconds": 0.130111375,
+                "verify_seconds": 0.006180708,
+                "total_seconds": 0.201122208
               }
             }
           },
           "repeat": {
-            "seconds": 0.6075694589999985,
-            "bytesSincePopulatedCheckout": "38600704",
+            "seconds": 1.0987859580000003,
+            "bytesSincePopulatedCheckout": "7577600",
             "objectBootstrap": {
               "method": "clonefile",
               "source": "cache",
               "object_format": "sha1",
-              "bytes": 34306559,
-              "pack_bytes": 34191387,
+              "bytes": 34306472,
+              "pack_bytes": 34191300,
               "index_bytes": 115172,
-              "shared_bytes": 34306559,
+              "shared_bytes": 34306472,
               "cache_bytes": 0,
               "pack_count": 1,
               "timings": {
-                "cache_seconds": 0.020418709,
-                "total_seconds": 0.0360705
+                "cache_seconds": 0.021267333,
+                "total_seconds": 0.040687125
               }
             }
           },
-          "editedHead": "3a4cf70136c46d527195753552309c1277a22b0c"
+          "editedHead": "c0aff0412cd5a59f5ff3ce93c4d116e4752d79dd"
         }
       }
     }

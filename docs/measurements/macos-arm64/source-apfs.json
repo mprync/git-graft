@@ -6,13 +6,13 @@
   "git": "git version 2.56.0",
   "graftBinary": {
     "name": "git-graft",
-    "bytes": 3782384,
-    "sha256": "14d7a90df28888562ed5c912d3bef08d1283ce362289c4787b004e89e7d48144"
+    "bytes": 4031920,
+    "sha256": "054cc1f44f7fd52d7a453f3312dc9d8504eb0cf319961df5855fe0e3331edbfb"
   },
   "fixture": {
-    "head": "c6db18e2350dc7a296454719bc50750f4d3b4183",
-    "tree": "a299cd602df0c035d558e34039e5874664093659",
-    "sha256": "adba58c1bcf37c3cff98836b41ae1106204e04b48d6404d20925644bba455537",
+    "head": "e1b25e6ed0b64b8d1efbc1a01388c459b8a13aa5",
+    "tree": "a67f1fe8421a43c7b334bef0cb6ff2f85b6b860f",
+    "sha256": "d36951d968fb20661bd292f6e5ad34f10def23b08ecd6559ceeb0eac77056e18",
     "trackedFiles": 4005,
     "smallFiles": 4000,
     "largeFiles": 3,
@@ -22,23 +22,23 @@
     "repeats": 3
   },
   "apfsCalibration": {
-    "observerSeconds": 0.19906012499999998
+    "observerSeconds": 0.0822766670000001
   },
   "scope": "Cold is the first spawn in a fresh primary with no workspace state. Repeat follows immediately in that primary. Wall time covers only the Git or Graft CLI process. Fixture creation, validation, mutation after spawn, and disk observations are excluded. Signed disk deltas use volume-wide statfs. Optional APFS deltas count mapped regular-file allocation blocks once and exclude metadata, xattrs, and forks. Omit APFS scans for timing-only runs because scans can warm metadata caches.",
   "summary": {
     "native": {
-      "coldSeconds": 0.3462582500000026,
-      "repeatSeconds": 0.3138824160000004,
-      "coldStatfsBytes": 43347968,
-      "repeatStatfsBytes": 87035904,
+      "coldSeconds": 1.3655263340000001,
+      "repeatSeconds": 1.5189259159999928,
+      "coldStatfsBytes": 47620096,
+      "repeatStatfsBytes": 88764416,
       "apfsRepeatBytes": 83943424
     },
     "graft": {
-      "coldSeconds": 1.1104035000000003,
-      "repeatSeconds": 0.7125707500000008,
-      "coldStatfsBytes": 128585728,
-      "repeatStatfsBytes": 147525632,
-      "apfsRepeatBytes": 33640448
+      "coldSeconds": 6.2007815410000005,
+      "repeatSeconds": 2.838457625000003,
+      "coldStatfsBytes": 445546496,
+      "repeatStatfsBytes": 494534656,
+      "apfsRepeatBytes": 2150400
     }
   },
   "runs": [
@@ -50,71 +50,71 @@
       "results": {
         "native": {
           "cold": {
-            "seconds": 0.2953129169999993,
-            "bytesSincePopulatedCheckout": "43745280"
+            "seconds": 1.3655263340000001,
+            "bytesSincePopulatedCheckout": "79093760"
           },
           "repeat": {
-            "seconds": 0.3138824160000004,
-            "bytesSincePopulatedCheckout": "87601152"
+            "seconds": 1.4503884159999998,
+            "bytesSincePopulatedCheckout": "165564416"
           },
-          "editedHead": "21ca0b6c988650bf32581f6ff13675c6a55631d4",
+          "editedHead": "f7e454caf50e2ffb88cc0b14f2843d1d37dfed95",
           "apfsFileData": {
             "baselineBytes": "76316672",
             "repeatBytes": "160260096",
             "repeatBytesSincePopulatedCheckout": "83943424",
-            "observerSeconds": 0.6825050830000009
+            "observerSeconds": 0.6046479999999992
           }
         },
         "graft": {
           "cold": {
-            "seconds": 1.1104035000000003,
-            "bytesSincePopulatedCheckout": "369950720",
+            "seconds": 6.2007815410000005,
+            "bytesSincePopulatedCheckout": "473935872",
             "objectBootstrap": {
               "method": "clonefile",
               "source": "primary-pack",
               "object_format": "sha1",
-              "bytes": 34306406,
-              "pack_bytes": 34191234,
+              "bytes": 34306258,
+              "pack_bytes": 34191086,
               "index_bytes": 115172,
-              "shared_bytes": 34306406,
-              "cache_bytes": 34306406,
+              "shared_bytes": 34306258,
+              "cache_bytes": 34306258,
               "pack_count": 1,
               "reused_primary_packs": 1,
-              "reused_primary_bytes": 34306406,
+              "reused_primary_bytes": 34306258,
               "timings": {
-                "cache_publish_seconds": 0.066518208,
-                "reachability_seconds": 0.007827167,
-                "transfer_seconds": 0.1329445,
-                "verify_seconds": 0.007224417,
-                "total_seconds": 0.233800125
+                "cache_publish_seconds": 0.085647417,
+                "reachability_seconds": 0.008845459,
+                "transfer_seconds": 0.15219375,
+                "verify_seconds": 0.0133495,
+                "total_seconds": 0.286665041
               }
             }
           },
           "repeat": {
-            "seconds": 0.7493548329999994,
-            "bytesSincePopulatedCheckout": "630435840",
+            "seconds": 2.636095042000001,
+            "bytesSincePopulatedCheckout": "766267392",
             "objectBootstrap": {
               "method": "clonefile",
               "source": "cache",
               "object_format": "sha1",
-              "bytes": 34306406,
-              "pack_bytes": 34191234,
+              "bytes": 34306258,
+              "pack_bytes": 34191086,
               "index_bytes": 115172,
-              "shared_bytes": 34306406,
+              "shared_bytes": 34306258,
               "cache_bytes": 0,
               "pack_count": 1,
               "timings": {
-                "cache_seconds": 0.02227075,
-                "total_seconds": 0.048876667
+                "cache_seconds": 0.026456916,
+                "total_seconds": 0.049604375
               }
             }
           },
-          "editedHead": "21ca0b6c988650bf32581f6ff13675c6a55631d4",
+          "editedHead": "f7e454caf50e2ffb88cc0b14f2843d1d37dfed95",
           "apfsFileData": {
             "baselineBytes": "76316672",
-            "repeatBytes": "109957120",
-            "repeatBytesSincePopulatedCheckout": "33640448",
-            "observerSeconds": 0.9010539160000008
+            "repeatBytes": "78467072",
+            "repeatBytesSincePopulatedCheckout": "2150400",
+            "observerSeconds": 0.7514064590000016
           }
         }
       }
@@ -127,71 +127,71 @@
       "results": {
         "graft": {
           "cold": {
-            "seconds": 1.1543759580000006,
-            "bytesSincePopulatedCheckout": "128585728",
+            "seconds": 6.092891208000001,
+            "bytesSincePopulatedCheckout": "445546496",
             "objectBootstrap": {
               "method": "clonefile",
               "source": "primary-pack",
               "object_format": "sha1",
-              "bytes": 34306406,
-              "pack_bytes": 34191234,
+              "bytes": 34306258,
+              "pack_bytes": 34191086,
               "index_bytes": 115172,
-              "shared_bytes": 34306406,
-              "cache_bytes": 34306406,
+              "shared_bytes": 34306258,
+              "cache_bytes": 34306258,
               "pack_count": 1,
               "reused_primary_packs": 1,
-              "reused_primary_bytes": 34306406,
+              "reused_primary_bytes": 34306258,
               "timings": {
-                "cache_publish_seconds": 0.069706167,
-                "reachability_seconds": 0.007747083,
-                "transfer_seconds": 0.129169916,
-                "verify_seconds": 0.006516333,
-                "total_seconds": 0.233126625
+                "cache_publish_seconds": 0.101775709,
+                "reachability_seconds": 0.006919375,
+                "transfer_seconds": 0.133895333,
+                "verify_seconds": 0.005905375,
+                "total_seconds": 0.278261792
               }
             }
           },
           "repeat": {
-            "seconds": 0.7125707500000008,
-            "bytesSincePopulatedCheckout": "147525632",
+            "seconds": 2.838457625000003,
+            "bytesSincePopulatedCheckout": "494534656",
             "objectBootstrap": {
               "method": "clonefile",
               "source": "cache",
               "object_format": "sha1",
-              "bytes": 34306406,
-              "pack_bytes": 34191234,
+              "bytes": 34306258,
+              "pack_bytes": 34191086,
               "index_bytes": 115172,
-              "shared_bytes": 34306406,
+              "shared_bytes": 34306258,
               "cache_bytes": 0,
               "pack_count": 1,
               "timings": {
-                "cache_seconds": 0.021226208,
-                "total_seconds": 0.05066325
+                "cache_seconds": 0.030419083,
+                "total_seconds": 0.05682975
               }
             }
           },
-          "editedHead": "21ca0b6c988650bf32581f6ff13675c6a55631d4",
+          "editedHead": "f7e454caf50e2ffb88cc0b14f2843d1d37dfed95",
           "apfsFileData": {
             "baselineBytes": "76316672",
-            "repeatBytes": "109957120",
-            "repeatBytesSincePopulatedCheckout": "33640448",
-            "observerSeconds": 0.7727491259999988
+            "repeatBytes": "78467072",
+            "repeatBytesSincePopulatedCheckout": "2150400",
+            "observerSeconds": 0.792465541000005
           }
         },
         "native": {
           "cold": {
-            "seconds": 0.34897691699999994,
-            "bytesSincePopulatedCheckout": "43347968"
+            "seconds": 1.3122714999999954,
+            "bytesSincePopulatedCheckout": "12570624"
           },
           "repeat": {
-            "seconds": 0.502968458000003,
-            "bytesSincePopulatedCheckout": "85270528"
+            "seconds": 2.3085105419999965,
+            "bytesSincePopulatedCheckout": "63328256"
           },
-          "editedHead": "21ca0b6c988650bf32581f6ff13675c6a55631d4",
+          "editedHead": "f7e454caf50e2ffb88cc0b14f2843d1d37dfed95",
           "apfsFileData": {
             "baselineBytes": "76316672",
             "repeatBytes": "160260096",
             "repeatBytesSincePopulatedCheckout": "83943424",
-            "observerSeconds": 0.6900348749999976
+            "observerSeconds": 0.6214051670000045
           }
         }
       }
@@ -204,71 +204,71 @@
       "results": {
         "native": {
           "cold": {
-            "seconds": 0.3462582500000026,
-            "bytesSincePopulatedCheckout": "43347968"
+            "seconds": 1.5638344579999974,
+            "bytesSincePopulatedCheckout": "47620096"
           },
           "repeat": {
-            "seconds": 0.2929641249999986,
-            "bytesSincePopulatedCheckout": "87035904"
+            "seconds": 1.5189259159999928,
+            "bytesSincePopulatedCheckout": "88764416"
           },
-          "editedHead": "21ca0b6c988650bf32581f6ff13675c6a55631d4",
+          "editedHead": "f7e454caf50e2ffb88cc0b14f2843d1d37dfed95",
           "apfsFileData": {
             "baselineBytes": "76316672",
             "repeatBytes": "160260096",
             "repeatBytesSincePopulatedCheckout": "83943424",
-            "observerSeconds": 0.7088661259999972
+            "observerSeconds": 0.56325841699999
           }
         },
         "graft": {
           "cold": {
-            "seconds": 1.0466918330000008,
-            "bytesSincePopulatedCheckout": "23379968",
+            "seconds": 6.589136207999997,
+            "bytesSincePopulatedCheckout": "-1260961792",
             "objectBootstrap": {
               "method": "clonefile",
               "source": "primary-pack",
               "object_format": "sha1",
-              "bytes": 34306406,
-              "pack_bytes": 34191234,
+              "bytes": 34306258,
+              "pack_bytes": 34191086,
               "index_bytes": 115172,
-              "shared_bytes": 34306406,
-              "cache_bytes": 34306406,
+              "shared_bytes": 34306258,
+              "cache_bytes": 34306258,
               "pack_count": 1,
               "reused_primary_packs": 1,
-              "reused_primary_bytes": 34306406,
+              "reused_primary_bytes": 34306258,
               "timings": {
-                "cache_publish_seconds": 0.06460075,
-                "reachability_seconds": 0.006984917,
-                "transfer_seconds": 0.129491875,
-                "verify_seconds": 0.00694175,
-                "total_seconds": 0.21822375
+                "cache_publish_seconds": 0.107145875,
+                "reachability_seconds": 0.006927875,
+                "transfer_seconds": 0.137672292,
+                "verify_seconds": 0.006420708,
+                "total_seconds": 0.290630125
               }
             }
           },
           "repeat": {
-            "seconds": 0.6533694589999978,
-            "bytesSincePopulatedCheckout": "42078208",
+            "seconds": 3.4341895839999923,
+            "bytesSincePopulatedCheckout": "-1424691200",
             "objectBootstrap": {
               "method": "clonefile",
               "source": "cache",
               "object_format": "sha1",
-              "bytes": 34306406,
-              "pack_bytes": 34191234,
+              "bytes": 34306258,
+              "pack_bytes": 34191086,
               "index_bytes": 115172,
-              "shared_bytes": 34306406,
+              "shared_bytes": 34306258,
               "cache_bytes": 0,
               "pack_count": 1,
               "timings": {
-                "cache_seconds": 0.0207605,
-                "total_seconds": 0.036328083
+                "cache_seconds": 0.03383825,
+                "total_seconds": 0.075592334
               }
             }
           },
-          "editedHead": "21ca0b6c988650bf32581f6ff13675c6a55631d4",
+          "editedHead": "f7e454caf50e2ffb88cc0b14f2843d1d37dfed95",
           "apfsFileData": {
             "baselineBytes": "76316672",
-            "repeatBytes": "109957120",
-            "repeatBytesSincePopulatedCheckout": "33640448",
-            "observerSeconds": 0.7468699579999993
+            "repeatBytes": "78467072",
+            "repeatBytesSincePopulatedCheckout": "2150400",
+            "observerSeconds": 0.7905229180000024
           }
         }
       }
