@@ -5,7 +5,9 @@
 use crate::{package_manager::InstallSpec, registry::Project};
 use anyhow::Result;
 use serde_json::{Value, json};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+pub(crate) const REGISTERED_INSTALL_DIR: &str = "registered-installs";
 
 fn status(spec: &InstallSpec, status: &str, reason: &str) -> Value {
     json!({"manager": spec.manager, "status": status, "reason": reason})
@@ -28,14 +30,36 @@ pub(crate) fn attach_registered(_: &Project, _: &Path, spec: &InstallSpec) -> Re
     Ok(status(spec, "unavailable", "cow_unavailable"))
 }
 
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub(crate) fn registered_install_root(p: &Project) -> Result<Option<PathBuf>> {
+    anyhow::ensure!(
+        !crate::registry::exists(&p.state.join(REGISTERED_INSTALL_DIR))?,
+        "registered install store cannot be verified on this platform"
+    );
+    Ok(None)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub(crate) fn verify_registered_install_generation(
+    _: &Project,
+    _: &Path,
+    _: &str,
+) -> Result<Value> {
+    anyhow::bail!("registered install generations cannot be verified on this platform")
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-pub(crate) use native::{attach_registered, seed_registered};
+pub(crate) use native::{
+    attach_registered, registered_install_root, seed_registered,
+    verify_registered_install_generation,
+};
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod native {
     use super::*;
-    use crate::{api::Fault, git, package_manager::validate_relative, registry};
+    use crate::{api::Fault, cache, git, package_manager::validate_relative, registry};
     use anyhow::{Context, bail, ensure};
+    use serde::{Deserialize, Serialize};
     #[cfg(target_os = "linux")]
     use std::fs::OpenOptions;
     use std::{
@@ -49,16 +73,15 @@ mod native {
                 fs::{MetadataExt, PermissionsExt, symlink},
             },
         },
-        path::{Component, PathBuf},
+        path::Component,
         process::Stdio,
     };
 
     use super::super::{
         Transfer, check_cache_metadata, clone_unsupported, entry_exists, field, inspect,
-        layer_provenance_for, transfer_file,
+        layer_provenance_for, transfer_file, valid_digest,
     };
 
-    const ROOT: &str = "registered-installs";
     const TREE: &str = "tree";
 
     /// A pinned directory on the checkout's filesystem. Open descendants one
@@ -226,12 +249,12 @@ mod native {
         )?))
     }
 
-    fn read_install_root(p: &Project) -> Result<Option<PathBuf>> {
-        p.require_private_state()?;
-        let root = p.state.join(ROOT);
+    pub(crate) fn registered_install_root(p: &Project) -> Result<Option<PathBuf>> {
+        let root = p.state.join(REGISTERED_INSTALL_DIR);
         if !entry_exists(&root)? {
             return Ok(None);
         }
+        p.require_private_state()?;
         let metadata = registry::check_unmounted_directory(&root, false)?;
         check_cache_metadata(&root, &metadata)?;
         ensure!(metadata.mode() & 0o077 == 0, "install store is not private");
@@ -247,18 +270,21 @@ mod native {
     }
 
     fn install_root(p: &Project) -> Result<PathBuf> {
-        if let Some(root) = read_install_root(p)? {
+        if let Some(root) = registered_install_root(p)? {
             return Ok(root);
         }
+        p.require_private_state()?;
         let stage = private_stage(&p.state, ".install-store-")?;
         registry::atomic(&stage.path().join(registry::CACHE_OWNER), p.id().as_bytes())?;
-        let root = p.state.join(ROOT);
+        let root = p.state.join(REGISTERED_INSTALL_DIR);
         match crate::recovery::rename_exclusive(stage.path(), &root) {
-            Ok(()) => (),
+            Ok(()) => {
+                let _ = stage.keep();
+            }
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => (),
             Err(e) => return Err(e).context("publish private install store"),
         }
-        read_install_root(p)?.context("missing private install store")
+        registered_install_root(p)?.context("missing private install store")
     }
 
     fn private_stage(root: &Path, prefix: &str) -> Result<tempfile::TempDir> {
@@ -683,14 +709,89 @@ mod native {
         inspect(path, forbidden, check_cache_metadata)
     }
 
-    fn generation_record(generation: &Path, digest: &str) -> Result<Value> {
+    #[derive(PartialEq, Eq, Serialize, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct GenerationBinding {
+        version: u8,
+        project: String,
+        digest: String,
+        contents: String,
+        stamp: String,
+        identity: cache::DirectoryIdentity,
+    }
+
+    fn binding_path(p: &Project, digest: &str) -> PathBuf {
+        p.state.join(format!("registered-install-{digest}-v1.json"))
+    }
+
+    fn read_binding(p: &Project, digest: &str) -> Result<GenerationBinding> {
+        ensure!(valid_digest(digest), "invalid registered install digest");
+        let bytes = cache::read_private_file(&binding_path(p, digest), 1024)
+            .context("registered install ownership is unverified")?;
+        let binding: GenerationBinding = serde_json::from_slice(&bytes)?;
+        ensure!(
+            binding.version == 1
+                && binding.project == p.id()
+                && binding.digest == digest
+                && valid_digest(&binding.contents)
+                && valid_digest(&binding.stamp)
+                && serde_json::to_vec(&binding)? == bytes,
+            "invalid registered install binding"
+        );
+        Ok(binding)
+    }
+
+    fn generation_record(
+        p: &Project,
+        generation: &Path,
+        digest: &str,
+    ) -> Result<GenerationBinding> {
         registry::check_unmounted_directory(generation, false)?;
         let value = layer_provenance_for(generation, digest, TREE)?;
+        let binding = read_binding(p, digest)?;
         ensure!(
-            value["version"] == 1 && value["backend"] == "copy-on-write",
+            value["version"] == 1
+                && value["backend"] == "copy-on-write"
+                && value["contents"] == binding.contents
+                && cache::directory_identity(generation)? == binding.identity,
             "invalid registered install generation"
         );
-        Ok(value)
+        Ok(binding)
+    }
+
+    fn tree_stamp(generation: &Path) -> Result<String> {
+        let tree = Dir::absolute(generation)?.path(Path::new(TREE))?;
+        snapshot(
+            &tree,
+            &generation.join(TREE),
+            None,
+            &mut Transfer::default(),
+        )
+    }
+
+    fn verified_generation(
+        p: &Project,
+        generation: &Path,
+        digest: &str,
+    ) -> Result<GenerationBinding> {
+        let binding = generation_record(p, generation, digest)?;
+        ensure!(
+            verify_tree(&generation.join(TREE), None)? == binding.contents
+                && tree_stamp(generation)? == binding.stamp,
+            "registered install tree differs from its original generation"
+        );
+        Ok(binding)
+    }
+
+    /// Use the original binding even if GC has moved this directory into quarantine.
+    pub(crate) fn verify_registered_install_generation(
+        p: &Project,
+        generation: &Path,
+        digest: &str,
+    ) -> Result<Value> {
+        Ok(serde_json::to_value(verified_generation(
+            p, generation, digest,
+        )?)?)
     }
 
     fn probe_if_empty(root: &Path, transfer: &Transfer) -> Result<()> {
@@ -728,6 +829,7 @@ mod native {
         let before = Inputs::read(checkout, &checkout_root, spec)?;
         let source = checkout_root.path(Path::new(&spec.directory))?;
         let root = install_root(p)?;
+        let root_identity = cache::directory_identity(&root)?;
         let src = checkout.join(&spec.directory);
         let stage = private_stage(&root, ".building-")?;
         let tree = stage.path().join(TREE);
@@ -751,6 +853,14 @@ mod native {
         let generation = root.join(&before.digest);
         let value = json!({"version": 1, "compatibility": before.digest, "contents": contents,
             "backend": "copy-on-write"});
+        let binding = GenerationBinding {
+            version: 1,
+            project: p.id().to_owned(),
+            digest: before.digest.clone(),
+            contents,
+            stamp: tree_stamp(stage.path())?,
+            identity: cache::directory_identity(stage.path())?,
+        };
         registry::atomic(
             &stage.path().join("provenance.json"),
             &serde_json::to_vec(&value)?,
@@ -767,18 +877,30 @@ mod native {
                 && Inputs::read(checkout, &current, spec)? == before,
             "checkout or installed files changed during capture"
         );
-        match crate::recovery::rename_exclusive(stage.path(), &generation) {
-            Ok(()) => Ok(receipt(spec, &transfer, "save", &before.digest)),
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-                ensure!(
-                    generation_record(&generation, &before.digest)? == value
-                        && verify_tree(&generation.join(TREE), None)? == contents,
-                    "installed tree differs from the original registered generation"
-                );
-                Ok(receipt(spec, &Transfer::default(), "save", &before.digest))
-            }
-            Err(error) => Err(error).context("publish registered generation"),
+        ensure!(
+            registered_install_root(p)?.as_deref() == Some(root.as_path())
+                && cache::directory_identity(&root)? == root_identity,
+            "registered install store changed during capture"
+        );
+        if entry_exists(&generation)? {
+            ensure!(
+                verified_generation(p, &generation, &before.digest)?.contents == binding.contents,
+                "installed tree differs from the original registered generation"
+            );
+            return Ok(receipt(spec, &Transfer::default(), "save", &before.digest));
         }
+        let record_path = binding_path(p, &before.digest);
+        if entry_exists(&record_path)? {
+            // A known record may outlive a completed purge or interrupted
+            // publication. The vacant generation slot can be seeded again.
+            read_binding(p, &before.digest)?;
+        }
+        registry::atomic(&record_path, &serde_json::to_vec(&binding)?)?;
+        crate::recovery::rename_exclusive(stage.path(), &generation)
+            .context("publish registered generation")?;
+        let _ = stage.keep();
+        File::open(&root)?.sync_all()?;
+        Ok(receipt(spec, &transfer, "save", &before.digest))
     }
 
     fn cow_unavailable(error: &anyhow::Error) -> bool {
@@ -830,7 +952,7 @@ mod native {
         checkout: &Path,
         spec: &InstallSpec,
     ) -> Result<Value> {
-        let root = match read_install_root(p) {
+        let root = match registered_install_root(p) {
             Ok(Some(root)) => root,
             Ok(None) => return Ok(status(spec, "unavailable", "generation_missing")),
             Err(_) => return Ok(status(spec, "unavailable", "invalid_install_store")),
@@ -856,7 +978,7 @@ mod native {
             Ok(true) => (),
             Err(_) => return Ok(status(spec, "unavailable", "invalid_generation")),
         }
-        let Ok(provenance) = generation_record(&generation, &before.digest) else {
+        let Ok(binding) = generation_record(p, &generation, &before.digest) else {
             return Ok(status(spec, "unavailable", "invalid_generation"));
         };
         let result = (|| {
@@ -876,17 +998,17 @@ mod native {
             let mut transfer = Transfer::default();
             let cached_path = generation.join(TREE);
             let source = Dir::absolute(&root)?.path(&Path::new(&before.digest).join(TREE))?;
-            snapshot(&source, &cached_path, Some(&tree), &mut transfer)?;
+            let stamp = snapshot(&source, &cached_path, Some(&tree), &mut transfer)?;
             probe_if_empty(&root, &transfer)?;
             ensure!(
-                verify_tree(&tree, None)? == provenance["contents"],
+                stamp == binding.stamp && verify_tree(&tree, None)? == binding.contents,
                 "install copy failed integrity verification"
             );
             let current = checkout_dir(checkout)?;
             ensure!(
                 current.is_current(&checkout_root)?
                     && Inputs::read(checkout, &current, spec)? == before
-                    && generation_record(&generation, &before.digest)? == provenance
+                    && generation_record(p, &generation, &before.digest)? == binding
                     && current
                         .path(&destination.parent_path)?
                         .is_current(&destination.parent)?,

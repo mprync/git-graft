@@ -18,7 +18,10 @@ use std::path::{Component, Path};
 use uuid::Uuid;
 
 mod registered;
-pub(crate) use registered::{attach_registered, seed_registered};
+pub(crate) use registered::{
+    REGISTERED_INSTALL_DIR, attach_registered, registered_install_root, seed_registered,
+    verify_registered_install_generation,
+};
 mod shared;
 pub use shared::{check_attached_for_add, inherit_shared, seed_shared};
 

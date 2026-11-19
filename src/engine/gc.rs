@@ -26,6 +26,7 @@ enum Verified {
 enum Kind {
     Package,
     Layer,
+    RegisteredInstall,
     Base,
     History,
 }
@@ -66,11 +67,24 @@ pub(crate) fn purge_caches(p: &Project, apply: bool) -> Result<Value> {
             blocked.push(json!({"path":path,"reason":api::error_json(&error)}));
         }
     }
+    match layer::registered_install_root(p) {
+        Ok(Some(directory)) => groups.push((Kind::RegisteredInstall, directory)),
+        Ok(None) => (),
+        Err(error) => {
+            let path = p.state.join(layer::REGISTERED_INSTALL_DIR);
+            directories.push(path.clone());
+            blocked.push(json!({"path":path,"reason":api::error_json(&error)}));
+        }
+    }
     for (kind, directory) in groups {
         directories.push(directory.clone());
         let inspect_container = || {
             match kind {
                 Kind::Package | Kind::Layer => p.check_cache_owner(&directory)?,
+                Kind::RegisteredInstall => ensure!(
+                    layer::registered_install_root(p)?.as_deref() == Some(directory.as_path()),
+                    "registered install store changed during purge"
+                ),
                 Kind::Base => (),
                 Kind::History => ensure!(
                     history_cache_root(&p.state)?.as_deref() == Some(directory.as_path()),
@@ -104,7 +118,7 @@ pub(crate) fn purge_caches(p: &Project, apply: bool) -> Result<Value> {
         };
         entries.sort_by_key(|entry| entry.file_name());
         let marker = match kind {
-            Kind::Package | Kind::Layer => Some(CACHE_OWNER),
+            Kind::Package | Kind::Layer | Kind::RegisteredInstall => Some(CACHE_OWNER),
             Kind::Base => None,
             Kind::History => Some(HISTORY_CACHE_MARKER),
         };
@@ -127,6 +141,12 @@ pub(crate) fn purge_caches(p: &Project, apply: bool) -> Result<Value> {
                     Kind::Layer => {
                         let digest = name.to_str().context("invalid layer digest")?;
                         Ok(Verified::Layer(layer::verify_layer(candidate, digest)?))
+                    }
+                    Kind::RegisteredInstall => {
+                        let digest = name.to_str().context("invalid registered install digest")?;
+                        Ok(Verified::Layer(
+                            layer::verify_registered_install_generation(p, candidate, digest)?,
+                        ))
                     }
                     Kind::Base => {
                         check_owned_tree(candidate)?;
@@ -200,6 +220,153 @@ pub(crate) fn purge_caches(p: &Project, apply: bool) -> Result<Value> {
 mod tests {
     use super::*;
     use crate::git;
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn purges_only_original_registered_installs_and_allows_reseeding() -> Result<()> {
+        use crate::package_manager::InstallSpec;
+
+        let temporary = tempfile::tempdir()?;
+        let repo = temporary.path().join("primary");
+        fs::create_dir(&repo)?;
+        git::bytes(&repo, &["init", "-q", "--template="])?;
+        fs::write(repo.join("fixture.lock"), "locked")?;
+        git::bytes(&repo, &["add", "fixture.lock"])?;
+        git::bytes(
+            &repo,
+            &[
+                "-c",
+                "user.name=Fixture",
+                "-c",
+                "user.email=fixture@example.invalid",
+                "-c",
+                "core.hooksPath=/dev/null",
+                "commit",
+                "-qm",
+                "base",
+                "--no-gpg-sign",
+            ],
+        )?;
+        let (project, _lock) = Project::open(&repo)?;
+        let repo = &project.repo;
+        let spec = |key: &str| InstallSpec {
+            manager: "fixture".into(),
+            directory: "vendor/bundle".into(),
+            inputs: vec!["fixture.lock".into()],
+            key: key.into(),
+        };
+        let installed = repo.join("vendor/bundle");
+        fs::create_dir_all(&installed)?;
+        fs::write(installed.join("package"), "installed")?;
+        let root = project.state.join(layer::REGISTERED_INSTALL_DIR);
+        let first = layer::seed_registered(&project, repo, &spec("valid"))?;
+        if first["reason"] == "cow_unavailable" {
+            assert_eq!(purge_caches(&project, true)?["purged"], false);
+            return Ok(());
+        }
+        let valid = root.join(
+            first["digest"]
+                .as_str()
+                .context("missing generation digest")?,
+        );
+        let seed = |key: &str| -> Result<_> {
+            let receipt = layer::seed_registered(&project, repo, &spec(key))?;
+            Ok(root.join(
+                receipt["digest"]
+                    .as_str()
+                    .context("missing generation digest")?,
+            ))
+        };
+
+        let altered = seed("altered")?;
+        fs::write(altered.join("tree/package"), "keep modified contents")?;
+        let extra = seed("extra")?;
+        fs::write(extra.join("notes"), "keep extra data")?;
+        let replaced = seed("replaced")?;
+        let backup = repo.join("original-generation");
+        fs::rename(&replaced, &backup)?;
+        crate::registry::dir(&replaced)?;
+        fs::create_dir(replaced.join("tree"))?;
+        fs::copy(backup.join("tree/package"), replaced.join("tree/package"))?;
+        fs::copy(
+            backup.join("provenance.json"),
+            replaced.join("provenance.json"),
+        )?;
+
+        // Simulate interruption after persisting the detached binding, before
+        // the prepared directory was published at its canonical digest.
+        let interrupted = seed("interrupted")?;
+        let scratch = root.join(".building-interrupted");
+        fs::rename(&interrupted, &scratch)?;
+        assert_eq!(seed("interrupted")?, interrupted);
+        assert_eq!(
+            fs::read_to_string(scratch.join("tree/package"))?,
+            "installed"
+        );
+
+        let sibling = repo.with_file_name("sibling");
+        git::bytes(
+            repo,
+            &[
+                "clone",
+                "-q",
+                "--no-hardlinks",
+                ".",
+                git::path_str(&sibling)?,
+            ],
+        )?;
+        assert_eq!(
+            layer::attach_registered(&project, &sibling, &spec("replaced"))?["reason"],
+            "invalid_generation"
+        );
+        assert!(!sibling.join("vendor").exists());
+        assert!(layer::seed_registered(&project, repo, &spec("replaced")).is_err());
+
+        for apply in [false, true] {
+            let result = purge_caches(&project, apply)?;
+            for path in [&valid, &interrupted] {
+                assert!(
+                    result["candidates"]
+                        .as_array()
+                        .unwrap()
+                        .contains(&json!(path)),
+                    "{result}"
+                );
+                assert_eq!(path.exists(), !apply);
+            }
+            assert_eq!(result["purged"], apply);
+            for path in [&altered, &extra, &replaced, &scratch] {
+                assert!(
+                    result["blocked"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|item| item["path"] == json!(path)),
+                    "{result}"
+                );
+            }
+            assert_eq!(
+                fs::read_to_string(altered.join("tree/package"))?,
+                "keep modified contents"
+            );
+            assert_eq!(fs::read_to_string(extra.join("notes"))?, "keep extra data");
+            assert_eq!(
+                fs::read_to_string(replaced.join("tree/package"))?,
+                "installed"
+            );
+            assert_eq!(
+                fs::read_to_string(scratch.join("tree/package"))?,
+                "installed"
+            );
+        }
+        assert_eq!(fs::read_to_string(installed.join("package"))?, "installed");
+        assert_eq!(seed("valid")?, valid);
+        assert_eq!(
+            layer::attach_registered(&project, &sibling, &spec("valid"))?["status"],
+            "attached"
+        );
+        Ok(())
+    }
 
     #[test]
     fn keeps_foreign_history_cache_namespace_intact() -> Result<()> {
