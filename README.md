@@ -73,7 +73,7 @@ Managers can also register a relocatable installed directory, its tracked inputs
 
 ## Performance
 
-On macOS/APFS, a first graft from a clean Homebrew clone configured for local history took **0.82 s** and added **0.48 MB** of unique file data. A native worktree took **0.34 s** and added **29.94 MB**. Two grafts together added **0.95 MB**, a **98.42%** saving. Source files and Git history added zero unique file blocks in this fixture. The measurement excludes filesystem metadata.
+On macOS/APFS, a first graft from a clean Homebrew clone configured for local history took **0.64 s** and added **0.33 MB** of unique file data. A native worktree took **0.34 s** and added **29.94 MB**. Two grafts together added **0.64 MB**, a **98.93%** saving. Source files and Git history added zero unique file blocks in this fixture. The measurement excludes filesystem metadata.
 
 The first `git status` also costs time. Median first spawn plus status was **1.18 s** for Graft and **0.44 s** for a native worktree. The earlier isolated-history release took **6.06 s** for its first spawn on the Homebrew fixture with staged, unstaged and untracked changes. [Benchmarks and raw measurements](docs/benchmarks.md)
 
