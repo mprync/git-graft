@@ -19,10 +19,12 @@ use std::{
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod cache;
+mod local;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod native;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod verify;
+pub(crate) use local::materialize_local;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub(crate) use native::Root as NoFollowRoot;
 
@@ -1257,6 +1259,230 @@ mod tests {
         );
         command(workspace, &["config", "core.autocrlf", "false"]);
         command(workspace, &["config", "core.symlinks", "true"]);
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn local_uses_only_clean_tracked_donor_files() {
+        use std::os::unix::fs::MetadataExt;
+
+        for format in ["sha1", "sha256"] {
+            let (temp, repo, _) = fixture_with_format(format);
+            for name in ["staged", "missing", "untracked", "ignored"] {
+                fs::write(repo.join(name), b"base\n").unwrap();
+            }
+            fs::write(repo.join(".gitignore"), b"ignored\n").unwrap();
+            command(&repo, &["add", "."]);
+            command(&repo, &["add", "-f", "ignored"]);
+            command(&repo, &["commit", "-qm", "more files"]);
+            let oid = command(&repo, &["rev-parse", "HEAD"]);
+            let workspace = temp.path().join("local");
+            independent(&repo, &workspace);
+
+            // The size and mtime are unchanged, and Git is told to skip the
+            // stat check. The bytes must still be authenticated independently.
+            let donor = repo.join("sub/file");
+            let mtime = fs::metadata(&donor).unwrap().modified().unwrap();
+            command(&repo, &["update-index", "--assume-unchanged", "sub/file"]);
+            fs::write(&donor, b"unexpected").unwrap();
+            fs::File::open(&donor)
+                .unwrap()
+                .set_times(fs::FileTimes::new().set_modified(mtime))
+                .unwrap();
+            fs::write(repo.join("staged"), b"edit\n").unwrap();
+            command(&repo, &["add", "staged"]);
+            fs::write(repo.join("staged"), b"base\n").unwrap();
+            command(&repo, &["rm", "--cached", "untracked", "ignored"]);
+            fs::remove_file(repo.join("missing")).unwrap();
+            fs::write(repo.join("ignored-extra"), b"private\n").unwrap();
+            fs::write(repo.join(".git/info/exclude"), b"ignored-extra\n").unwrap();
+            let donor_index = fs::read(repo.join(".git/index")).unwrap();
+
+            let state = temp.path().join("state");
+            let result = materialize_local(&workspace, &state, &oid, &[], &repo).unwrap();
+            assert_eq!(result["snapshot_reused"], false);
+            assert!(!state.exists());
+            assert_eq!(
+                command(&workspace, &["write-tree"]),
+                command(&repo, &["rev-parse", &format!("{oid}^{{tree}}")]),
+            );
+            assert_eq!(command(&workspace, &["status", "--porcelain"]), "");
+            assert_eq!(
+                fs::read(workspace.join("sub/file")).unwrap(),
+                b"committed\n"
+            );
+            for name in ["staged", "missing", "untracked", "ignored"] {
+                assert_eq!(fs::read(workspace.join(name)).unwrap(), b"base\n");
+            }
+            assert!(!workspace.join("ignored-extra").exists());
+            assert_eq!(
+                fs::read_link(workspace.join("link")).unwrap(),
+                Path::new("sub/file")
+            );
+            assert_ne!(
+                fs::metadata(workspace.join("script")).unwrap().mode() & 0o100,
+                0
+            );
+            assert_ne!(
+                fs::metadata(workspace.join("script")).unwrap().ino(),
+                fs::metadata(repo.join("script")).unwrap().ino(),
+            );
+            if probe(&workspace, &workspace).unwrap() {
+                assert_eq!(result["primary_reused_files"], 2, "{result}");
+                assert_eq!(result["private_files"], 5, "{result}");
+                assert_eq!(result["cloned_files"], result["primary_reused_files"]);
+            }
+            fs::write(workspace.join("script"), b"workspace edit").unwrap();
+            assert_eq!(fs::read(repo.join("script")).unwrap(), b"#!/bin/sh\n");
+            assert_eq!(command(&workspace, &["status", "--porcelain"]), "M script");
+            assert_eq!(fs::read(donor).unwrap(), b"unexpected");
+            assert_eq!(fs::read(repo.join(".git/index")).unwrap(), donor_index);
+        }
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn local_defers_auto_crlf_to_native_git() {
+        let (temp, repo, _) = fixture();
+        fs::write(repo.join(".gitattributes"), b"explicit eol=lf\n").unwrap();
+        fs::write(repo.join("explicit"), b"explicit\n").unwrap();
+        fs::write(repo.join("binary"), b"\0binary\n").unwrap();
+        fs::write(repo.join("mixed"), b"mixed\r\nend\n").unwrap();
+        fs::write(
+            repo.join("long"),
+            [vec![b'a'; 65535], b"\nend\n".to_vec()].concat(),
+        )
+        .unwrap();
+        command(&repo, &["add", "."]);
+        command(&repo, &["commit", "-qm", "checkout conversions"]);
+        let oid = command(&repo, &["rev-parse", "HEAD"]);
+        let donor = temp.path().join("donor");
+        let workspace = temp.path().join("local");
+        for path in [&donor, &workspace] {
+            independent(&repo, path);
+            command(path, &["config", "core.autocrlf", "true"]);
+        }
+        command(&donor, &["read-tree", "-u", "-m", &oid]);
+        let result =
+            materialize_local(&workspace, &temp.path().join("state"), &oid, &[], &donor).unwrap();
+        for name in [
+            ".gitattributes",
+            "explicit",
+            "binary",
+            "mixed",
+            "long",
+            "sub/file",
+            "script",
+        ] {
+            assert_eq!(
+                fs::read(workspace.join(name)).unwrap(),
+                fs::read(donor.join(name)).unwrap(),
+                "{name}"
+            );
+        }
+        assert_eq!(
+            fs::read(workspace.join("sub/file")).unwrap(),
+            b"committed\r\n"
+        );
+        assert_eq!(fs::read(workspace.join("explicit")).unwrap(), b"explicit\n");
+        assert_eq!(command(&workspace, &["status", "--porcelain"]), "");
+        assert_eq!(result["backend"], "git");
+        assert_eq!(result["primary_reused_files"], 0, "{result}");
+        assert_eq!(result["private_files"], 7, "{result}");
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn local_keeps_an_edit_made_before_index_publication() {
+        let (temp, repo, _) = fixture();
+        fs::write(repo.join(".gitattributes"), b"filtered filter=edit\n").unwrap();
+        fs::write(repo.join("filtered"), b"filtered\n").unwrap();
+        command(&repo, &["add", "."]);
+        command(&repo, &["commit", "-qm", "checkout filter"]);
+        let oid = command(&repo, &["rev-parse", "HEAD"]);
+        let workspace = temp.path().join("local");
+        independent(&repo, &workspace);
+        if !probe(&workspace, &workspace).unwrap() {
+            return;
+        }
+        command(
+            &workspace,
+            &[
+                "config",
+                "filter.edit.smudge",
+                "printf modified!\\\\n > sub/file && cat",
+            ],
+        );
+        let receipt =
+            materialize_local(&workspace, &temp.path().join("state"), &oid, &[], &repo).unwrap();
+        assert_eq!(receipt["primary_reused_files"], 3, "{receipt}");
+        assert_eq!(
+            fs::read(workspace.join("sub/file")).unwrap(),
+            b"modified!\n"
+        );
+        assert_eq!(
+            command(&workspace, &["status", "--porcelain"]),
+            "M sub/file"
+        );
+        assert_eq!(command(&workspace, &["show", ":sub/file"]), "committed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_preserves_a_file_created_during_git_fallback() {
+        let (temp, repo, _) = fixture();
+        fs::write(repo.join(".gitattributes"), b"first filter=race\n").unwrap();
+        fs::write(repo.join("first"), b"first\n").unwrap();
+        fs::write(repo.join("z-new"), b"base\n").unwrap();
+        command(&repo, &["add", "."]);
+        command(&repo, &["commit", "-qm", "checkout race"]);
+        let oid = command(&repo, &["rev-parse", "HEAD"]);
+        fs::remove_file(repo.join("z-new")).unwrap();
+        let state = temp.path().join("state");
+        for autocrlf in ["false", "true"] {
+            let workspace = temp.path().join(autocrlf);
+            independent(&repo, &workspace);
+            command(&workspace, &["config", "core.autocrlf", autocrlf]);
+            let contested = workspace.join("z-new");
+            command(
+                &workspace,
+                &[
+                    "config",
+                    "filter.race.smudge",
+                    &format!("printf 'new work' > '{}' && cat", contested.display()),
+                ],
+            );
+            let error = materialize_local(&workspace, &state, &oid, &[], &repo).unwrap_err();
+            assert!(format!("{error:#}").contains("z-new"), "{error:#}");
+            assert_eq!(fs::read(contested).unwrap(), b"new work");
+            assert!(!workspace.join(".git/index").exists());
+        }
+    }
+
+    #[test]
+    fn local_respects_live_index_and_native_sparse_checkout() {
+        let (temp, repo, oid) = fixture();
+        let state = temp.path().join("state");
+        let workspace = temp.path().join("local");
+        independent(&repo, &workspace);
+        let index_lock = workspace.join(".git/index.lock");
+        fs::write(&index_lock, b"other writer").unwrap();
+        assert!(materialize_local(&workspace, &state, &oid, &[], &repo).is_err());
+        assert_eq!(fs::read(&index_lock).unwrap(), b"other writer");
+        assert!(!workspace.join("script").exists());
+        fs::remove_file(index_lock).unwrap();
+        command(&workspace, &["read-tree", &oid]);
+        let index = fs::read(workspace.join(".git/index")).unwrap();
+        assert!(materialize_local(&workspace, &state, &oid, &[], &repo).is_err());
+        assert_eq!(fs::read(workspace.join(".git/index")).unwrap(), index);
+
+        let sparse = temp.path().join("sparse");
+        independent(&repo, &sparse);
+        let receipt = materialize_local(&sparse, &state, &oid, &["sub".into()], &repo).unwrap();
+        assert_eq!(receipt["backend"], "git");
+        assert_eq!(receipt["reason"], "sparse checkout");
+        assert_eq!(command(&sparse, &["sparse-checkout", "list"]), "sub");
+        assert_eq!(command(&sparse, &["status", "--porcelain"]), "");
     }
 
     #[test]

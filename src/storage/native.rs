@@ -76,6 +76,73 @@ impl Root {
         })
     }
 
+    pub(super) fn same_device(&self, other: &Self) -> bool {
+        self.device == other.device
+    }
+
+    pub(super) fn create_parent(&self, path: &Path) -> io::Result<()> {
+        let directory = path
+            .parent()
+            .ok_or_else(|| invalid("missing file parent"))?;
+        if directory.as_os_str().is_empty() {
+            return Ok(());
+        }
+        let mut parent = self.parent.borrow_mut();
+        if parent
+            .as_ref()
+            .is_some_and(|(cached, _)| cached == directory)
+        {
+            return Ok(());
+        }
+        let mut current = self.directory.try_clone()?;
+        for part in directory.components() {
+            let Component::Normal(name) = part else {
+                return Err(invalid("unexpected relative path"));
+            };
+            current = match open_at(&current, name, libc::O_RDONLY | libc::O_DIRECTORY) {
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    let filename = CString::new(name.as_bytes())?;
+                    if unsafe { libc::mkdirat(current.as_raw_fd(), filename.as_ptr(), 0o777) } != 0
+                    {
+                        let error = io::Error::last_os_error();
+                        if error.kind() != io::ErrorKind::AlreadyExists {
+                            return Err(error);
+                        }
+                    }
+                    open_at(&current, name, libc::O_RDONLY | libc::O_DIRECTORY)?
+                }
+                result => result?,
+            };
+            if current.metadata()?.dev() != self.device {
+                return Err(invalid("mounted destination directory"));
+            }
+        }
+        *parent = Some((directory.to_path_buf(), current));
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(super) fn install_local_clone(&self, path: &Path, scratch: &Self) -> io::Result<()> {
+        self.with_parent(path, |parent, name| {
+            let name = CString::new(name.as_bytes())?;
+            if unsafe {
+                libc::syscall(
+                    libc::SYS_renameat2,
+                    scratch.directory.as_raw_fd(),
+                    c"clone".as_ptr(),
+                    parent.as_raw_fd(),
+                    name.as_ptr(),
+                    libc::RENAME_NOREPLACE,
+                )
+            } == 0
+            {
+                Ok(())
+            } else {
+                Err(io::Error::last_os_error())
+            }
+        })
+    }
+
     fn with_parent<T>(
         &self,
         path: &Path,
