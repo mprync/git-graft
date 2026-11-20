@@ -135,21 +135,12 @@ impl Root {
     pub(super) fn install_local_clone(&self, path: &Path, scratch: &Self) -> io::Result<()> {
         self.with_parent(path, |parent, name| {
             let name = CString::new(name.as_bytes())?;
-            if unsafe {
-                libc::syscall(
-                    libc::SYS_renameat2,
-                    scratch.directory.as_raw_fd(),
-                    c"clone".as_ptr(),
-                    parent.as_raw_fd(),
-                    name.as_ptr(),
-                    libc::RENAME_NOREPLACE,
-                )
-            } == 0
-            {
-                Ok(())
-            } else {
-                Err(io::Error::last_os_error())
-            }
+            crate::recovery::rename_exclusive_at(
+                scratch.directory.as_raw_fd(),
+                c"clone",
+                parent.as_raw_fd(),
+                &name,
+            )
         })
     }
 
@@ -681,34 +672,4 @@ pub(super) fn creation_mode(directory: &Path) -> io::Result<u32> {
         .mode(0o777)
         .open(temp.path().join("mode"))?;
     Ok(file.metadata()?.mode() & 0o777)
-}
-
-pub(super) fn rename_new(source: &Path, destination: &Path) -> io::Result<()> {
-    let source = CString::new(source.as_os_str().as_bytes())?;
-    let destination = CString::new(destination.as_os_str().as_bytes())?;
-    #[cfg(target_os = "macos")]
-    let result = unsafe {
-        libc::renameatx_np(
-            libc::AT_FDCWD,
-            source.as_ptr(),
-            libc::AT_FDCWD,
-            destination.as_ptr(),
-            libc::RENAME_EXCL,
-        )
-    };
-    #[cfg(target_os = "linux")]
-    let result = unsafe {
-        libc::syscall(
-            libc::SYS_renameat2,
-            libc::AT_FDCWD,
-            source.as_ptr(),
-            libc::AT_FDCWD,
-            destination.as_ptr(),
-            libc::RENAME_NOREPLACE,
-        )
-    };
-    if result != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(())
 }

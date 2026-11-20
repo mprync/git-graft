@@ -158,27 +158,12 @@ impl Directory {
     }
 
     fn install_objects(&self, admin: &Self) -> io::Result<()> {
-        #[cfg(target_os = "macos")]
-        let result = unsafe {
-            libc::renameatx_np(
-                self.0.as_raw_fd(),
-                c"objects".as_ptr(),
-                admin.0.as_raw_fd(),
-                c"objects".as_ptr(),
-                libc::RENAME_EXCL,
-            )
-        };
-        #[cfg(target_os = "linux")]
-        let result = unsafe {
-            libc::renameat2(
-                self.0.as_raw_fd(),
-                c"objects".as_ptr(),
-                admin.0.as_raw_fd(),
-                c"objects".as_ptr(),
-                libc::RENAME_NOREPLACE,
-            )
-        };
-        os_result(result)
+        crate::recovery::rename_exclusive_at(
+            self.0.as_raw_fd(),
+            c"objects",
+            admin.0.as_raw_fd(),
+            c"objects",
+        )
     }
 
     fn remove_directory(&self, name: &CStr) -> io::Result<()> {

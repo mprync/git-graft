@@ -832,7 +832,7 @@ impl Prepared {
         );
         for entry in fs::read_dir(self.staging.path().join("tree"))? {
             let entry = entry?;
-            native::rename_new(&entry.path(), &worktree.join(entry.file_name()))?;
+            crate::recovery::rename_exclusive(&entry.path(), &worktree.join(entry.file_name()))?;
         }
         let index = self.staging.path().join("index");
         // Git verifies the final inodes and records their stats with its own
@@ -843,7 +843,7 @@ impl Prepared {
             tree: worktree,
         }
         .run(&["update-index", "--refresh"], None)?;
-        native::rename_new(&index, &destination)?;
+        crate::recovery::rename_exclusive(&index, &destination)?;
         lock.close()?;
         let backend = if cfg!(target_os = "macos") {
             "clonefile"

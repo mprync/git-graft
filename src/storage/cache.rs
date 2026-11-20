@@ -281,7 +281,7 @@ impl Snapshot {
         let signature = *blake3::keyed_hash(secret, &payload).as_bytes();
         file.write_all(&signature)?;
         file.write_all(&payload)?;
-        native::rename_new(temporary, base)?;
+        crate::recovery::rename_exclusive(temporary, base)?;
         Ok(Self {
             source: root,
             manifest,
@@ -406,7 +406,7 @@ mod tests {
         )?;
         let proof = verify_base(&commit_dir, &state, &oid)?;
         let quarantine = state.join("detached-snapshot");
-        native::rename_new(&commit_dir, &quarantine)?;
+        crate::recovery::rename_exclusive(&commit_dir, &quarantine)?;
         assert_eq!(verify_base(&quarantine, &state, &oid)?, proof);
         assert!(verify_base(&quarantine, &state, &"d".repeat(40)).is_err());
         let directory = std::ffi::CString::new(quarantine.as_os_str().as_encoded_bytes())?;

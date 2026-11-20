@@ -12,17 +12,39 @@ pub(crate) fn rename_exclusive(source: &Path, destination: &Path) -> std::io::Re
     use std::{ffi::CString, os::unix::ffi::OsStrExt};
     let source = CString::new(source.as_os_str().as_bytes())?;
     let destination = CString::new(destination.as_os_str().as_bytes())?;
-    // Both terminated paths live through the syscall. Exclusive rename cannot
-    // replace even an empty directory created after our preflight checks.
+    rename_exclusive_at(libc::AT_FDCWD, &source, libc::AT_FDCWD, &destination)
+}
+
+/// Rename `source` under `source_dir` to `destination` under
+/// `destination_dir`. Exclusive rename cannot replace anything, not even an
+/// empty directory created after a preflight check.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(crate) fn rename_exclusive_at(
+    source_dir: std::os::fd::RawFd,
+    source: &std::ffi::CStr,
+    destination_dir: std::os::fd::RawFd,
+    destination: &std::ffi::CStr,
+) -> std::io::Result<()> {
+    // Both terminated paths live through the call.
     #[cfg(target_os = "macos")]
-    let result =
-        unsafe { libc::renamex_np(source.as_ptr(), destination.as_ptr(), libc::RENAME_EXCL) };
+    let result = unsafe {
+        libc::renameatx_np(
+            source_dir,
+            source.as_ptr(),
+            destination_dir,
+            destination.as_ptr(),
+            libc::RENAME_EXCL,
+        )
+    };
+    // The raw syscall: musl, used for the static release builds, has no
+    // renameat2 wrapper.
     #[cfg(target_os = "linux")]
     let result = unsafe {
-        libc::renameat2(
-            libc::AT_FDCWD,
+        libc::syscall(
+            libc::SYS_renameat2,
+            source_dir,
             source.as_ptr(),
-            libc::AT_FDCWD,
+            destination_dir,
             destination.as_ptr(),
             libc::RENAME_NOREPLACE,
         )

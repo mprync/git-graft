@@ -312,30 +312,7 @@ mod native {
         fn publish(&self, source: &Path, name: &OsStr) -> io::Result<()> {
             let source = CString::new(source.as_os_str().as_bytes())?;
             let name = CString::new(name.as_bytes())?;
-            #[cfg(target_os = "linux")]
-            let result = unsafe {
-                libc::renameat2(
-                    libc::AT_FDCWD,
-                    source.as_ptr(),
-                    self.0.as_raw_fd(),
-                    name.as_ptr(),
-                    libc::RENAME_NOREPLACE,
-                )
-            };
-            #[cfg(target_os = "macos")]
-            let result = unsafe {
-                libc::renameatx_np(
-                    libc::AT_FDCWD,
-                    source.as_ptr(),
-                    self.0.as_raw_fd(),
-                    name.as_ptr(),
-                    libc::RENAME_EXCL,
-                )
-            };
-            if result != 0 {
-                return Err(io::Error::last_os_error());
-            }
-            Ok(())
+            crate::recovery::rename_exclusive_at(libc::AT_FDCWD, &source, self.0.as_raw_fd(), &name)
         }
     }
 
