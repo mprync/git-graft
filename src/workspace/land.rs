@@ -505,6 +505,7 @@ mod tests {
                 commit: None,
                 discard_ignored: false,
                 reconcile: false,
+                undo: false,
             }
         }
 

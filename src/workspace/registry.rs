@@ -599,11 +599,7 @@ fn current<'a>(records: &'a [Record], name: &str) -> Option<&'a Record> {
 }
 
 fn not_found(name: &str) -> anyhow::Error {
-    fault(
-        "not_found",
-        format!("No managed workspace named {name}"),
-        Value::Null,
-    )
+    fault("not_found", format!("No graft named {name}"), Value::Null)
 }
 
 fn bad_lease(name: &str) -> anyhow::Error {

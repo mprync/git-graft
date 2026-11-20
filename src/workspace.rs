@@ -1,4 +1,4 @@
-//! Workspace creation, inspection, integration and recoverable retirement.
+//! Graft creation, inspection, integration and recoverable retirement.
 mod land;
 mod objects;
 mod registry;
@@ -6,7 +6,6 @@ mod registry;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, ensure};
-use clap::Subcommand;
 use serde_json::{Value, json};
 
 use crate::{api, engine, git, layer, registry::Project, runtime::Runtime, storage};
@@ -18,68 +17,56 @@ use registry::{Record, Status};
 
 pub(crate) use api::Spawn;
 
-#[derive(Debug, Subcommand)]
+/// One operation on a project's grafts. Built from the command line (see
+/// `cli`) or from an MCP tool call, then run by [`run`].
+#[derive(Debug)]
 pub enum Command {
-    /// Create an independent repository from a local commit.
-    #[command(visible_alias = "add")]
     Spawn(Spawn),
-    /// Show active and recoverable independent repositories.
     List,
-    /// Inspect the workspace, including its current HEAD and files.
     Status(api::Name),
-    /// Check local Git and source-sharing capabilities.
     Doctor,
-    /// Renew the workspace lease.
     Heartbeat(api::Owned),
-    /// Show this workspace's runtime and cache paths.
     Env(api::Name),
-    /// Execute a program in the workspace.
     Exec(api::Exec),
-    /// Register a package manager for cache and dependency reuse.
     RegisterManager(api::RegisterManager),
-    /// List registered package managers.
     ListManagers,
-    /// Remove a registered package manager.
     UnregisterManager(api::ManagerName),
-    /// Add dependencies or perform a locked install.
     AddDep(api::AddDep),
-    /// Seed installed dependencies from the primary checkout.
     SeedLayer(api::SeedLayer),
-    /// Save, restore or forget an installed dependency layer.
-    Layer(api::Layer),
-    /// Transfer committed work to a local branch and archive the repository.
+    /// Save, restore or forget; the string is the action.
+    Layer(&'static str, api::Layer),
     Land(api::Land),
-    /// Archive the complete independent repository and its files.
-    #[command(visible_alias = "remove")]
     Drop(api::DropWorkspace),
-    /// Reopen an archived repository.
     Restore(api::Owned),
-    /// Append a reversal commit to the exact landed destination.
     UndoLand(api::Owned),
-    /// Protect against moves, retirement and cleanup.
     Lock {
-        #[command(flatten)]
         workspace: api::Owned,
-        #[arg(long)]
         reason: Option<String>,
     },
-    /// Release an explicit workspace lock.
     Unlock(api::Owned),
-    /// Move a workspace to an available path on its volume.
     Move {
-        #[command(flatten)]
         workspace: api::Owned,
         path: PathBuf,
     },
-    /// Reconnect a workspace that was moved using the filesystem.
     Repair {
-        #[command(flatten)]
         workspace: api::Owned,
         path: PathBuf,
     },
-    /// Preview or archive eligible expired workspaces.
-    #[command(visible_alias = "prune")]
     Gc(api::Gc),
+}
+
+impl Command {
+    /// `land`, or its reversal when `undo` was requested.
+    pub(crate) fn land(land: api::Land) -> Self {
+        if land.undo {
+            Self::UndoLand(api::Owned {
+                name: land.name,
+                lease: land.lease,
+            })
+        } else {
+            Self::Land(land)
+        }
+    }
 }
 
 fn summary(r: &Record) -> Value {
@@ -188,7 +175,7 @@ fn spawn(p: &Project, origin: &Path, mut args: Spawn) -> Result<Value> {
     if let Some(current) = previous {
         ensure!(
             current.request == request,
-            "request ID was used with different spawn options"
+            "request ID was used with different new options"
         );
         if current.status == Status::Active {
             registry::verify(p, &current)?;
@@ -298,8 +285,8 @@ fn spawn(p: &Project, origin: &Path, mut args: Spawn) -> Result<Value> {
     if let Err(error) = build {
         return Err(api::fault(
             "spawn_incomplete",
-            format!("Workspace creation stopped: {error:#}"),
-            json!({"name":r.name,"lease":r.lease,"path":r.path,"recovery":"Inspect the reserved path. Drop with --discard to archive the partial repository."}),
+            format!("Creating the graft stopped: {error:#}"),
+            json!({"name":r.name,"lease":r.lease,"path":r.path,"recovery":"Inspect the reserved path. Run prune with --discard to archive the partial graft."}),
         ));
     }
     Ok(with_lease(&r))
@@ -613,7 +600,7 @@ pub fn run(repo: &Path, command: Command) -> Result<Value> {
                 return crate::package_manager::register(p, &source.path, a);
             }
             (None, None) => return crate::package_manager::register(p, &p.repo, a),
-            _ => anyhow::bail!("workspace and lease must be supplied together"),
+            _ => anyhow::bail!("--graft and --lease must be given together"),
         },
         Command::Status(a) => return report_status(p, &a.name),
         Command::Spawn(_) => {
@@ -687,7 +674,7 @@ pub fn run(repo: &Path, command: Command) -> Result<Value> {
         Command::Exec(a) => (&a.name, &a.lease),
         Command::AddDep(a) => (&a.name, &a.lease),
         Command::Heartbeat(a) => (&a.name, &a.lease),
-        Command::Layer(a) => (&a.name, &a.lease),
+        Command::Layer(_, a) => (&a.name, &a.lease),
     };
     let mut r = registry::authenticate(p, name, lease)?;
     ensure!(
@@ -703,7 +690,7 @@ pub fn run(repo: &Path, command: Command) -> Result<Value> {
     }
     match command {
         Command::Heartbeat(_) => Ok(summary(&r)),
-        Command::Layer(a) => layer::run(&r.path, &p.state, &a.action, &a.key, a.copy),
+        Command::Layer(action, a) => layer::run(&r.path, &p.state, action, &a.key, a.copy),
         Command::Exec(a) => {
             ensure!(!a.argv.is_empty(), "program and arguments are required");
             let profile = crate::package_manager::execution(p, a.manager.as_deref(), &a.argv[0])?;

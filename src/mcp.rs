@@ -1,4 +1,4 @@
-//! MCP stdio adapter for standalone workspaces.
+//! MCP stdio adapter for grafts.
 use std::path::PathBuf;
 
 use rmcp::{
@@ -14,10 +14,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Map, Value};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWriteExt, BufReader};
 
-use crate::api::{
-    self, AddDep, DropWorkspace, Exec, Gc, Land, Layer, ManagerName, Name, Owned, RegisterManager,
-    SeedLayer,
-};
+use crate::api::{self, AddDep, DropWorkspace, Exec, Land, Name, Owned};
 use crate::workspace::{self, Command, Spawn};
 
 const MAX_REQUEST_BYTES: usize = 256 * 1024;
@@ -31,24 +28,6 @@ struct Server {
 #[derive(serde::Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct Empty {}
-
-#[derive(serde::Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct LockWorkspace {
-    #[serde(flatten)]
-    workspace: Owned,
-    /// Optional explanation for the workspace lock.
-    reason: Option<String>,
-}
-
-#[derive(serde::Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct WorkspacePath {
-    #[serde(flatten)]
-    workspace: Owned,
-    /// Absolute workspace path on the same volume, with a canonical parent.
-    path: PathBuf,
-}
 
 fn tool<T: JsonSchema>(
     name: &'static str,
@@ -76,9 +55,9 @@ fn parse<T: DeserializeOwned>(args: Map<String, Value>) -> Result<T, ErrorData> 
 impl ServerHandler for Server {
     fn get_info(&self) -> ServerConfig {
         let instructions = if self.allow_exec {
-            "Workspace command execution, dependency installation, dependency layers, and lockfile reconciliation are enabled by the host."
+            "Running commands and installing dependencies in grafts is enabled by the host."
         } else {
-            "Workspace command execution, dependency installation, dependency layers, and lockfile reconciliation are disabled; the host must start with --allow-exec to enable them."
+            "Running commands and installing dependencies in grafts is disabled; the host must start with --allow-exec to enable it."
         };
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new(
@@ -86,7 +65,7 @@ impl ServerHandler for Server {
                 env!("CARGO_PKG_VERSION"),
             ))
             .with_instructions(format!(
-                "{instructions} For ordinary work in a trusted clone, call workspace_spawn with history omitted to honor the project setting (default: local). Choose isolated when the workspace should only receive the selected commit's reachable history. Each newline-delimited message may contain up to {MAX_REQUEST_BYTES} bytes. Larger messages are discarded."
+                "{instructions} A graft is an independent copy of the repository for one task. Call graft_new, work inside the returned path, then graft_land to merge it into a branch. For ordinary work in a trusted clone, omit history from graft_new to honor the project setting (default: local). Choose isolated when the graft should only receive the selected commit's reachable history. Each newline-delimited message may contain up to {MAX_REQUEST_BYTES} bytes. Larger messages are discarded."
             ))
     }
 
@@ -96,131 +75,65 @@ impl ServerHandler for Server {
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
         let mut tools = vec![
-            tool::<Empty>(
-                "workspace_doctor",
-                "Check workspace prerequisites and repository health.",
-                true,
-                false,
-            ),
-            tool::<Empty>(
-                "workspace_list",
-                "List active and recoverable workspaces.",
-                true,
-                false,
-            ),
-            tool::<Empty>(
-                "workspace_list_managers",
-                "List project package manager registrations and their cache and install settings.",
-                true,
-                false,
-            ),
-            tool::<Owned>(
-                "workspace_restore",
-                "Reopen a retired workspace using its recovery lease.",
-                false,
-                false,
-            ),
-            tool::<Owned>(
-                "workspace_undo_land",
-                "Append a reversal commit if the landed destination is still at the recorded commit.",
-                false,
-                true,
-            ),
             tool::<Spawn>(
-                "workspace_spawn",
-                "Create a standalone Git workspace with a private branch, detached HEAD or unborn branch. For routine tasks omit history: the project setting defaults to local, which can reuse the trusted clone's Git objects. Choose isolated when unrelated objects such as staged blobs or other branches' commits must be excluded.",
+                "graft_new",
+                "Create a graft: an independent copy of the repository with its own branch. Returns the graft's path and lease; keep the lease, it authorizes every later call. Omit history for normal work (the project setting defaults to local, which reuses the trusted clone's Git objects). Choose isolated to keep unrelated objects such as staged blobs or other branches' commits out.",
                 false,
+                false,
+            ),
+            tool::<Empty>(
+                "graft_list",
+                "List active and recoverable grafts.",
+                true,
                 false,
             ),
             tool::<Name>(
-                "workspace_status",
-                "Inspect a workspace's status.",
+                "graft_status",
+                "Show a graft's HEAD, branch and changed files.",
                 true,
-                false,
-            ),
-            tool::<Owned>(
-                "workspace_heartbeat",
-                "Refresh a workspace's heartbeat.",
-                false,
-                false,
-            ),
-            tool::<Name>(
-                "workspace_env",
-                "Show the environment for a workspace.",
-                true,
-                false,
-            ),
-            tool::<Land>(
-                "workspace_land_and_wipe",
-                "Land a workspace and archive its repository on success. Lockfile reconciliation requires host --allow-exec.",
-                false,
-                true,
-            ),
-            tool::<DropWorkspace>(
-                "workspace_discard",
-                "Archive a workspace and its files, subject to discard safeguards.",
-                false,
-                true,
-            ),
-            tool::<Gc>(
-                "workspace_gc",
-                "Preview cleanup or archive eligible stale workspaces.",
-                false,
-                true,
-            ),
-            tool::<LockWorkspace>(
-                "workspace_lock",
-                "Protect a workspace against moves, retirement and cleanup.",
-                false,
-                false,
-            ),
-            tool::<Owned>(
-                "workspace_unlock",
-                "Release an explicit workspace lock.",
-                false,
-                false,
-            ),
-            tool::<WorkspacePath>(
-                "workspace_move",
-                "Move a workspace to an available absolute path on the same volume.",
-                false,
-                false,
-            ),
-            tool::<WorkspacePath>(
-                "workspace_repair",
-                "Reconnect a workspace using its absolute path after an external move.",
-                false,
                 false,
             ),
         ];
         if self.allow_exec {
-            tools.push(tool::<RegisterManager>(
-                "workspace_register_manager",
-                "Register a project-scoped package cache and optionally seed a reusable install from the primary checkout or a leased workspace (enabled by host --allow-exec).",
-                false,
-                false,
-            ));
-            tools.push(tool::<ManagerName>(
-                "workspace_unregister_manager",
-                "Remove a package manager registration while retaining its cache (enabled by host --allow-exec).",
-                false,
-                true,
-            ));
             tools.push(tool::<Exec>(
-                "workspace_exec",
-                "Execute a command in a leased workspace. Registered managers match the program name automatically; select manager explicitly for wrappers (enabled by host --allow-exec).",
+                "graft_exec",
+                "Run a program inside a graft. A registered package manager matches the program name automatically; pass manager for wrappers. Needs host --allow-exec.",
                 false,
                 true,
             ));
             tools.push(tool::<AddDep>(
-                "workspace_add_dependency",
-                "Install dependencies in a workspace (enabled by host --allow-exec).",
+                "graft_add_dependency",
+                "Install packages in a graft, or run a locked install when packages is empty. Needs host --allow-exec.",
                 false,
                 true,
             ));
-            tools.push(tool::<Layer>("workspace_layer", "Save, restore or forget an installed dependency layer (enabled by host --allow-exec).", false, true));
-            tools.push(tool::<SeedLayer>("workspace_seed_layer", "Seed a relocatable dependency layer from the primary checkout's installed node_modules (enabled by host --allow-exec).", false, false));
         }
+        tools.extend([
+            tool::<Land>(
+                "graft_land",
+                "Merge a graft's commits into a local branch, then archive the graft. Set undo to reverse an earlier land instead: it appends a commit only if the branch is still at the landed commit. Lockfile reconciliation needs host --allow-exec.",
+                false,
+                true,
+            ),
+            tool::<DropWorkspace>(
+                "graft_prune",
+                "Archive a graft and its files. Refuses if the graft has local work or unlanded commits unless discard is set; keep the recovery lease to reopen it.",
+                false,
+                true,
+            ),
+            tool::<Owned>(
+                "graft_restore",
+                "Reopen an archived graft using its recovery lease.",
+                false,
+                false,
+            ),
+            tool::<Owned>(
+                "graft_renew",
+                "Renew a graft's lease so it is not treated as expired.",
+                false,
+                false,
+            ),
+        ]);
         Ok(ListToolsResult::with_all_items(tools))
     }
 
@@ -234,67 +147,39 @@ impl ServerHandler for Server {
             let error = anyhow::anyhow!(message);
             Ok(CallToolResult::structured_error(api::error_json(&error)).into())
         };
-        if !self.allow_exec
-            && matches!(
-                name,
-                "workspace_exec"
-                    | "workspace_add_dependency"
-                    | "workspace_layer"
-                    | "workspace_seed_layer"
-                    | "workspace_register_manager"
-                    | "workspace_unregister_manager"
-            )
-        {
+        if !self.allow_exec && matches!(name, "graft_exec" | "graft_add_dependency") {
             return refuse(format!(
                 "Tool {name} requires the host to start with --allow-exec"
             ));
         }
         let args = request.arguments.unwrap_or_default();
         let op = match name {
-            "workspace_doctor" => parse::<Empty>(args).map(|_| Command::Doctor)?,
-            "workspace_list" => parse::<Empty>(args).map(|_| Command::List)?,
-            "workspace_list_managers" => parse::<Empty>(args).map(|_| Command::ListManagers)?,
-            "workspace_register_manager" => Command::RegisterManager(parse(args)?),
-            "workspace_unregister_manager" => Command::UnregisterManager(parse(args)?),
-            "workspace_spawn" => {
+            "graft_list" => parse::<Empty>(args).map(|_| Command::List)?,
+            "graft_new" => {
                 Command::Spawn(Spawn::from_mcp(args, !self.allow_exec).map_err(|e| {
                     ErrorData::invalid_params(format!("Invalid tool arguments: {e}"), None)
                 })?)
             }
-            "workspace_status" => Command::Status(parse(args)?),
-            "workspace_heartbeat" => Command::Heartbeat(parse(args)?),
-            "workspace_env" => Command::Env(parse(args)?),
-            "workspace_exec" => Command::Exec(parse(args)?),
-            "workspace_add_dependency" => Command::AddDep(parse(args)?),
-            "workspace_layer" => Command::Layer(parse(args)?),
-            "workspace_seed_layer" => Command::SeedLayer(parse(args)?),
-            "workspace_restore" => Command::Restore(parse(args)?),
-            "workspace_undo_land" => Command::UndoLand(parse(args)?),
-            "workspace_land_and_wipe" => {
+            "graft_status" => Command::Status(parse(args)?),
+            "graft_renew" => Command::Heartbeat(parse(args)?),
+            "graft_exec" => Command::Exec(parse(args)?),
+            "graft_add_dependency" => Command::AddDep(parse(args)?),
+            "graft_restore" => Command::Restore(parse(args)?),
+            "graft_land" => {
+                let explicit_into = args.contains_key("into");
                 let land: Land = parse(args)?;
+                land.check_undo(explicit_into).map_err(|e| {
+                    ErrorData::invalid_params(format!("Invalid tool arguments: {e}"), None)
+                })?;
                 if land.reconcile && !self.allow_exec {
                     return refuse(
                         "Lockfile reconciliation requires the host to start with --allow-exec"
                             .into(),
                     );
                 }
-                Command::Land(land)
+                Command::land(land)
             }
-            "workspace_discard" => Command::Drop(parse(args)?),
-            "workspace_gc" => Command::Gc(parse(args)?),
-            "workspace_lock" => {
-                let LockWorkspace { workspace, reason } = parse(args)?;
-                Command::Lock { workspace, reason }
-            }
-            "workspace_unlock" => Command::Unlock(parse(args)?),
-            "workspace_move" => {
-                let WorkspacePath { workspace, path } = parse(args)?;
-                Command::Move { workspace, path }
-            }
-            "workspace_repair" => {
-                let WorkspacePath { workspace, path } = parse(args)?;
-                Command::Repair { workspace, path }
-            }
+            "graft_prune" => Command::Drop(parse(args)?),
             _ => {
                 return Err(ErrorData::invalid_params(
                     format!("Unknown tool: {name}"),
@@ -306,7 +191,7 @@ impl ServerHandler for Server {
         let result = tokio::task::spawn_blocking(move || workspace::run(&repo, op))
             .await
             .map_err(|e| {
-                ErrorData::internal_error(format!("Workspace operation failed to join: {e}"), None)
+                ErrorData::internal_error(format!("Graft operation failed to join: {e}"), None)
             })?;
         Ok(match result {
             Ok(value) if value.get("success") == Some(&Value::Bool(false)) => {

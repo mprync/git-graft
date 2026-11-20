@@ -804,9 +804,7 @@ pub(crate) fn require_no_pending_checkout(repo: &Path, plan: &Plan) -> Result<()
     if let Some(update) = checkout::Update::load(&common_dir(repo)?)?
         && update.is_for(plan)
     {
-        return Err(
-            update.recovery_required("resume the checkout update before dropping the workspace")
-        );
+        return Err(update.recovery_required("resume the checkout update before pruning the graft"));
     }
     Ok(())
 }
