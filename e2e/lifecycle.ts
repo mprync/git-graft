@@ -83,7 +83,7 @@ export const cases: Scenario[] = [
     },
   },
   {
-    name: 'drop refuses untracked ignored and unmerged work',
+    name: 'prune refuses untracked ignored and unmerged work',
     run(ctx) {
       const w = ctx.spawn('agent');
       writeFileSync(join(w.path, 'untracked'), 'keep');
@@ -218,7 +218,7 @@ export const cases: Scenario[] = [
     },
   },
   {
-    name: 'hidden index flags protect local edits from drop and land',
+    name: 'hidden index flags protect local edits from prune and land',
     run(ctx) {
       const w = ctx.spawn('agent');
       const base = ctx.git(['rev-parse', 'HEAD']);
@@ -258,7 +258,7 @@ export const cases: Scenario[] = [
     },
   },
   {
-    name: 'spawn request id survives disconnect and rejects adoption',
+    name: 'graft request id survives disconnect and rejects adoption',
     run(ctx) {
       const id = 'b4826629-f8e7-4736-ac38-f2950d40f642';
       const other = '938fb238-a7d9-4c90-a572-13c701d535a1';
@@ -282,7 +282,7 @@ export const cases: Scenario[] = [
     },
   },
   {
-    name: 'concurrent retries of the same spawn reserve one identity',
+    name: 'concurrent retries of the same graft creation reserve one identity',
     async run(ctx) {
       const id = '80dd84ae-2182-42d5-ad09-1b14d6d9480a';
       const args = ['--repo', ctx.repo, '--json', 'new', 'concurrent', '--request-id', id];
@@ -305,7 +305,7 @@ export const cases: Scenario[] = [
     },
   },
   {
-    name: 'drop replay and reused slug reject stale lease',
+    name: 'prune replay and reused slug reject stale lease',
     run(ctx) {
       const first = ctx.spawn('agent');
       const result = drop(ctx, 'agent', first.lease);

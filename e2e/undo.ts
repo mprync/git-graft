@@ -321,7 +321,7 @@ export const cases: Scenario[] = [
     },
   },
   {
-    name: 'undo authenticates the retired landing and rejects drop and no-op',
+    name: 'undo authenticates the retired landing and rejects prune and no-op',
     run(ctx) {
       const dropped = ctx.spawn('dropped');
       ctx.cli(['prune', 'dropped', '--lease', dropped.lease]);

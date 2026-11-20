@@ -48,7 +48,7 @@ export const cases: Scenario[] = [
     },
   },
   {
-    name: 'spawn validates portable names and keeps same-named primary branches private',
+    name: 'graft creation validates portable names and keeps same-named primary branches private',
     run(ctx) {
       const head = ctx.git(['rev-parse', 'HEAD']);
       for (const name of ['../escape', 'CAPS', 'nul', '1agent', 'a'.repeat(49)]) {

@@ -188,7 +188,7 @@ export const cases: Scenario[] = [{
         && !isAbsolute(fromRoot), "graft workspace must remain under the owned temporary parent");
       const storage = spawned.result.storage;
       assert(isRecord(storage),
-        "spawn result must contain a storage receipt");
+        "new result must contain a storage receipt");
       const sample = storageSample(name, index === 0 ? "cold" : "warm", wallSeconds,
         before, after, checkoutBytes, storage);
       graftPaths.push(path);

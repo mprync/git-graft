@@ -807,7 +807,7 @@ export const cases: Scenario[] = [
     }),
   },
   {
-    name: 'MCP supports the standalone CLI spawn modes',
+    name: 'MCP supports the CLI graft creation modes',
     run: async (ctx) => withClient(ctx, true, async (client) => {
       await initialize(client);
       const probe = object(ctx.cli(['doctor']).source_storage, 'source filesystem capability');

@@ -13,7 +13,7 @@ export const cases: Scenario[] = [
         const workspace = ctx.spawn('private-roots');
         const state = join(ctx.repo, '.git', 'graft');
         for (const directory of ['cache', 'layers']) {
-          assert(!existsSync(join(state, directory)), 'source-only project created a dependency cache during spawn');
+          assert(!existsSync(join(state, directory)), 'source-only project created a dependency cache during new');
         }
         const env = ctx.cli(['status', 'private-roots', '--env']);
         assert.equal(env.path, workspace.path);

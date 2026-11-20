@@ -290,13 +290,7 @@ fn shallow_merge_keeps_all_reachable_boundaries() -> Result<()> {
             "main:refs/heads/shallow-merge",
         ],
     )?;
-    let spawn = f.graft(&[
-        "new",
-        "two-parents",
-        "--base",
-        "shallow-merge",
-        "--no-deps",
-    ])?;
+    let spawn = f.graft(&["new", "two-parents", "--base", "shallow-merge", "--no-deps"])?;
     let workspace = Path::new(field(&spawn, "path")?);
     let expected = f.git(&f.primary, &["rev-list", "--parents", "shallow-merge"])?;
     assert_eq!(expected.lines().count(), 3);

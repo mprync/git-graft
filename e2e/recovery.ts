@@ -35,7 +35,7 @@ function history(ctx: Context, path: string, text: string) {
 
 export const cases: Scenario[] = [
   {
-    name: 'destructive drop restores the exact index and local files after Git GC',
+    name: 'destructive prune restores the exact index and local files after Git GC',
     run(ctx) {
       const name = 'dirty';
       const ws = ctx.spawn(name);
@@ -128,7 +128,7 @@ export const cases: Scenario[] = [
     },
   },
   {
-    name: 'drop and restore replay after interrupted filesystem transitions',
+    name: 'prune and restore replay after interrupted filesystem transitions',
     run(ctx) {
       const seed = ctx.spawn('archive-root');
       drop(ctx, 'archive-root', seed.lease);

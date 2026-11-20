@@ -487,7 +487,7 @@ exec "$GRAFT_TEST_GIT" "$@"
     },
   },
   {
-    name: 'local and isolated spawns own independent objects, refs, indexes and checkouts',
+    name: 'local and isolated new grafts own independent objects, refs, indexes and checkouts',
     async run(ctx) {
       ctx.git(['config', 'core.autocrlf', 'true']);
       writeFileSync(join(ctx.repo, '.gitattributes'), '*.lf text eol=lf\n*.raw -text\n');

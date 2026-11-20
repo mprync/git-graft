@@ -223,7 +223,7 @@ export const cases: Scenario[] = [{
     }
   },
 }, {
-  name: 'invalid foreign registration data cannot block source spawn or be overwritten',
+  name: 'invalid foreign registration data cannot block creating a source graft or be overwritten',
   run(ctx) {
     ctx.cli(['doctor']);
     const registry = join(ctx.repo, '.git', 'graft', 'registered-managers-v1.json');

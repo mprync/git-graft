@@ -555,7 +555,7 @@ export const cases: Scenario[] = [
     },
   },
   {
-    name: 'drop with discard completes an applied landing and preserves undo and later edits',
+    name: 'prune with discard completes an applied landing and preserves undo and later edits',
     run(ctx) {
       const initialTree = ctx.git(['rev-parse', 'HEAD^{tree}']);
       const workspace = ctx.spawn('interrupted');

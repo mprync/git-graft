@@ -188,7 +188,7 @@ export const cases: Scenario[] = [
     },
   },
   {
-    name: 'nested spawn uses its private parent HEAD and isolates dirty bytes',
+    name: 'nested graft uses its private parent HEAD and isolates dirty bytes',
     run(ctx) {
       const file = 'nested/content.txt';
       const base = commit(ctx, ctx.repo, file, 'primary content\n');
@@ -248,7 +248,7 @@ export const cases: Scenario[] = [
     },
   },
   {
-    name: 'request retry, lock, move, repair, drop and restore keep repository identity',
+    name: 'request retry, lock, move, repair, prune and restore keep repository identity',
     run(ctx) {
       const id = randomUUID();
       const options = ['--request-id', id, '--lock', '--reason', 'review in progress'];
