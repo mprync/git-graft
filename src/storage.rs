@@ -1389,6 +1389,8 @@ pub fn doctor(state: &Path) -> Result<Value> {
 /// Whether new grafts of `checkout` can share its files' data blocks, and if not,
 /// why and how to fix it. A filesystem without cloning or a setting that makes Git
 /// rewrite line endings at checkout means every file is written in full.
+/// `core.autocrlf=true` does not: files the primary checked out under it are
+/// shared once their CRLF bytes are proven (see `local::direct::Written`).
 pub fn file_sharing(checkout: &Path, native_clone: bool) -> Value {
     if !native_clone {
         return json!({"shared": false, "reason": "the filesystem cannot clone files"});
@@ -1400,8 +1402,7 @@ pub fn file_sharing(checkout: &Path, native_clone: bool) -> Value {
     };
     let autocrlf = setting("core.autocrlf");
     let rewrites = match autocrlf.as_deref() {
-        Some("true") => Some("core.autocrlf=true"),
-        Some("input") => None,
+        Some("true" | "input") => None,
         _ => (setting("core.eol").as_deref() == Some("crlf")).then_some("core.eol=crlf"),
     };
     match rewrites {
@@ -1438,12 +1439,12 @@ mod tests {
         command(&repo, &["config", "core.autocrlf", "input"]);
         assert_eq!(file_sharing(&repo, true)["shared"], true);
         command(&repo, &["config", "core.autocrlf", "true"]);
+        assert_eq!(file_sharing(&repo, true)["shared"], true);
+        command(&repo, &["config", "core.autocrlf", "false"]);
+        command(&repo, &["config", "core.eol", "crlf"]);
         let report = file_sharing(&repo, true);
         assert_eq!(report["shared"], false);
         assert_eq!(report["fix"], "git config --global core.autocrlf input");
-        command(&repo, &["config", "core.autocrlf", "false"]);
-        command(&repo, &["config", "core.eol", "crlf"]);
-        assert_eq!(file_sharing(&repo, true)["shared"], false);
     }
 
     #[test]
