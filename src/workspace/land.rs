@@ -69,11 +69,25 @@ fn shallow_boundary(admin: &Path) -> Result<Vec<u8>> {
     Ok(Vec::new())
 }
 
+/// Graft's private stores nest refs deeply under the project's Git directory.
+/// Git for Windows refuses paths over 260 characters unless the repository
+/// enables long paths; the setting lives only in Graft's own stores.
+fn enable_long_paths(store: &Path) -> Result<()> {
+    #[cfg(windows)]
+    git::bytes(store, &["config", "core.longpaths", "true"])?;
+    #[cfg(not(windows))]
+    let _ = store;
+    Ok(())
+}
+
 fn store_name(object_format: &str, shallow: &[u8]) -> String {
     if shallow.is_empty() {
         format!("{object_format}-full")
     } else {
-        format!("{object_format}-shallow-{}", blake3::hash(shallow))
+        format!(
+            "{object_format}-shallow-{}",
+            short_key(blake3::hash(shallow))
+        )
     }
 }
 
@@ -134,6 +148,7 @@ fn open_store(p: &Project, root: &Path) -> Result<(String, PathBuf, bool)> {
                 &format!("--object-format={format}"),
             ],
         )?;
+        enable_long_paths(&stage)?;
         registry::atomic(&stage.join(STORE_OWNER), p.id().as_bytes())?;
         if !shallow.is_empty() {
             registry::atomic(&stage.join("shallow"), &shallow)?;
@@ -234,6 +249,7 @@ pub(crate) fn prepare(
                 &format!("--object-format={format}"),
             ],
         )?;
+        enable_long_paths(temp.path())?;
         // A C-quoted entry keeps this single absolute path from naming another alternate.
         let mut alternate = String::from("\"");
         for ch in git::path_str(&store.join("objects"))?.chars() {
