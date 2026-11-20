@@ -2,8 +2,8 @@
 
 ## What the test suites cover
 
-- **Rust tests** (`cargo test --locked`) cover the storage, index, registry, landing and recovery primitives, including interrupted operations, foreign data at workspace paths, same-size edits with restored timestamps, SHA-1 and SHA-256 repositories, and shallow histories.
-- **End-to-end scenarios** (`npm test`) build the release binary and drive every CLI command and every MCP tool in disposable repositories. They cover workspace isolation, ordinary Git use inside a graft, dependency sharing, landing and conflict reporting, undo, archive and restore, interruption recovery, edge-case paths and modes, and disk use against `git worktree add`. The run fails if any advertised CLI operation or MCP tool goes unexercised.
+- **Rust tests** (`cargo test --locked`) cover the storage, index, registry, landing and recovery primitives, including interrupted operations, foreign data at graft paths, same-size edits with restored timestamps, SHA-1 and SHA-256 repositories, and shallow histories.
+- **End-to-end scenarios** (`npm test`) build the release binary and drive every CLI command and every MCP tool in disposable repositories. They cover graft isolation, ordinary Git use inside a graft, dependency sharing, landing and conflict reporting, undo, archive and restore, interruption recovery, edge-case paths and modes, and disk use against `git worktree add`. The run fails if any advertised CLI operation or MCP tool goes unexercised.
 - **Coverage** (`npm run coverage`) runs the end-to-end suite against an instrumented build and reports the Rust lines it reaches.
 
 ## Continuous integration

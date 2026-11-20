@@ -1,6 +1,6 @@
 # Benchmarks
 
-These measurements compare `git graft spawn` with `git worktree add` the way a developer or agent uses them: create a checkout of a real repository, then run `git status` in it.
+These measurements compare `git graft new` with `git worktree add` the way a developer or agent uses them: create a checkout of a real repository, then run `git status` in it.
 
 ## Checkout speed
 
@@ -18,7 +18,7 @@ Ten rounds measured first checkouts and sixteen measured later ones. Each round 
 
 ### Small and freshly committed repositories
 
-Creating a standalone repository has a fixed cost that a linked worktree does not: reserving a recoverable workspace, snapshotting the object store and running Git's checks takes Graft about 150–190 ms even when there is almost nothing to check out. Below a few thousand files, `git worktree add` is therefore faster in absolute terms, although both finish in a fraction of a second. These first-checkout medians use synthetic repositories whose objects are all loose, as right after `git commit`:
+Creating a standalone repository has a fixed cost that a linked worktree does not: reserving a recoverable graft, snapshotting the object store and running Git's checks takes Graft about 150–190 ms even when there is almost nothing to check out. Below a few thousand files, `git worktree add` is therefore faster in absolute terms, although both finish in a fraction of a second. These first-checkout medians use synthetic repositories whose objects are all loose, as right after `git commit`:
 
 | Repository | git-graft | `git worktree add` |
 | --- | ---: | ---: |
@@ -40,7 +40,7 @@ A graft's unique data is its private Git index, refs and configuration. Working 
 
 ## Where the time goes
 
-A graft is a standalone repository, so creating one does more than a linked worktree: it reserves a recoverable workspace, snapshots the Git object store, and proves every reused file. Graft keeps this ahead of `git worktree add` with four techniques:
+A graft is a standalone repository, so creating one does more than a linked worktree: it reserves a recoverable graft, snapshots the Git object store, and proves every reused file. Graft keeps this ahead of `git worktree add` with four techniques:
 
 - **Directory clones.** A directory whose tracked contents are all reusable, and which holds nothing else in the primary, is cloned with one `clonefileat` call. On Homebrew this covers 3,442 of 3,484 entries and takes about 30 ms, against about 160 ms for per-file clones. Every cloned entry is then verified and anything unexpected is discarded.
 - **Git's stat test instead of hashing.** A primary file whose stat data matches its non-racy index entry and whose size matches its blob holds the staged bytes, by the same test `git status` relies on. Its stat must also be unchanged across the clone. Other files are hashed.
