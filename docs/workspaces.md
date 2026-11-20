@@ -10,7 +10,7 @@ On a compatible volume, a regular tracked file gets its own writable file identi
 
 If the selected commit itself tracks a symlink, Git's normal checkout rules apply. A trusted npm layer can also contain relative symlinks such as a package's command in `node_modules/.bin`. The layer checks that these links resolve inside the installation.
 
-On macOS and Linux, local and tip grafts can share verified files when Git checks them out with LF endings. This includes repositories using `core.autocrlf=input` or `* text=auto` with native LF output. Paths that require CRLF expansion, filters or working-tree encoding go through Git.
+On macOS and Linux, local and tip grafts can share verified files when Git checks them out with LF endings. This includes repositories using `core.autocrlf=input` or `* text=auto` with native LF output. With `core.autocrlf=true`, files without line-ending attributes are also shared when the primary checkout holds the CRLF bytes Git writes and its index vouches for them; Graft reads those blobs once to predict each checkout's size. Paths with explicit CRLF settings, filters or working-tree encoding go through Git.
 
 With local or tip history, a checkout can share ordinary files alongside a submodule. The private Git index records the selected submodule commit. Its directory starts empty, even when the primary has initialized the submodule and edited its files. Enabling recursive submodule checkout in the workspace’s effective Git configuration delegates checkout to Git.
 
