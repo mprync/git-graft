@@ -278,25 +278,78 @@ pub struct Change {
     pub status: String,
     pub path: String,
 }
-pub fn changes(dir: &Path) -> Result<Vec<Change>> {
-    let raw = bytes(
+/// `-c` overrides that disable every filter driver defined by the
+/// repository's own configuration, including files it includes.
+///
+/// `git status` runs a clean filter on any file whose stat changed. A
+/// workspace's `.git/config` is writable by whoever works in it, so without
+/// this an MCP client denied `--allow-exec` could still run a command through
+/// Graft. Drivers from global and system configuration are the user's own and
+/// stay active. An empty command makes Git skip a driver.
+fn repository_filter_overrides(dir: &Path) -> Result<Vec<String>> {
+    let listing = raw(
         dir,
         &[
-            "--no-optional-locks",
-            "-c",
-            "core.fsmonitor=false",
-            "-c",
-            "core.untrackedCache=false",
-            "status",
-            "--porcelain=v1",
+            "config",
+            "--show-scope",
+            "--name-only",
             "-z",
-            "--untracked-files=normal",
-            "--ignored=matching",
-            "--no-renames",
-            "--ignore-submodules=none",
+            "--get-regexp",
+            r"^filter\.",
         ],
     )?;
-    raw.split(|&b| b == 0)
+    ensure!(
+        matches!(listing.status.code(), Some(0 | 1)),
+        "read Git filter configuration: {}",
+        String::from_utf8_lossy(&listing.stderr).trim()
+    );
+    let mut drivers = std::collections::BTreeSet::new();
+    let mut fields = listing.stdout.split(|&b| b == 0).filter(|f| !f.is_empty());
+    while let (Some(scope), Some(key)) = (fields.next(), fields.next()) {
+        if matches!(scope, b"global" | b"system") {
+            continue;
+        }
+        let key = std::str::from_utf8(key).context("Git filter names must be UTF-8")?;
+        let driver = key
+            .strip_prefix("filter.")
+            .and_then(|rest| rest.rsplit_once('.'))
+            .map(|(driver, _)| driver)
+            .context("malformed Git filter key")?;
+        drivers.insert(driver.to_owned());
+    }
+    Ok(drivers
+        .iter()
+        .flat_map(|driver| {
+            ["clean=", "smudge=", "process=", "required=false"]
+                .map(|setting| format!("filter.{driver}.{setting}"))
+        })
+        .flat_map(|setting| ["-c".to_owned(), setting])
+        .collect())
+}
+
+pub fn changes(dir: &Path) -> Result<Vec<Change>> {
+    // Settings shared by the status and any follow-up hashing.
+    let mut overrides = vec![
+        "-c".to_owned(),
+        "core.fsmonitor=false".to_owned(),
+        "-c".to_owned(),
+        "core.untrackedCache=false".to_owned(),
+    ];
+    overrides.extend(repository_filter_overrides(dir)?);
+    let mut status: Vec<&str> = vec!["--no-optional-locks"];
+    status.extend(overrides.iter().map(String::as_str));
+    status.extend([
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=normal",
+        "--ignored=matching",
+        "--no-renames",
+        "--ignore-submodules=none",
+    ]);
+    let raw = bytes(dir, &status)?;
+    let mut changes = raw
+        .split(|&b| b == 0)
         .filter(|r| !r.is_empty())
         .map(|r| {
             ensure!(r.len() > 3 && r[2] == b' ', "malformed Git status record");
@@ -305,7 +358,65 @@ pub fn changes(dir: &Path) -> Result<Vec<Change>> {
                 path: String::from_utf8_lossy(&r[3..]).into_owned(),
             })
         })
-        .collect()
+        .collect::<Result<Vec<_>>>()?;
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    changes.extend(subsecond_edits(dir, &overrides, &changes)?);
+    Ok(changes)
+}
+
+/// Edits Git reports clean because it compares timestamps in whole seconds,
+/// confirmed by hashing the files as `git add` would. `overrides` are the
+/// `-c` settings used for the status, so no repository filter runs.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn subsecond_edits(dir: &Path, overrides: &[String], reported: &[Change]) -> Result<Vec<Change>> {
+    let git_dir = dir.join(".git");
+    if !fs::symlink_metadata(&git_dir).is_ok_and(|metadata| metadata.is_dir()) {
+        return Ok(Vec::new());
+    }
+    let suspects: Vec<_> = crate::storage::subsecond_changes(&git_dir, dir)
+        .into_iter()
+        .filter(|(name, _)| {
+            let name = String::from_utf8_lossy(name);
+            !reported.iter().any(|change| change.path == name)
+        })
+        .collect();
+    if suspects.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut input = Vec::new();
+    for (name, _) in &suspects {
+        input.extend_from_slice(name);
+        input.push(b'\n');
+    }
+    let mut stdin = tempfile::tempfile()?;
+    std::io::Write::write_all(&mut stdin, &input)?;
+    std::io::Seek::rewind(&mut stdin)?;
+    let mut hash = command(dir);
+    hash.arg("--no-optional-locks")
+        .args(overrides)
+        .args(["hash-object", "--stdin-paths"])
+        .stdin(stdin);
+    let output = hash.output()?;
+    ensure!(
+        output.status.success(),
+        "hash changed files: {}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+    let hashes = String::from_utf8(output.stdout)?;
+    let hashes: Vec<&str> = hashes.lines().collect();
+    ensure!(
+        hashes.len() == suspects.len(),
+        "Git hashed an unexpected number of files"
+    );
+    Ok(suspects
+        .into_iter()
+        .zip(hashes)
+        .filter(|((_, staged), now)| staged != now)
+        .map(|((name, _), _)| Change {
+            status: " M".into(),
+            path: String::from_utf8_lossy(&name).into_owned(),
+        })
+        .collect())
 }
 
 /// A clean porcelain status can hide user work behind index flags or a paused
@@ -386,6 +497,54 @@ pub(crate) fn check_idle_with_locks(dir: &Path, index: bool, head: bool) -> Resu
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
+
+    /// A filter defined in the repository's own config, directly or through an
+    /// include, never runs when Graft reads the status.
+    #[cfg(unix)]
+    #[test]
+    fn status_never_runs_repository_defined_filters() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo)?;
+        bytes(&repo, &["init", "-q", "--template="])?;
+        fs::write(repo.join("f.txt"), "a\n")?;
+        bytes(&repo, &["add", "f.txt"])?;
+        bytes(
+            &repo,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-qm",
+                "x",
+            ],
+        )?;
+        let marker = temp.path().join("ran");
+        let command = format!("touch '{}'; cat", marker.display());
+        bytes(&repo, &["config", "filter.direct.clean", &command])?;
+        bytes(&repo, &["config", "filter.direct.required", "true"])?;
+        let included = temp.path().join("included");
+        fs::write(
+            &included,
+            format!("[filter \"a.b\"]\n\tprocess = {command}\n"),
+        )?;
+        bytes(
+            &repo,
+            &["config", "include.path", included.to_str().unwrap()],
+        )?;
+        fs::create_dir_all(repo.join(".git/info"))?;
+        fs::write(
+            repo.join(".git/info/attributes"),
+            "f.txt filter=direct\n* filter=a.b\n",
+        )?;
+        // A changed stat makes Git consult the clean filter.
+        fs::write(repo.join("f.txt"), "a\n")?;
+        changes(&repo)?;
+        assert!(!marker.exists(), "a repository-defined filter ran");
+        Ok(())
+    }
 
     #[test]
     fn internal_git_does_not_fetch_missing_promisor_objects() -> Result<()> {

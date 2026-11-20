@@ -21,6 +21,8 @@ use std::{
 mod cache;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod index_stat;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(crate) use index_stat::subsecond_changes;
 mod local;
 mod tip_index;
 pub(crate) use tip_index::TipIndex;

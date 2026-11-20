@@ -8,16 +8,24 @@
 //! afterwards; a clone that picked up a concurrently created entry is discarded
 //! and its files take the per-file path. Every cloned entry is then verified
 //! before its stat data is recorded: a regular file by Git's own stat test on
-//! an unchanged donor or by hashing its bytes, a link by hashing its target. An entry that
-//! fails verification is removed and left for Git to check out.
+//! an unchanged donor or by hashing its bytes, a link by hashing its target.
+//! An entry that fails verification is removed and left for Git to check out.
 use super::{link_matches, verified_blob};
-use crate::storage::{Counts, Entry, cache::Stamp, index_stat, native::Root};
+use crate::storage::{
+    Counts, Entry,
+    cache::Stamp,
+    index_stat,
+    native::{self, Root},
+};
 use anyhow::{Context, Result};
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
     ffi::OsStr,
     io,
-    os::unix::{ffi::OsStrExt, fs::PermissionsExt},
+    os::unix::{
+        ffi::OsStrExt,
+        fs::{MetadataExt, PermissionsExt},
+    },
     path::Path,
 };
 
@@ -228,7 +236,7 @@ pub(super) fn clone_directories<'a>(
                         // Stamp donor files before cloning them.
                         let before = stat_donors(files, &members, &donor, policy.reuse_ancestors)?;
                         let shape = self::shape(files, &members, &name);
-                        if clone_one(&name, &shape, &donor, &destination, policy.reuse_ancestors)? {
+                        if clone_one(&name, &shape, &donor, &destination, policy)? {
                             clones.push(Clone {
                                 name,
                                 members,
@@ -379,8 +387,9 @@ fn clone_one(
     shape: &Shape,
     donor: &Root,
     destination: &Root,
-    reuse_ancestors: bool,
+    policy: Policy<'_>,
 ) -> Result<bool> {
+    let (mode, reuse_ancestors) = (policy.mode, policy.reuse_ancestors);
     let target = path(name);
     destination.create_parent(target)?;
     match destination.clone_directory(target, donor) {
@@ -389,11 +398,26 @@ fn clone_one(
             return Err(error)
                 .with_context(|| format!("checkout destination exists: {}", target.display()));
         }
-        Err(_) => return Ok(false),
+        Err(_) => {
+            // A failed clone may still have left part of a tree behind.
+            if destination.entry_is_directory(target).is_ok() {
+                destination
+                    .discard_tree(target)
+                    .with_context(|| format!("discard partial clone {}", target.display()))?;
+            }
+            return Ok(false);
+        }
     }
     // An entry created in the donor between its listing and the clone would
-    // have been copied too. Such a clone is ours to discard.
-    if mismatched(destination, shape, reuse_ancestors).is_ok_and(|bad| bad.is_empty()) {
+    // have been copied too. Such a clone is ours to discard, as is one whose
+    // directories carry flags or attributes Git would not create.
+    if mismatched(destination, shape, reuse_ancestors).is_ok_and(|bad| bad.is_empty())
+        && shape.keys().all(|directory| {
+            destination
+                .settle_directory(path(directory), mode)
+                .unwrap_or(false)
+        })
+    {
         return Ok(true);
     }
     destination
@@ -437,34 +461,31 @@ fn verify(
         let info = destination.link_stat(file_path)?;
         return Ok(Outcome::Installed(index_stat::Stat::from_libc(&info), None));
     }
-    let Ok(info) = destination.regular_stat(file_path) else {
+    let Ok((mut file, metadata)) = destination.regular_metadata(file_path) else {
         return Ok(Outcome::Broken);
     };
-    // A donor whose stat Git itself trusts, unchanged across the clone, needs
-    // no hashing.
-    let verified = checked.before.is_some_and(|before| {
-        trusted_donor(donor, file_path, before, entry, policy.trusted)
-            || donor_unchanged(donor, file_path, before, entry, buffer, policy.sha256)
-    }) || destination.regular_metadata(file_path).is_ok_and(
-        |(mut file, metadata)| {
-            verified_blob(&mut file, &metadata, buffer, &entry.blob, policy.sha256)
-        },
-    );
+    // Git writes a file with no flags or user extended attributes. A donor
+    // whose stat Git itself trusts, unchanged across the clone, needs no
+    // hashing.
+    let verified = native::plain(&file, &metadata).unwrap_or(false)
+        && (checked.before.is_some_and(|before| {
+            trusted_donor(donor, file_path, before, entry, policy.trusted)
+                || donor_unchanged(donor, file_path, before, entry, buffer, policy.sha256)
+        }) || verified_blob(&mut file, &metadata, buffer, &entry.blob, policy.sha256));
     if !verified {
         destination.discard(file_path)?;
         return Ok(Outcome::Missing);
     }
     let wanted = entry.creation_mode(policy.mode);
-    let info = if info.st_mode as u32 & 0o7777 != wanted {
-        let (file, _) = destination.regular_metadata(file_path)?;
+    let metadata = if metadata.mode() & 0o7777 != wanted {
         file.set_permissions(std::fs::Permissions::from_mode(wanted))?;
-        destination.regular_stat(file_path)?
+        file.metadata()?
     } else {
-        info
+        metadata
     };
     Ok(Outcome::Installed(
-        index_stat::Stat::from_libc(&info),
-        Some(info.st_size as u64),
+        index_stat::Stat::from_metadata(&metadata),
+        Some(metadata.len()),
     ))
 }
 
@@ -514,6 +535,7 @@ fn donor_unchanged(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::ffi::OsStringExt;
 
     fn entry(name: &str, mode: u32) -> Entry {
         Entry {
@@ -587,6 +609,22 @@ mod tests {
             blob: blob(b"0.txt"),
             mode: 0o120000,
         });
+        // A user extended attribute that Git would not create.
+        let tagged =
+            std::ffi::CString::new(donor_path.join("src/b/5.txt").into_os_string().into_vec())?;
+        assert_eq!(
+            unsafe {
+                libc::setxattr(
+                    tagged.as_ptr(),
+                    c"com.example.tag".as_ptr(),
+                    c"x".as_ptr().cast(),
+                    1,
+                    0,
+                    0,
+                )
+            },
+            0
+        );
         // Untracked in docs, and one tracked file whose donor bytes changed.
         std::fs::write(donor_path.join("docs/.env"), b"SECRET=1\n")?;
         std::fs::write(donor_path.join("src/a/0.txt"), b"edited\n")?;
@@ -597,7 +635,7 @@ mod tests {
         let policy = Policy {
             trusted: None,
             links: true,
-            mode: 0o644,
+            mode: 0o755,
             sha256: false,
             reuse_ancestors: false,
         };
@@ -615,17 +653,26 @@ mod tests {
             .collect();
         assert_eq!(covered.len(), 2 * MIN_FILES + 1);
         assert!(covered.iter().all(|name| name.starts_with("src/")));
-        // The edited file failed verification: removed and left for Git.
-        assert_eq!(cloned.missing.len(), 1);
-        assert_eq!(cloned.missing[0].name, b"src/a/0.txt");
+        // The edited and tagged files failed verification: removed and left for Git.
+        let mut missing: Vec<_> = cloned
+            .missing
+            .iter()
+            .map(|entry| entry.name.as_slice())
+            .collect();
+        missing.sort();
+        assert_eq!(
+            missing,
+            [b"src/a/0.txt".as_slice(), b"src/b/5.txt".as_slice()]
+        );
         assert!(!destination_path.join("src/a/0.txt").exists());
-        assert_eq!(cloned.installed.len(), 2 * MIN_FILES);
+        assert!(!destination_path.join("src/b/5.txt").exists());
+        assert_eq!(cloned.installed.len(), 2 * MIN_FILES - 1);
         assert_eq!(
             std::fs::read_link(destination_path.join("src/b/link"))?,
             Path::new("0.txt")
         );
         // Symbolic links are installed but not counted as cloned file data.
-        assert_eq!(cloned.counts.files, 2 * MIN_FILES as u64 - 1);
+        assert_eq!(cloned.counts.files, 2 * MIN_FILES as u64 - 2);
         assert_eq!(
             std::fs::read(destination_path.join("src/b/3.txt"))?,
             b"src/b/3.txt\n"

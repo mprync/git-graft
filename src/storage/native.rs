@@ -289,6 +289,21 @@ impl Root {
         })
     }
 
+    /// Whether the directory at `path` carries no flags or user extended
+    /// attributes, as Git would create it. Sets its permissions to `mode`.
+    #[cfg(target_os = "macos")]
+    pub(super) fn settle_directory(&self, path: &Path, mode: u32) -> io::Result<bool> {
+        let directory = self.subdirectory(path)?;
+        let metadata = directory.metadata()?;
+        if !plain(&directory, &metadata)? {
+            return Ok(false);
+        }
+        if metadata.mode() & 0o7777 != mode {
+            directory.set_permissions(fs::Permissions::from_mode(mode))?;
+        }
+        Ok(true)
+    }
+
     /// `lstat` a symbolic link on this root's device.
     #[cfg(target_os = "macos")]
     pub(super) fn link_stat(&self, path: &Path) -> io::Result<libc::stat> {

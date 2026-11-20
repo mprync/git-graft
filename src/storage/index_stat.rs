@@ -7,9 +7,12 @@
 //! installed inode immediately after installation, and an index entry is only
 //! updated when its stage, mode and object ID match what was verified.
 //!
-//! Cloned files keep the donor's modification time, so Git never treats them as
-//! racily clean. Any later write changes the nanosecond ctime Git compares, so a
-//! same-size edit that restores the old mtime is still detected.
+//! Cloned files keep the donor's modification time, so Git does not treat them
+//! as racily clean. Any later write changes the file's ctime. Git builds that
+//! compare whole seconds only (Homebrew's macOS Git, for one) cannot see a
+//! same-size edit that restores the modification time within the same second;
+//! [`subsecond_changes`] finds those edits from the nanosecond stamps the index
+//! records, so Graft's own clean checks never miss them.
 use anyhow::{Context, Result, ensure};
 use sha2::Digest;
 use std::{collections::HashMap, fs, path::Path};
@@ -344,6 +347,46 @@ impl Trusted {
     }
 }
 
+/// Tracked files in `worktree` whose `lstat` differs from the index at
+/// `git_dir/index` only in the sub-second parts of its timestamps, each with
+/// its staged object ID.
+///
+/// Git compares whole seconds unless it was built with `USE_NSEC`, so it
+/// reports such a file clean without reading it. The index still records
+/// nanoseconds, which exposes a same-size edit that restored the old
+/// modification time within the same second.
+#[cfg(unix)]
+pub(crate) fn subsecond_changes(git_dir: &Path, worktree: &Path) -> Vec<(Vec<u8>, String)> {
+    use std::{ffi::OsStr, os::unix::ffi::OsStrExt};
+    let index = git_dir.join("index");
+    let Some(recorded) = [20, 32]
+        .into_iter()
+        .find_map(|width| Trusted::read(&index, width, HashMap::new()))
+    else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    for (name, (stat, oid)) in recorded.entries {
+        // Empty stat data already makes Git compare the contents.
+        if stat[..24].iter().chain(&stat[28..]).all(|&b| b == 0) {
+            continue;
+        }
+        let Ok(metadata) = fs::symlink_metadata(worktree.join(OsStr::from_bytes(&name))) else {
+            continue;
+        };
+        let mut current = [0; STAT];
+        Stat::from_metadata(&metadata).write(&mut current);
+        let same = |range: std::ops::Range<usize>| current[range.clone()] == stat[range];
+        let identical = same(0..24) && same(28..STAT);
+        // ctime and mtime seconds, device, inode, uid, gid and size.
+        let whole_seconds = same(0..4) && same(8..12) && same(16..24) && same(28..STAT);
+        if whole_seconds && !identical {
+            found.push((name, oid));
+        }
+    }
+    found
+}
+
 fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write;
     bytes.iter().fold(String::new(), |mut out, b| {
@@ -472,9 +515,18 @@ mod tests {
             .unwrap()
             .set_modified(before)
             .unwrap();
-        assert_eq!(
-            git(&target, &["status", "--porcelain"]),
-            " M deep/nested/dir/b.txt\n"
+        // Git built without nanosecond timestamps may call this clean when the
+        // edit lands in the same second; Graft's own status never does.
+        let changes = crate::git::changes(&target).unwrap();
+        assert!(
+            changes
+                .iter()
+                .any(|change| change.path == "deep/nested/dir/b.txt" && change.status == " M"),
+            "{:?}",
+            changes
+                .iter()
+                .map(|change| (&change.status, &change.path))
+                .collect::<Vec<_>>()
         );
     }
 

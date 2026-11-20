@@ -904,15 +904,16 @@ pub(super) mod direct {
             // assume-unchanged file or a checkout produced with old filters.
             // Git's own stat test, unchanged across the clone below, proves
             // the bytes; otherwise hash them, catching same-size edits.
-            let trusted = trusted.is_some_and(|trusted| {
-                trusted.holds(
-                    &entry.name,
-                    &entry.blob,
-                    entry.mode,
-                    &index_stat::Stat::from_metadata(&metadata),
-                    metadata.len(),
-                )
-            });
+            let trusted = native::plain(&file, &metadata).unwrap_or(false)
+                && trusted.is_some_and(|trusted| {
+                    trusted.holds(
+                        &entry.name,
+                        &entry.blob,
+                        entry.mode,
+                        &index_stat::Stat::from_metadata(&metadata),
+                        metadata.len(),
+                    )
+                });
             if !same_mode
                 || (!trusted
                     && !verified_blob(&mut file, &metadata, &mut buffer, &entry.blob, sha256))
