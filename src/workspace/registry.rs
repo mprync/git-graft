@@ -144,30 +144,8 @@ fn unix_file_id(meta: &fs::Metadata) -> FileId {
 
 #[cfg(windows)]
 fn file_id(path: &Path) -> Result<FileId> {
-    use std::os::windows::{fs::OpenOptionsExt, io::AsRawHandle};
-    use windows_sys::Win32::Storage::FileSystem::{
-        BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
-        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, GetFileInformationByHandle,
-    };
-    let file = fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
-        .open(path)?;
-    let mut info = BY_HANDLE_FILE_INFORMATION::default();
-    // Both the directory handle and output storage live through the call.
-    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
-        return Err(io::Error::last_os_error().into());
-    }
-    ensure!(
-        info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)
-            == FILE_ATTRIBUTE_DIRECTORY,
-        "expected an ordinary directory at {}",
-        path.display()
-    );
-    Ok(FileId {
-        volume: u64::from(info.dwVolumeSerialNumber),
-        file: (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
-    })
+    let (volume, file) = crate::cache::windows_directory_id(path, "directory")?;
+    Ok(FileId { volume, file })
 }
 
 #[cfg(not(any(unix, windows)))]

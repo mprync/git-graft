@@ -27,6 +27,36 @@ pub(crate) struct DirectoryIdentity {
     created: Option<SystemTime>,
 }
 
+/// The volume serial number and file index of an ordinary Windows directory,
+/// opened without following a reparse point. `what` names it in errors.
+#[cfg(windows)]
+pub(crate) fn windows_directory_id(path: &Path, what: &str) -> Result<(u64, u64)> {
+    use std::os::windows::{fs::OpenOptionsExt, io::AsRawHandle};
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
+        FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, GetFileInformationByHandle,
+    };
+    let directory = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)?;
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    // The directory handle and output storage are live through this call.
+    if unsafe { GetFileInformationByHandle(directory.as_raw_handle(), &mut info) } == 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    ensure!(
+        info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)
+            == FILE_ATTRIBUTE_DIRECTORY,
+        "expected an ordinary {what} at {}",
+        path.display()
+    );
+    Ok((
+        u64::from(info.dwVolumeSerialNumber),
+        (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
+    ))
+}
+
 pub(crate) fn directory_identity(path: &Path) -> Result<DirectoryIdentity> {
     let metadata = check_unmounted_directory(path, false)?;
     #[cfg(unix)]
@@ -40,30 +70,11 @@ pub(crate) fn directory_identity(path: &Path) -> Result<DirectoryIdentity> {
     }
     #[cfg(windows)]
     {
-        use std::os::windows::{fs::OpenOptionsExt, io::AsRawHandle};
-        use windows_sys::Win32::Storage::FileSystem::{
-            BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT,
-            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, GetFileInformationByHandle,
-        };
-        let directory = fs::OpenOptions::new()
-            .read(true)
-            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
-            .open(path)?;
-        let mut info = BY_HANDLE_FILE_INFORMATION::default();
-        // The directory handle and output storage are live through this call.
-        if unsafe { GetFileInformationByHandle(directory.as_raw_handle(), &mut info) } == 0 {
-            return Err(std::io::Error::last_os_error().into());
-        }
-        ensure!(
-            info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)
-                == FILE_ATTRIBUTE_DIRECTORY,
-            "expected an ordinary cache directory at {}",
-            path.display()
-        );
         let _ = metadata;
+        let (device, file) = windows_directory_id(path, "cache directory")?;
         Ok(DirectoryIdentity {
-            device: u64::from(info.dwVolumeSerialNumber),
-            file: (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
+            device,
+            file,
             created: None,
         })
     }
