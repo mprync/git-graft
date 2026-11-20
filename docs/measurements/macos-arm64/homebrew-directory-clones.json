@@ -1,0 +1,248 @@
+{
+ "fixture": {
+  "repository": "Homebrew/brew",
+  "head": "bc63375ac3a4d6debb1ceb441ae6e22854f0909a",
+  "tracked_entries": 3484,
+  "regular_files": 3318,
+  "symlinks": 166
+ },
+ "platform": "macOS arm64, APFS, Git 2.56.0",
+ "release": {
+  "sha256": "de4df22402e77e60ebe4ad41eeb08c9d208606287d9d66f4f16134ea9d6f03d3"
+ },
+ "method": "Each arm gets its own APFS clone of one Homebrew checkout, followed by git status so the index matches the new inodes and the data is warm, as after git clone. 'first' times the first graft or worktree from that checkout; 'repeat' times the second after an untimed first. Arms rotate and alternate order each round. Every result must have a clean git status. 'previous' is the release before directory cloning and recorded stat data. Host load (load average 4-9 from other processes) is uncontrolled.",
+ "change": "Clone fully tracked directories with one APFS call each, verify every cloned entry by Git's index stat test on an unchanged donor or by hashing, record stat data in the new index, and run independent Git checks concurrently.",
+ "first": {
+  "previous": {
+   "spawn_median_ms": 543.8,
+   "spawn_min_ms": 396.8,
+   "first_status_median_ms": 351.8,
+   "spawn_plus_status_median_ms": 892.1,
+   "spawn_samples_ms": [
+    396.8,
+    769.0,
+    809.8,
+    530.3,
+    583.9,
+    557.3,
+    471.7,
+    582.6,
+    409.5,
+    420.9
+   ],
+   "first_status_samples_ms": [
+    342.2,
+    527.3,
+    485.8,
+    352.6,
+    351.1,
+    344.1,
+    356.8,
+    376.4,
+    350.4,
+    342.9
+   ]
+  },
+  "graft": {
+   "spawn_median_ms": 427.6,
+   "spawn_min_ms": 388.2,
+   "first_status_median_ms": 26.4,
+   "spawn_plus_status_median_ms": 454.3,
+   "spawn_samples_ms": [
+    487.0,
+    460.4,
+    486.9,
+    436.2,
+    419.1,
+    453.5,
+    388.2,
+    394.5,
+    417.5,
+    402.5
+   ],
+   "first_status_samples_ms": [
+    34.2,
+    29.3,
+    31.8,
+    28.3,
+    25.0,
+    26.1,
+    25.6,
+    26.5,
+    26.3,
+    25.9
+   ]
+  },
+  "worktree": {
+   "spawn_median_ms": 446.3,
+   "spawn_min_ms": 389.8,
+   "first_status_median_ms": 99.1,
+   "spawn_plus_status_median_ms": 549.5,
+   "spawn_samples_ms": [
+    561.9,
+    629.0,
+    472.9,
+    482.1,
+    389.8,
+    395.5,
+    396.2,
+    486.6,
+    419.6,
+    394.1
+   ],
+   "first_status_samples_ms": [
+    77.1,
+    50.7,
+    138.0,
+    126.9,
+    102.8,
+    106.9,
+    95.5,
+    110.0,
+    23.1,
+    30.1
+   ]
+  }
+ },
+ "repeat": {
+  "previous": {
+   "spawn_median_ms": 397.2,
+   "spawn_min_ms": 353.3,
+   "first_status_median_ms": 365.7,
+   "spawn_plus_status_median_ms": 768.2,
+   "spawn_samples_ms": [
+    406.3,
+    359.4,
+    353.3,
+    357.1,
+    377.1,
+    423.7,
+    389.0,
+    414.9,
+    548.2,
+    379.2,
+    405.5,
+    618.0,
+    380.7,
+    696.6,
+    354.1,
+    420.2
+   ],
+   "first_status_samples_ms": [
+    344.5,
+    341.7,
+    402.0,
+    373.9,
+    403.6,
+    360.0,
+    416.1,
+    364.2,
+    401.1,
+    341.8,
+    353.7,
+    415.9,
+    367.2,
+    403.6,
+    354.8,
+    357.0
+   ]
+  },
+  "graft": {
+   "spawn_median_ms": 294.1,
+   "spawn_min_ms": 275.9,
+   "first_status_median_ms": 27.6,
+   "spawn_plus_status_median_ms": 321.1,
+   "spawn_samples_ms": [
+    275.9,
+    277.1,
+    294.5,
+    318.4,
+    280.1,
+    293.8,
+    398.0,
+    361.7,
+    380.0,
+    279.8,
+    408.8,
+    330.0,
+    413.5,
+    278.1,
+    279.3,
+    278.3
+   ],
+   "first_status_samples_ms": [
+    24.1,
+    24.1,
+    26.5,
+    32.7,
+    26.8,
+    27.4,
+    29.9,
+    32.3,
+    51.6,
+    25.9,
+    29.8,
+    40.3,
+    33.0,
+    26.7,
+    27.4,
+    27.8
+   ]
+  },
+  "worktree": {
+   "spawn_median_ms": 283.1,
+   "spawn_min_ms": 253.1,
+   "first_status_median_ms": 99.9,
+   "spawn_plus_status_median_ms": 382.7,
+   "spawn_samples_ms": [
+    273.8,
+    257.4,
+    253.1,
+    267.0,
+    331.2,
+    268.7,
+    347.0,
+    268.8,
+    291.9,
+    306.0,
+    303.9,
+    297.4,
+    291.9,
+    370.2,
+    274.2,
+    274.0
+   ],
+   "first_status_samples_ms": [
+    36.5,
+    93.6,
+    97.4,
+    99.6,
+    100.2,
+    46.9,
+    107.5,
+    100.5,
+    103.6,
+    112.6,
+    119.5,
+    100.7,
+    100.3,
+    77.8,
+    99.0,
+    63.2
+   ]
+  }
+ },
+ "unique_data_bytes_per_checkout": {
+  "graft": [
+   327680,
+   299008,
+   299008
+  ],
+  "worktree": [
+   29941760,
+   29941760,
+   29941760
+  ],
+  "method": "e2e/apfs-file-data.py: union of physical APFS extents under a root holding the primary and three successive checkouts; each value is the increase after one more checkout."
+ }
+}

@@ -1,64 +1,47 @@
-# Verification and measurement
+# Verification
 
-## Platform scope
+## What the test suites cover
 
-`git graft doctor` probes the selected volume. Graft uses APFS cloning or Linux reflinks where supported and can use Git checkout or private copies elsewhere. The CI matrix defines macOS/APFS, Windows/NTFS, Linux/ext4 and Linux/Btrfs jobs. Check the results for the revision and filesystem you intend to use. [Native filesystem workflow](../.github/workflows/ci.yml)
+- **Rust tests** (`cargo test --locked`) cover the storage, index, registry, landing and recovery primitives, including interrupted operations, foreign data at workspace paths, same-size edits with restored timestamps, SHA-1 and SHA-256 repositories, and shallow histories.
+- **End-to-end scenarios** (`npm test`) build the release binary and drive every CLI command and every MCP tool in disposable repositories. They cover workspace isolation, ordinary Git use inside a graft, dependency sharing, landing and conflict reporting, undo, archive and restore, interruption recovery, edge-case paths and modes, and disk use against `git worktree add`. The run fails if any advertised CLI operation or MCP tool goes unexercised.
+- **Coverage** (`npm run coverage`) runs the end-to-end suite against an instrumented build and reports the Rust lines it reaches.
 
-## Local snapshots on November 19, 2026
+## Continuous integration
 
-On macOS arm64/APFS, the release built from `b92b8e2` (SHA-256 prefix `5933b8b3b0cb`) passed all 138 end-to-end scenarios on both Git 2.46.0 and Git 2.56.0. Each run covered all 23 CLI operations and 22 MCP tools. All 136 Rust tests passed. Local snapshot scenarios cover donor moves and repacks, independent writes, fallback for donors that borrow Git objects, and CRLF conversion from an external attributes file when Git checks out through a private staging directory.
+Every push runs the suites on four native filesystems, each with the copy-on-write backend it must use. [Workflow](../.github/workflows/ci.yml)
 
-The locked sources installed offline from a fresh local clone. Strict Clippy passed on macOS and for the Linux and Windows cross-targets, and the sources checked on Rust 1.89. Native Linux and Windows runtime results are still outstanding. [Release timings and APFS measurements](benchmarks.md#local-history-on-a-populated-homebrew-clone)
+| Runner | Filesystem | Expected backend |
+| --- | --- | --- |
+| macOS 15 | APFS | `clonefile` |
+| Ubuntu 24.04 | Btrfs (dedicated loop volume) | `reflink` |
+| Ubuntu 24.04 | ext4 (dedicated loop volume) | Git checkout, with Git 2.46.0 built from source to test the minimum version |
+| Windows Server 2025 | NTFS | Git checkout |
 
-## Isolated checkout performance changes on November 19, 2026
+A separate job builds the locked sources with Rust 1.89, the minimum supported version. Tagged releases build and smoke-test the installers on macOS, Linux and Windows. [Release workflow](../.github/workflows/release.yml)
 
-On macOS arm64, the optimized executable from `bc88f56` (SHA-256 prefix `d71a90823520`) passed all 134 TypeScript scenarios on both Git 2.46.0 and Git 2.56.0, with zero unavailable cases. The suite checks that a damaged cached entry disqualifies the entire parent snapshot. All 127 Rust tests passed. The application and tests passed strict Clippy on macOS and cross-target Clippy for Linux and Windows. Rust 1.89 compiled all targets on macOS. Native Linux and Windows runs remain unverified. [Optimized Homebrew disk measurements](measurements/macos-arm64/homebrew-optimized-apfs.json)
+## Latest local results
 
-## Previous release and coverage on November 19, 2026
-
-On macOS arm64, a clean local clone of commit `2db7f5a4ba3c` produced the installed release used for testing and benchmarking. Its SHA-256 begins with `054cc1f44f7f`. It passed all **134 TypeScript end-to-end scenarios** on both the minimum Git 2.46.0 and Git 2.56.0. Each run exercised all 23 advertised CLI operations and all 22 MCP tools. [Scenario results and executable identity](measurements/macos-arm64/verification.json)
-
-All 125 Rust tests passed. A separate instrumented macOS build passed the same 134 scenarios and covered **10,247 of 11,863 mapped Rust lines (86.38%)**. The macOS build and the Linux and Windows GNU cross-targets passed strict Clippy for the application and test targets. Native Windows/NTFS, Linux/ext4 and Linux/Btrfs execution remains unverified for this release. [Platform test matrix](../.github/workflows/ci.yml)
-
-Recovery tests terminate a real landing process, verify the original branch and staged edits, and retry with the same workspace lease. They also cover ignored-file collisions, ref and index contention, interrupted undo and edits in an unrelated native checkout. Privacy tests check the exact objects transferred into SHA-1 and SHA-256 grafts and check that squashed private commits and transient blobs stay outside the primary repository and its Git mirrors.
-
-Dependency tests cover registration through CLI and MCP, reuse after the upstream package is removed, private writes, changed lockfiles, damaged caches and cleanup that preserves foreign data. Landing tests check ordinary source edits beside ignored installations, changed ignore rules and a Unicode case rename on APFS. They verify that the installed packages stay outside the primary repository. [Manager scenarios](../e2e/registered-managers.ts) · [Offline .NET proof](../e2e/nuget.ts)
-
-The RustSec scan reported zero known vulnerabilities across 124 locked entries. It retained one maintenance advisory for the transitive `chrono` 0.4.45 dependency. The npm audit reported zero vulnerabilities across the three locked development dependencies. These results apply to the lockfiles and advisory data used on the date above. [RustSec database revision](https://github.com/RustSec/advisory-db/tree/7133866a6b44d6d3e1994ae6a48a296553c3c3da) · [Chrono maintenance advisory](https://rustsec.org/advisories/RUSTSEC-2026-0543.html)
+On macOS arm64 (APFS), the release built from this repository passed all 165 Rust tests and all 149 end-to-end scenarios on both Git 2.46.0 and Git 2.56.0, exercising all 23 CLI operations and 22 MCP tools. Strict Clippy passed for macOS and the Windows GNU cross-target. Native Linux and Windows execution is verified by CI.
 
 ## Toolchain requirements
 
-Use Git 2.46 or newer and Rust 1.89 or newer. Git 2.46 introduced the symbolic-ref transactions Graft uses to guard checked-out branch updates. Graft also uses sparse-aware staging and disables lazy fetching so operations fail locally if required objects are missing. [Git 2.46 release notes](https://github.com/git/git/blob/v2.46.0/Documentation/RelNotes/2.46.0.txt) · [Git 2.45 release notes](https://github.com/git/git/blob/v2.45.0/Documentation/RelNotes/2.45.0.txt) · [Git sparse staging](https://github.com/git/git/blob/v2.36.0/Documentation/git-add.txt)
+Graft needs Git 2.46 or newer: it relies on the symbolic-ref transactions introduced in 2.46 to guard updates to checked-out branches, and disables lazy fetching so a missing object fails locally instead of reaching a remote. Building needs Rust 1.89 or newer for the standard library's file locks. [Git 2.46 release notes](https://github.com/git/git/blob/v2.46.0/Documentation/RelNotes/2.46.0.txt) · [Rust file locks](https://doc.rust-lang.org/std/fs/struct.File.html#method.lock)
 
-The locked build passed on macOS arm64 with Rust 1.89.0 and `rmcp` 3.11.0 using `cargo +1.89.0 build --offline --locked --all-targets`. Offline reproduction requires cached dependencies. Rust 1.89 stabilized the standard library file locks Graft uses. CI also defines a Rust 1.89 job on Ubuntu. [Rust file locks](https://doc.rust-lang.org/std/fs/struct.File.html#method.lock)
+Distribution Git packages can be older than 2.46; `git graft doctor` reports the Git version it found and whether it is supported.
 
-Check `git --version` and `git graft doctor` on the target host. Distribution packages and hosted runner images can have different Git versions. [Ubuntu 24.04 runner inventory](https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Readme.md)
-
-## Reproduce checks
-
-The end-to-end suite builds the locked release binary and runs it in disposable repositories.
+## Run the checks
 
 ```sh
+cargo fmt --all --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked
+npm ci
+npm run typecheck
 npm test
 ```
 
-It requires Node.js 24.5 or newer, npm, Git, Rust/Cargo, pnpm, Bun, uv and Python. Windows symlink cases require appropriate privileges. `npm ci` installs the locked development dependencies for `npm run typecheck`. The Rust suite runs with `cargo test --locked`. For instrumented coverage, install `llvm-tools-preview` or provide matching `LLVM_COV` and `LLVM_PROFDATA`, then run `npm run coverage`. Reports are written under `target/e2e/`.
+The end-to-end suite needs Node.js 24.5 or newer, npm, Git, Rust, pnpm, Bun, uv and Python. Set `GIT_GRAFT_TEST_VOLUME` to a writable directory to choose the filesystem under test, and run a single group with `node e2e/run.ts --group <name>`. Reports are written to `target/e2e/`. Windows symlink cases need Developer Mode or equivalent privileges.
 
-The suite exercises workspace isolation, Git operations, dependency handling, integration, recovery and MCP stdio. Failures and missing prerequisites should be investigated on the target system. Set `GIT_GRAFT_TEST_VOLUME` to an existing writable directory to select the fixture filesystem.
+For a real third-party package manager, run `node e2e/nuget.ts` with a .NET 8 SDK: it registers NuGet, removes a package from its offline feed, restores it from the project cache in a second graft, then upgrades one graft and builds both. [NuGet scenario](../e2e/nuget.ts)
 
-For a real third-party manager check, build the release binary and run `node e2e/nuget.ts` with a .NET SDK 8 or newer and Python on the path. The fixture registers NuGet, removes a package from its offline feed, restores it from the project cache in a second graft, then upgrades one graft and builds both. [NuGet fixture](../e2e/nuget.ts)
-
-## Measure a workflow
-
-Build the release binary before running the benchmark scripts.
-
-```sh
-cargo build --locked --release
-npm run bench:agents
-npm run bench:source
-npm run bench:source:real -- --repo /path/to/packed-repository
-```
-
-`bench:agents` and `bench:source` use synthetic fixtures. `bench:source:real` reads a full-history repository with packed objects and runs against disposable local clones. If you override the output path, choose a location outside the source repository. Record the revision, tool versions, filesystem and fixture settings with the reports. The two-task benchmark includes dependency changes, integration and recovery. Its `--mixed-history` option adds unrelated history to a pack.
-
-Measure wall time in a separate run from `--apfs-file-data` because the observer can warm filesystem caches. The observer measures shared and private regular-file extents. Directory records, inode metadata, extended attributes and resource forks are outside its scope. Signed whole-volume free-space changes can include unrelated writes and delayed allocation. [Release benchmarks and raw samples](benchmarks.md)
+[Benchmarks](benchmarks.md)
