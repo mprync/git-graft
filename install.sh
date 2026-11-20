@@ -200,6 +200,22 @@ extract() {
   esac
 }
 
+# install_manual <page> <binary directory>: put the manual page in the share/man
+# tree beside a .../bin directory, where man(1) finds it from PATH, so that
+# `git graft --help` works. Skipped for other directories and on Windows.
+install_manual() {
+  [ -f "$1" ] || return 0
+  case $2 in
+    */bin) man_dir="${2%/bin}/share/man/man1" ;;
+    *) return 0 ;;
+  esac
+  if mkdir -p "$man_dir" 2>/dev/null && cp "$1" "$man_dir/git-graft.1" 2>/dev/null; then
+    say "Installed the manual page to $man_dir"
+  else
+    warn "could not install the manual page; use 'git graft -h' for help"
+  fi
+}
+
 # install_binary <source file> <destination directory>: write beside the target, then rename.
 install_binary() {
   src=$1
@@ -337,6 +353,7 @@ main() {
 
   install_binary "$src" "$INSTALL_DIR"
   say "Installed $INSTALL_DIR/$EXE"
+  install_manual "$(dirname "$src")/git-graft.1" "$INSTALL_DIR"
   if "$INSTALL_DIR/$EXE" --version 2>/dev/null; then
     :
   else
@@ -346,7 +363,7 @@ main() {
   check_git
   path_hint "$INSTALL_DIR"
   say ""
-  say "Run: git graft --help"
+  say "Run: git graft -h"
 }
 
 main "$@"

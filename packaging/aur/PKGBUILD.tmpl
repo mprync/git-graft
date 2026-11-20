@@ -19,4 +19,5 @@ package() {
   cd "${srcdir}/git-graft-{{VERSION}}-${CARCH}-unknown-linux-musl"
   install -Dm755 git-graft "${pkgdir}/usr/bin/git-graft"
   install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  install -Dm644 git-graft.1 "${pkgdir}/usr/share/man/man1/git-graft.1"
 }

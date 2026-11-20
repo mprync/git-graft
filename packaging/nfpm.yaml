@@ -4,6 +4,7 @@
 #   ARCH         amd64 or arm64
 #   BINARY_PATH  path to the matching musl-linked git-graft binary
 #   LICENSE_PATH path to the repository LICENSE file
+#   MAN_PATH     path to the git-graft.1 manual page
 #
 #   VERSION=0.1.0 ARCH=amd64 BINARY_PATH=target/x86_64-unknown-linux-musl/release/git-graft \
 #     LICENSE_PATH=LICENSE nfpm package -f packaging/nfpm.yaml -p deb
@@ -29,6 +30,10 @@ contents:
       mode: 0755
   - src: ${LICENSE_PATH}
     dst: /usr/share/doc/git-graft/LICENSE
+    file_info:
+      mode: 0644
+  - src: ${MAN_PATH}
+    dst: /usr/share/man/man1/git-graft.1
     file_info:
       mode: 0644
 

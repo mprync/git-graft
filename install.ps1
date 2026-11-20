@@ -179,7 +179,7 @@ function Install-GitGraft {
 
         if (-not $NoPathUpdate) { Add-UserPath $InstallDir }
         Write-Host ''
-        Write-Host 'Run: git graft --help'
+        Write-Host 'Run: git graft -h'
     } finally {
         $ProgressPreference = $previousProgress
         if ($stagedFile -and (Test-Path -LiteralPath $stagedFile)) {

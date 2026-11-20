@@ -1,0 +1,108 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH git-graft 1  "git-graft 0.1.0" 
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH NAME
+git\-graft \- Copy\-on\-write Git workspaces for people and coding agents
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH SYNOPSIS
+\fBgit\-graft\fR [\fB\-\-repo\fR] [\fB\-\-json\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH DESCRIPTION
+Copy\-on\-write Git workspaces for people and coding agents
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH OPTIONS
+.TP
+\fB\-\-repo\fR \fI<REPO>\fR [default: .]
+Git checkout or subdirectory to manage
+.TP
+\fB\-\-json\fR
+Print compact JSON (the default is indented JSON)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.SH COMMANDS
+.TP
+\fBmcp\fR
+Serve the local repository over MCP on stdin/stdout
+.TP
+\fBspawn\fR
+Create an independent repository from a local commit
+.TP
+\fBlist\fR
+Show active and recoverable independent repositories
+.TP
+\fBstatus\fR
+Inspect the workspace, including its current HEAD and files
+.TP
+\fBdoctor\fR
+Check local Git and source\-sharing capabilities
+.TP
+\fBheartbeat\fR
+Renew the workspace lease
+.TP
+\fBenv\fR
+Show this workspace's runtime and cache paths
+.TP
+\fBexec\fR
+Execute a program in the workspace
+.TP
+\fBregister\-manager\fR
+Register a package manager for cache and dependency reuse
+.TP
+\fBlist\-managers\fR
+List registered package managers
+.TP
+\fBunregister\-manager\fR
+Remove a registered package manager
+.TP
+\fBadd\-dep\fR
+Add dependencies or perform a locked install
+.TP
+\fBseed\-layer\fR
+Seed installed dependencies from the primary checkout
+.TP
+\fBlayer\fR
+Save, restore or forget an installed dependency layer
+.TP
+\fBland\fR
+Transfer committed work to a local branch and archive the repository
+.TP
+\fBdrop\fR
+Archive the complete independent repository and its files
+.TP
+\fBrestore\fR
+Reopen an archived repository
+.TP
+\fBundo\-land\fR
+Append a reversal commit to the exact landed destination
+.TP
+\fBlock\fR
+Protect against moves, retirement and cleanup
+.TP
+\fBunlock\fR
+Release an explicit workspace lock
+.TP
+\fBmove\fR
+Move a workspace to an available path on its volume
+.TP
+\fBrepair\fR
+Reconnect a workspace that was moved using the filesystem
+.TP
+\fBgc\fR
+Preview or archive eligible expired workspaces
+.PP
+Run \fBgit graft\fR \fICOMMAND\fR \fB\-\-help\fR for a command's options.
+.SH SEE ALSO
+\fBgit\-worktree\fR(1), https://github.com/mprync/git\-graft
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.SH VERSION
+v0.1.0

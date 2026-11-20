@@ -179,6 +179,8 @@ jobs:
           if [[ "$TARGET" == *windows* ]]; then bin="git-graft.exe"; fi
           mkdir -p "dist/$stem"
           cp "target/$TARGET/release/$bin" LICENSE README.md "dist/$stem/"
+          # `git graft --help` opens this page once it is on the manual path.
+          if [[ "$TARGET" != *windows* ]]; then cp docs/man/git-graft.1 "dist/$stem/"; fi
           if [[ "$ARCHIVE" == "zip" ]]; then
             (cd dist && 7z a -tzip -mx=9 "$stem.zip" "$stem" > /dev/null)
           else
@@ -237,6 +239,7 @@ jobs:
               ARCH="$arch" \
               BINARY_PATH="extract/$target/$stem/git-graft" \
               LICENSE_PATH="extract/$target/$stem/LICENSE" \
+              MAN_PATH="extract/$target/$stem/git-graft.1" \
                 nfpm package --config packaging/nfpm.yaml --packager "$format" --target packages/
             done
           done
