@@ -1,13 +1,13 @@
 # nfpm configuration for the Linux packages (.deb, .rpm, .apk, Arch .pkg.tar.zst).
-# Driven by the release workflow, which sets these environment variables:
-#   VERSION      release version without the leading "v" (for example 0.1.0)
-#   ARCH         amd64 or arm64
-#   BINARY_PATH  path to the matching musl-linked git-graft binary
-#   LICENSE_PATH path to the repository LICENSE file
-#   MAN_PATH     path to the git-graft.1 manual page
+# Driven by the release workflow. It unpacks one release archive into ./stage
+# (git-graft, LICENSE and git-graft.1) and sets these environment variables:
+#   VERSION  release version without the leading "v" (for example 0.1.0)
+#   ARCH     amd64 or arm64
+# nfpm expands variables only in fields such as arch and version, never in
+# contents paths, so the files come from the fixed stage directory.
 #
-#   VERSION=0.1.0 ARCH=amd64 BINARY_PATH=target/x86_64-unknown-linux-musl/release/git-graft \
-#     LICENSE_PATH=LICENSE nfpm package -f packaging/nfpm.yaml -p deb
+#   mkdir stage && tar -xzf git-graft-0.1.0-x86_64-unknown-linux-musl.tar.gz -C stage --strip-components=1
+#   VERSION=0.1.0 ARCH=amd64 nfpm package -f packaging/nfpm.yaml -p deb
 name: git-graft
 arch: ${ARCH}
 platform: linux
@@ -24,15 +24,15 @@ homepage: https://github.com/mprync/git-graft
 license: MIT
 
 contents:
-  - src: ${BINARY_PATH}
+  - src: ./stage/git-graft
     dst: /usr/bin/git-graft
     file_info:
       mode: 0755
-  - src: ${LICENSE_PATH}
+  - src: ./stage/LICENSE
     dst: /usr/share/doc/git-graft/LICENSE
     file_info:
       mode: 0644
-  - src: ${MAN_PATH}
+  - src: ./stage/git-graft.1
     dst: /usr/share/man/man1/git-graft.1
     file_info:
       mode: 0644

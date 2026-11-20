@@ -233,14 +233,10 @@ jobs:
             arch="${pair%%:*}"
             target="${pair#*:}"
             stem="git-graft-${VERSION}-${target}"
-            mkdir -p "extract/$target"
-            tar -xzf "archives/$stem.tar.gz" -C "extract/$target"
+            rm -rf stage && mkdir stage
+            tar -xzf "archives/$stem.tar.gz" -C stage --strip-components=1
             for format in deb rpm apk archlinux; do
-              ARCH="$arch" \
-              BINARY_PATH="extract/$target/$stem/git-graft" \
-              LICENSE_PATH="extract/$target/$stem/LICENSE" \
-              MAN_PATH="extract/$target/$stem/git-graft.1" \
-                nfpm package --config packaging/nfpm.yaml --packager "$format" --target packages/
+              ARCH="$arch" nfpm package --config packaging/nfpm.yaml --packager "$format" --target packages/
             done
           done
           ls -l packages
@@ -339,7 +335,8 @@ jobs:
           set -euo pipefail
           mkdir tampered
           cp release/git-graft-* tampered/
-          sed 's/^./0/' release/SHA256SUMS > tampered/SHA256SUMS
+          # Flip each hash's first digit; a fixed digit would leave hashes starting with it intact.
+          awk '{ print (substr($0, 1, 1) == "0" ? "1" : "0") substr($0, 2) }' release/SHA256SUMS > tampered/SHA256SUMS
           bin="$RUNNER_TEMP/tampered-bin"
           if GIT_GRAFT_DOWNLOAD_BASE="file://$PWD/tampered" sh release/install.sh --to "$bin"; then
             echo "::error::install.sh accepted a tampered SHA256SUMS"
@@ -389,7 +386,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Path tampered | Out-Null
           Copy-Item release\git-graft-* tampered\
-          (Get-Content release\SHA256SUMS) -replace '^.', '0' | Set-Content tampered\SHA256SUMS
+          (Get-Content release\SHA256SUMS) | ForEach-Object { $(if ($_[0] -eq '0') { '1' } else { '0' }) + $_.Substring(1) } | Set-Content tampered\SHA256SUMS
           $dir = Join-Path $env:RUNNER_TEMP 'tampered\bin'
           $env:GIT_GRAFT_DOWNLOAD_BASE = ([Uri](Resolve-Path tampered).Path).AbsoluteUri
           pwsh -NoProfile -File release\install.ps1 -InstallDir $dir -NoPathUpdate
