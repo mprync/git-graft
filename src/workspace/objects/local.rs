@@ -327,51 +327,15 @@ impl Source {
         width: usize,
     ) -> Result<Value> {
         fs::create_dir(destination)?;
-        let (mut pack_bytes, mut index_bytes, mut loose_bytes) = (0, 0, 0);
-        let (mut pack_count, mut loose_count) = (0, 0);
-        for (name, listing) in &inventory.directories {
+        let mut totals = Totals::default();
+        let (loose, other): (Vec<_>, Vec<_>) = inventory
+            .directories
+            .iter()
+            .partition(|(_, listing)| listing.kind == Kind::Loose);
+        for (name, listing) in other {
             let target = destination.join(name);
             fs::create_dir(&target)?;
-            let directory = self.objects.directory(name)?;
-            ensure!(
-                directory.stamp()? == listing.stamp,
-                "Git object directory changed before cloning"
-            );
-            for (filename, entry) in &listing.entries {
-                let copy = match listing.kind {
-                    Kind::Info => continue,
-                    Kind::Pack if !is_pack_or_index(filename) => continue,
-                    _ => target.join(filename),
-                };
-                let file = directory.open(filename, libc::O_RDONLY | libc::O_NONBLOCK)?;
-                ensure!(
-                    *entry == Stamp::from(&file.metadata()?),
-                    "Git object changed before cloning"
-                );
-                clone_file(&file, &copy)?;
-                let cloned = open_regular(&copy)?;
-                let cloned_meta = cloned.metadata()?;
-                ensure!(
-                    cloned_meta.len() == entry.size
-                        && (cloned_meta.dev(), cloned_meta.ino()) != (entry.device, entry.inode)
-                        && cloned_meta.nlink() == 1
-                        && *entry == Stamp::from(&file.metadata()?),
-                    "Git object changed during cloning"
-                );
-                sync_snapshot_entry(&cloned)?;
-                match listing.kind {
-                    Kind::Pack if filename.as_bytes().ends_with(b".pack") => {
-                        pack_bytes += entry.size;
-                        pack_count += 1;
-                    }
-                    Kind::Pack => index_bytes += entry.size,
-                    Kind::Loose => {
-                        loose_bytes += entry.size;
-                        loose_count += 1;
-                    }
-                    Kind::Info => unreachable!(),
-                }
-            }
+            totals.merge(self.clone_entries(name, listing, &target)?);
             if listing.kind == Kind::Pack {
                 for name in listing
                     .entries
@@ -383,21 +347,181 @@ impl Source {
             }
             sync_snapshot_entry(&File::open(&target)?)?;
         }
+        // Loose objects can number in the thousands; their fan-out directories
+        // are independent, so several workers clone them.
+        const WORKERS: usize = 4;
+        let chunk = loose.len().div_ceil(WORKERS).max(1);
+        let loose_totals = std::thread::scope(|scope| -> Result<Vec<Totals>> {
+            let workers: Vec<_> = loose
+                .chunks(chunk)
+                .map(|batch| {
+                    scope.spawn(move || -> Result<Totals> {
+                        let mut totals = Totals::default();
+                        for (name, listing) in batch {
+                            totals.merge(self.clone_loose(
+                                name,
+                                listing,
+                                &destination.join(name),
+                            )?);
+                        }
+                        Ok(totals)
+                    })
+                })
+                .collect();
+            workers.into_iter().map(crate::workspace::joined).collect()
+        })?;
+        for loose in loose_totals {
+            totals.merge(loose);
+        }
         finish_snapshot_writeback(destination)?;
-        let bytes = pack_bytes + index_bytes + loose_bytes;
+        let bytes = totals.pack_bytes + totals.index_bytes + totals.loose_bytes;
         Ok(json!({
             "method": if cfg!(target_os = "macos") { "clonefile" } else { "reflink" },
             "source": "local-snapshot",
             "bytes": bytes,
-            "pack_bytes": pack_bytes,
-            "index_bytes": index_bytes,
-            "loose_bytes": loose_bytes,
+            "pack_bytes": totals.pack_bytes,
+            "index_bytes": totals.index_bytes,
+            "loose_bytes": totals.loose_bytes,
             "shared_bytes": bytes,
             "cache_bytes": 0,
-            "pack_count": pack_count,
-            "loose_count": loose_count,
+            "pack_count": totals.pack_count,
+            "loose_count": totals.loose_count,
             "object_format": format,
         }))
+    }
+
+    /// Clone each inventoried file of one object directory into `target`,
+    /// checking every source file's generation before and after.
+    fn clone_entries(&self, name: &OsStr, listing: &Listing, target: &Path) -> Result<Totals> {
+        let mut totals = Totals::default();
+        let directory = self.objects.directory(name)?;
+        ensure!(
+            directory.stamp()? == listing.stamp,
+            "Git object directory changed before cloning"
+        );
+        for (filename, entry) in &listing.entries {
+            let copy = match listing.kind {
+                Kind::Info => continue,
+                Kind::Pack if !is_pack_or_index(filename) => continue,
+                _ => target.join(filename),
+            };
+            let file = directory.open(filename, libc::O_RDONLY | libc::O_NONBLOCK)?;
+            ensure!(
+                *entry == Stamp::from(&file.metadata()?),
+                "Git object changed before cloning"
+            );
+            clone_file(&file, &copy)?;
+            let cloned = open_regular(&copy)?;
+            let cloned_meta = cloned.metadata()?;
+            ensure!(
+                cloned_meta.len() == entry.size
+                    && (cloned_meta.dev(), cloned_meta.ino()) != (entry.device, entry.inode)
+                    && cloned_meta.nlink() == 1
+                    && *entry == Stamp::from(&file.metadata()?),
+                "Git object changed during cloning"
+            );
+            sync_snapshot_entry(&cloned)?;
+            totals.add(listing.kind, filename, entry.size);
+        }
+        Ok(totals)
+    }
+
+    /// Clone one loose-object fan-out directory.
+    ///
+    /// On APFS the whole directory is cloned in one call. Its listing must then
+    /// match the inventory exactly, and each object must be an independent,
+    /// plain file of the inventoried size. The inventory taken again after
+    /// cloning rejects any source object that changed meanwhile.
+    #[cfg(target_os = "macos")]
+    fn clone_loose(&self, name: &OsStr, listing: &Listing, target: &Path) -> Result<Totals> {
+        const CLONE_NOFOLLOW: u32 = 0x0001;
+        const CLONE_NOOWNERCOPY: u32 = 0x0002;
+        let source = self.objects.directory(name)?;
+        ensure!(
+            source.stamp()? == listing.stamp,
+            "Git object directory changed before cloning"
+        );
+        let source_name = CString::new(name.as_bytes())?;
+        let target_name = CString::new(target.as_os_str().as_bytes())?;
+        if unsafe {
+            libc::clonefileat(
+                self.objects.0.as_raw_fd(),
+                source_name.as_ptr(),
+                libc::AT_FDCWD,
+                target_name.as_ptr(),
+                CLONE_NOFOLLOW | CLONE_NOOWNERCOPY,
+            )
+        } != 0
+        {
+            return Err(io::Error::last_os_error()).context("clone Git object directory");
+        }
+        let cloned = Directory::absolute(target)?;
+        let mut names = cloned.names()?;
+        names.sort_unstable();
+        ensure!(
+            source.stamp()? == listing.stamp && names.iter().eq(listing.entries.keys()),
+            "Git object directory changed during cloning"
+        );
+        let mut totals = Totals::default();
+        for (filename, entry) in &listing.entries {
+            let file = cloned.open(filename, libc::O_RDONLY | libc::O_NONBLOCK)?;
+            let metadata = file.metadata()?;
+            ensure!(
+                metadata.is_file()
+                    && metadata.len() == entry.size
+                    && (metadata.dev(), metadata.ino()) != (entry.device, entry.inode)
+                    && metadata.nlink() == 1
+                    && crate::storage::plain_file(&file, &metadata),
+                "Git object changed during cloning"
+            );
+            sync_snapshot_entry(&file)?;
+            totals.add(Kind::Loose, filename, entry.size);
+        }
+        sync_snapshot_entry(&cloned.0)?;
+        Ok(totals)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn clone_loose(&self, name: &OsStr, listing: &Listing, target: &Path) -> Result<Totals> {
+        fs::create_dir(target)?;
+        let totals = self.clone_entries(name, listing, target)?;
+        sync_snapshot_entry(&File::open(target)?)?;
+        Ok(totals)
+    }
+}
+
+/// Bytes and files copied into a snapshot, by kind.
+#[derive(Default)]
+struct Totals {
+    pack_bytes: u64,
+    index_bytes: u64,
+    loose_bytes: u64,
+    pack_count: u64,
+    loose_count: u64,
+}
+
+impl Totals {
+    fn add(&mut self, kind: Kind, name: &OsStr, size: u64) {
+        match kind {
+            Kind::Pack if name.as_bytes().ends_with(b".pack") => {
+                self.pack_bytes += size;
+                self.pack_count += 1;
+            }
+            Kind::Pack => self.index_bytes += size,
+            Kind::Loose => {
+                self.loose_bytes += size;
+                self.loose_count += 1;
+            }
+            Kind::Info => {}
+        }
+    }
+
+    fn merge(&mut self, other: Self) {
+        self.pack_bytes += other.pack_bytes;
+        self.index_bytes += other.index_bytes;
+        self.loose_bytes += other.loose_bytes;
+        self.pack_count += other.pack_count;
+        self.loose_count += other.loose_count;
     }
 }
 

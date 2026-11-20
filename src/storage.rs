@@ -23,6 +23,12 @@ mod cache;
 mod index_stat;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub(crate) use index_stat::subsecond_changes;
+
+/// Whether an open file carries no flags or user extended attributes.
+#[cfg(target_os = "macos")]
+pub(crate) fn plain_file(file: &std::fs::File, metadata: &std::fs::Metadata) -> bool {
+    native::plain(file, metadata).unwrap_or(false)
+}
 mod local;
 mod tip_index;
 pub(crate) use tip_index::TipIndex;

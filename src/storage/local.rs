@@ -82,8 +82,7 @@ fn materialize<F: FnOnce() -> Result<()>>(
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     return std::thread::scope(|scope| {
         let sizes = metadata.index.map(|manifest| {
-            let command = git_command(primary);
-            scope.spawn(move || direct::blob_sizes(command, &manifest.entries))
+            scope.spawn(move || direct::blob_sizes(|| git_command(primary), &manifest.entries))
         });
         materialize_with(
             workspace, state, oid, sparse, primary, metadata, ready, sizes,
@@ -381,7 +380,7 @@ pub(super) mod direct {
             let config = scope.spawn(|| raw_file_policy(checkout.worktree, gitlinks));
             let sizes = match sizes {
                 Some(early) => early,
-                None => scope.spawn(|| blob_sizes(checkout.proof_command(), files)),
+                None => scope.spawn(|| blob_sizes(|| checkout.proof_command(), files)),
             };
             // Git also applies info/attributes and user and system rules when
             // the selected tree has no .gitattributes of its own.
@@ -463,17 +462,39 @@ pub(super) mod direct {
     }
 
     /// Each regular file blob's size, or `None` if Git cannot report them all.
+    /// Reading a loose object's size inflates its header, so large sets are
+    /// split across several Git processes made by `command`.
     pub(super) fn blob_sizes(
-        mut command: Command,
+        command: impl Fn() -> Command + Sync,
         files: &[Entry],
     ) -> Option<HashMap<String, u64>> {
-        let mut input = Vec::new();
         let mut seen = std::collections::HashSet::new();
-        for entry in files.iter().filter(|entry| entry.regular()) {
-            if seen.insert(entry.blob.as_str()) {
-                input.extend_from_slice(entry.blob.as_bytes());
-                input.push(b'\n');
-            }
+        let blobs: Vec<&str> = files
+            .iter()
+            .filter(|entry| entry.regular())
+            .map(|entry| entry.blob.as_str())
+            .filter(|blob| seen.insert(*blob))
+            .collect();
+        let workers = if blobs.len() >= 1024 { 4 } else { 1 };
+        let shards = std::thread::scope(|scope| {
+            let handles: Vec<_> = blobs
+                .chunks(blobs.len().div_ceil(workers).max(1))
+                .map(|shard| scope.spawn(|| shard_sizes(command(), shard)))
+                .collect();
+            handles
+                .into_iter()
+                .map(crate::workspace::joined)
+                .collect::<Option<Vec<_>>>()
+        })?;
+        let sizes: HashMap<String, u64> = shards.into_iter().flatten().collect();
+        (sizes.len() == blobs.len()).then_some(sizes)
+    }
+
+    fn shard_sizes(mut command: Command, blobs: &[&str]) -> Option<Vec<(String, u64)>> {
+        let mut input = Vec::with_capacity(blobs.len() * 65);
+        for blob in blobs {
+            input.extend_from_slice(blob.as_bytes());
+            input.push(b'\n');
         }
         let mut stdin = tempfile::tempfile().ok()?;
         std::io::Write::write_all(&mut stdin, &input).ok()?;
@@ -487,7 +508,7 @@ pub(super) mod direct {
             ])
             .stdin(Stdio::from(stdin));
         let output = crate::git::bounded_stdout(&mut command, 64 << 20).ok()?;
-        let mut sizes = HashMap::with_capacity(seen.len());
+        let mut sizes = Vec::with_capacity(blobs.len());
         for line in output
             .split(|&b| b == b'\n')
             .filter(|line| !line.is_empty())
@@ -499,9 +520,9 @@ pub(super) mod direct {
             else {
                 return None;
             };
-            sizes.insert(oid.to_owned(), size.parse().ok()?);
+            sizes.push((oid.to_owned(), size.parse().ok()?));
         }
-        (sizes.len() == seen.len()).then_some(sizes)
+        Some(sizes)
     }
 
     // Decline aliases before either Git or clonefile creates their names.
