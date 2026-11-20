@@ -38,6 +38,28 @@ Each value is the increase in physical APFS data extents under a directory holdi
 
 A graft's unique data is its private Git index, refs and configuration. Working files and Git packs share their blocks with the primary checkout until they are edited, and an edit allocates only the blocks the editor writes. The measurement excludes directory records and inode metadata, which both methods create.
 
+## A hundred checkouts
+
+[`e2e/scale-bench.ts`](../e2e/scale-bench.ts) creates 100 checkouts of the same 3,484-entry repository one after another, once with `git worktree add` and once with `git graft add`, and measures the physical APFS file data they add. Git runs with default settings for both.
+
+| 100 checkouts | Disk added | Per checkout | Time for all 100 |
+| --- | ---: | ---: | ---: |
+| `git worktree add` | 2,854.7 MiB | 28.55 MiB | 38.2 s |
+| git-graft | **27.8 MiB** | **0.28 MiB** | 43.5 s |
+
+Grafts use 99.0% less disk. Creating the checkouts alone takes about as long either way; Graft's lead is in the first `git status` and in dependencies, below.
+
+## Checkouts with dependencies
+
+[`e2e/dependency-bench.ts`](../e2e/dependency-bench.ts) builds a web project whose dependencies are a typical React, Vite, TypeScript, Vitest and ESLint toolchain (238 packages, an 88 MB `node_modules`) and installs them once in the primary checkout. Each task then needs a checkout it can test in:
+
+| Median of 3 checkouts | Disk added | Ready to test |
+| --- | ---: | ---: |
+| `git worktree add`, then `npm ci` | 85.38 MiB | 742 ms |
+| `git graft add`, with the install shared once by `git graft deps share` | **0.16 MiB** | **237 ms** |
+
+A graft's `node_modules` shares its data with the primary's install, so it costs 99.8% less disk and the checkout is ready 3.1 times sooner. Both arms install from the same warm npm cache, offline.
+
 ## Where the time goes
 
 A graft is a standalone repository, so creating one does more than a linked worktree: it reserves a recoverable graft, snapshots the Git object store, and proves every reused file. Graft keeps this ahead of `git worktree add` with four techniques:
@@ -64,6 +86,8 @@ Synthetic workflows that include dependency installs, merging and recovery:
 ```sh
 npm run bench:agents
 npm run bench:workflow -- --mode shared --add-package
+node e2e/scale-bench.ts --repo /path/to/clone --workspaces 100   # disk for many checkouts
+node e2e/dependency-bench.ts                                      # real npm dependencies
 npm run bench        # three-round disk comparison used in CI
 ```
 
