@@ -871,7 +871,7 @@ pub(super) fn remove_import_pin(private: &Path, reference: &str, expected: &str)
     Ok(())
 }
 
-/// Copy the old and workspace commits into a private landing repository.
+/// Copy the old and workspace commits into a private merge repository.
 pub(super) fn import_plan_inputs(
     private: &Path,
     primary: &Path,

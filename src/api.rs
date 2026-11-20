@@ -299,7 +299,7 @@ pub struct Land {
     #[arg(long)]
     #[serde(default)]
     pub reconcile: bool,
-    /// Reverse an earlier land instead: append a commit that undoes it if the branch is still at the landed commit.
+    /// Reverse an earlier merge instead: append a commit that undoes it if the branch is still at the merged commit.
     #[arg(
         long,
         conflicts_with_all = ["into", "squash", "commit", "discard_ignored", "reconcile"]
@@ -309,7 +309,7 @@ pub struct Land {
 }
 
 impl Land {
-    /// Reject land-only options combined with `undo`. The CLI enforces this
+    /// Reject merge-only options combined with `undo`. The CLI enforces this
     /// through clap; JSON callers also need to say whether `into` was given,
     /// because it has a default.
     pub(crate) fn check_undo(&self, explicit_into: bool) -> anyhow::Result<()> {
@@ -326,53 +326,29 @@ impl Land {
     }
 }
 
-/// Archive one graft. The MCP `graft_prune` arguments.
-#[derive(Debug, Deserialize, Serialize, JsonSchema)]
+/// Arguments of `remove` and the MCP `graft_remove` tool: archive one graft.
+#[derive(Debug, Args, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DropWorkspace {
     /// Name of the graft.
     pub name: String,
-    /// The graft's lease, returned by graft_new.
+    /// The graft's lease, returned when it was added.
+    #[arg(long, env = "GIT_GRAFT_LEASE", hide_env_values = true)]
     pub lease: String,
-    /// Archive even with local work or unlanded commits. Keep the recovery lease.
+    /// Archive even with local work or unmerged commits. Keep the recovery lease.
+    #[arg(long)]
     #[serde(default)]
     pub discard: bool,
 }
 
-/// Preview or archive every expired graft, with optional cache cleanup.
-#[derive(Debug)]
+/// Arguments of `prune`: preview or archive every expired graft.
+#[derive(Debug, Args)]
 pub struct Gc {
-    /// Archive the eligible grafts and clean caches. The default is a preview.
+    /// Archive the expired grafts and clean caches. The default is a preview.
+    #[arg(long)]
     pub apply: bool,
     /// Also reclaim package caches and installed layers when all grafts are archived.
-    pub purge_cache: bool,
-}
-
-/// Arguments of `prune`: one named graft, or every expired graft.
-#[derive(Debug, Args)]
-#[command(group(clap::ArgGroup::new("target").required(true).args(["name", "expired"])))]
-pub struct Prune {
-    /// Graft to archive.
-    pub name: Option<String>,
-    /// Lease of the graft. Required with NAME.
-    #[arg(
-        long,
-        env = "GIT_GRAFT_LEASE",
-        hide_env_values = true,
-        required_unless_present = "expired"
-    )]
-    pub lease: Option<String>,
-    /// Archive even with local work or unlanded commits. Keep the recovery lease.
-    #[arg(long, conflicts_with = "expired")]
-    pub discard: bool,
-    /// Prune every graft whose lease has expired. Previews unless --apply is given.
     #[arg(long)]
-    pub expired: bool,
-    /// With --expired: archive the grafts instead of only previewing.
-    #[arg(long, conflicts_with = "name")]
-    pub apply: bool,
-    /// With --expired: also reclaim package caches and installed layers once all grafts are archived.
-    #[arg(long, conflicts_with = "name")]
     pub purge_cache: bool,
 }
 

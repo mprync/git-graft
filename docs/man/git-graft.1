@@ -54,11 +54,14 @@ Install and reuse dependencies
 \fBseed\fR
 Make the primary checkout's installed dependencies reusable
 .TP
-\fBland\fR
+\fBmerge\fR
 Merge a graft's commits into a local branch, then archive the graft
 .TP
+\fBremove\fR
+Archive a graft and its files. Refuses if it has unmerged work unless \-\-discard is given
+.TP
 \fBprune\fR
-Archive a graft, or every expired graft with \-\-expired
+Archive every expired graft. Previews unless \-\-apply is given
 .TP
 \fBrestore\fR
 Reopen an archived graft

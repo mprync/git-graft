@@ -56,7 +56,7 @@ pub enum Command {
 }
 
 impl Command {
-    /// `land`, or its reversal when `undo` was requested.
+    /// `merge`, or its reversal when `undo` was requested.
     pub(crate) fn land(land: api::Land) -> Self {
         if land.undo {
             Self::UndoLand(api::Owned {
@@ -286,7 +286,7 @@ fn spawn(p: &Project, origin: &Path, mut args: Spawn) -> Result<Value> {
         return Err(api::fault(
             "new_incomplete",
             format!("Creating the graft stopped: {error:#}"),
-            json!({"name":r.name,"lease":r.lease,"path":r.path,"recovery":"Inspect the reserved path. Run prune with --discard to archive the partial graft."}),
+            json!({"name":r.name,"lease":r.lease,"path":r.path,"recovery":"Inspect the reserved path. Run remove with --discard to archive the partial graft."}),
         ));
     }
     Ok(with_lease(&r))
@@ -337,7 +337,7 @@ fn destination_contains(p: &Project, plan: &crate::landing::Plan) -> Result<bool
     }
     ensure!(
         present.status.success(),
-        "could not inspect the landing result: {}",
+        "could not inspect the merge result: {}",
         String::from_utf8_lossy(&present.stderr)
     );
     let output = git::raw(
@@ -354,7 +354,7 @@ fn destination_contains(p: &Project, plan: &crate::landing::Plan) -> Result<bool
         Some(0) => Ok(true),
         Some(1) => Ok(false),
         _ => anyhow::bail!(
-            "could not verify the recorded landing on {}: {}",
+            "could not verify the recorded merge on {}: {}",
             plan.target,
             String::from_utf8_lossy(&output.stderr)
         ),
@@ -366,7 +366,7 @@ fn land_workspace(p: &Project, opts: &api::Land) -> Result<Value> {
     if let Ok(r) = registry::load_retired(p, &opts.name, &opts.lease) {
         ensure!(
             r.plan.as_ref().is_some_and(|plan| plan.target == opts.into),
-            "retirement does not match requested land"
+            "retirement does not match requested merge"
         );
         return Ok(receipt(&r));
     }
@@ -374,7 +374,7 @@ fn land_workspace(p: &Project, opts: &api::Land) -> Result<Value> {
     if r.retiring_to().is_some() {
         ensure!(
             r.plan.as_ref().is_some_and(|plan| plan.target == opts.into),
-            "retry the recorded landing"
+            "retry the recorded merge"
         );
         return retire(p, &r.name, &r.lease, Status::Landed);
     }
@@ -384,7 +384,7 @@ fn land_workspace(p: &Project, opts: &api::Land) -> Result<Value> {
     );
     registry::preflight_retire(p, &r)?;
     if let Some(plan) = &r.plan {
-        ensure!(plan.target == opts.into, "retry land into {}", plan.target);
+        ensure!(plan.target == opts.into, "retry merge into {}", plan.target);
         if destination_contains(p, plan)? {
             crate::landing::finish_applied_checkout(&p.repo, plan)?;
         }
@@ -411,7 +411,7 @@ fn land_workspace(p: &Project, opts: &api::Land) -> Result<Value> {
         clean(&r.path, opts.discard_ignored)?;
         ensure!(
             git::oid(&r.path, "HEAD")? == plan.tip,
-            "workspace HEAD changed during land"
+            "workspace HEAD changed during merge"
         );
         land::apply(p, &plan)
     };
@@ -439,7 +439,7 @@ fn drop_workspace(p: &Project, opts: &api::DropWorkspace) -> Result<Value> {
     if let Ok(r) = registry::load_retired(p, &opts.name, &opts.lease) {
         ensure!(
             r.status == Status::Dropped || opts.discard,
-            "workspace was retired by landing"
+            "workspace was retired by merge"
         );
         return Ok(receipt(&r));
     }
@@ -455,7 +455,7 @@ fn drop_workspace(p: &Project, opts: &api::DropWorkspace) -> Result<Value> {
         if let Some(plan) = &r.plan {
             ensure!(
                 opts.discard,
-                "a landing is pending; retry land or explicitly archive the complete repository with --discard"
+                "a merge is pending; retry merge or explicitly archive the complete repository with --discard"
             );
             // A disconnected land can leave a plan behind while someone
             // continues editing the private checkout. Preserve those edits
@@ -477,12 +477,12 @@ fn drop_workspace(p: &Project, opts: &api::DropWorkspace) -> Result<Value> {
             if let Some(base) = &r.base {
                 ensure!(
                     git::oid(&r.path, "HEAD")? == *base,
-                    "land the workspace commits or explicitly archive with --discard"
+                    "merge the workspace commits or explicitly archive with --discard"
                 );
             } else {
                 ensure!(
                     unborn(&r.path)?,
-                    "land the workspace commits or explicitly archive with --discard"
+                    "merge the workspace commits or explicitly archive with --discard"
                 );
             }
         }
@@ -632,7 +632,7 @@ pub fn run(repo: &Path, command: Command) -> Result<Value> {
             let plan = r
                 .plan
                 .as_ref()
-                .context("workspace was not retired by landing")?;
+                .context("workspace was not retired by merge")?;
             let mut value = land::undo(p, plan, &a.lease)?;
             value["name"] = json!(r.name);
             return Ok(value);

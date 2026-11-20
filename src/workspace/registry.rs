@@ -395,7 +395,7 @@ fn validate_plan(plan: &Plan) -> Result<()> {
             && !plan.target.starts_with("refs/")
             && !plan.target.starts_with("graft/")
             && plan.target != "HEAD",
-        "invalid workspace landing target"
+        "invalid workspace merge target"
     );
     git::checked_oid(&plan.old)?;
     git::checked_oid(&plan.new)?;
@@ -667,7 +667,7 @@ fn absent_or_regular(path: &Path) -> Result<bool> {
     }
 }
 
-/// Persist runtime data or a landing plan on the current generation.
+/// Persist runtime data or a merge plan on the current generation.
 pub fn save(p: &Project, r: &Record) -> Result<()> {
     let directory = record_directory(p, false)?;
     let mut live = read_record(&directory, &r.id)?;
@@ -1361,7 +1361,7 @@ pub fn move_workspace(p: &Project, name: &str, lease: &str, path: &Path) -> Resu
     let mut r = authenticate(p, name, lease)?;
     let _lock = workspace_lock(p, name)?;
     require_unlocked(&r)?;
-    ensure!(r.plan.is_none(), "workspace has a landing in progress");
+    ensure!(r.plan.is_none(), "workspace has a merge in progress");
     let to = safe_destination(p, &r, path)?;
     if let Some(Transition::Move { to: pending }) = &r.transition {
         ensure!(*pending == to, "workspace already has a move in progress");
@@ -1413,7 +1413,7 @@ pub fn lock(p: &Project, name: &str, lease: &str, reason: Option<&str>) -> Resul
     let mut r = authenticate(p, name, lease)?;
     let _lock = workspace_lock(p, name)?;
     verify(p, &r)?;
-    ensure!(r.plan.is_none(), "workspace has a landing in progress");
+    ensure!(r.plan.is_none(), "workspace has a merge in progress");
     r.locked = Some(reason.unwrap_or_default().into());
     persist(p, &r)?;
     Ok(r)
@@ -1432,7 +1432,7 @@ fn begin_retirement(p: &Project, r: &mut Record, status: Status) -> Result<()> {
     require_unlocked(r)?;
     ensure!(
         (status == Status::Landed) == r.plan.is_some(),
-        "retirement does not match the workspace landing plan"
+        "retirement does not match the workspace merge plan"
     );
     match &r.transition {
         Some(Transition::Retire {
@@ -1453,7 +1453,7 @@ fn begin_retirement(p: &Project, r: &mut Record, status: Status) -> Result<()> {
     resume(p, r)
 }
 
-/// Check before applying mutations to the primary. A landing already
+/// Check before applying mutations to the primary. A merge already
 /// interrupted during its archive move can proceed directly to replay.
 pub fn preflight_retire(p: &Project, r: &Record) -> Result<()> {
     if r.retiring_to().is_none() {

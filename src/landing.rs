@@ -98,7 +98,7 @@ fn partially_staged(paths: impl IntoIterator<Item = impl AsRef<[u8]>>) -> anyhow
         .collect();
     fault(
         "partially_staged",
-        "Commit or unstage the existing staged version before using land --commit",
+        "Commit or unstage the existing staged version before using merge --commit",
         json!({"paths": paths}),
     )
 }
@@ -315,10 +315,10 @@ fn merged_tree(
         ])
         .output()?;
     if !matches!(output.status.code(), Some(0 | 1)) {
-        return Err(git_failure("compute landing tree", &output));
+        return Err(git_failure("compute merge tree", &output));
     }
     let mut fields = output.stdout.split(|byte| *byte == 0);
-    let tree = fields.next().context("missing landing tree")?;
+    let tree = fields.next().context("missing merge tree")?;
     let tree = checked_oid(std::str::from_utf8(tree)?.trim_end_matches(['\n', '\r']))?;
     if output.status.success() {
         return Ok(tree.to_owned());
@@ -376,7 +376,7 @@ fn merged_tree(
     ))
 }
 
-/// Prepare the exact landing result in a private object database.
+/// Prepare the exact merge result in a private object database.
 pub(crate) fn prepare_with_import(
     repo: &Path,
     workspace: &Path,
@@ -439,7 +439,7 @@ pub(crate) fn prepare_with_import(
         git::use_private_objects(&mut command, objects);
         let output = command.args(args).output()?;
         if !output.status.success() {
-            return Err(git_failure("create landing commit", &output));
+            return Err(git_failure("create merge commit", &output));
         }
         String::from_utf8(output.stdout)?.trim_end().to_owned()
     };
@@ -617,13 +617,13 @@ fn apply_in_checkout(
         // and its referent. A separate symref-verify and branch update is
         // rejected as two updates to HEAD by both native ref backends.
         let edits = format!("update HEAD {} {}\n", plan.new, plan.old);
-        recovery::transaction_with_objects(path, &edits, Some("git graft land"), objects, || {
+        recovery::transaction_with_objects(path, &edits, Some("git graft merge"), objects, || {
             check_occupancy()?;
             if symbolic_ref(path, "HEAD")?.as_deref() != Some(reference.as_str())
                 || branch_tip(path, &reference)? != plan.old
             {
                 bail!(
-                    "destination branch or tip changed after landing was planned: {}",
+                    "destination branch or tip changed after merge was planned: {}",
                     plan.target
                 );
             }
@@ -671,7 +671,7 @@ pub(crate) fn apply_with_destination(
     }
     let current = branch_tip(repo, &reference)?;
     if !is_ancestor(object_repo, &plan.old, &plan.new)? {
-        bail!("landing plan does not fast-forward {}", plan.target);
+        bail!("merge plan does not fast-forward {}", plan.target);
     }
     if plan.new == plan.old
         || (current != plan.old
@@ -694,7 +694,7 @@ pub(crate) fn apply_with_destination(
             );
         }
         bail!(
-            "destination tip changed after landing was planned: {}",
+            "destination tip changed after merge was planned: {}",
             plan.target
         );
     }
@@ -722,7 +722,7 @@ pub(crate) fn apply_with_destination(
             || {
                 ensure!(
                     destination(&reference, true)?.as_ref() == Some(&path),
-                    "destination checkout changed after landing was planned: {}",
+                    "destination checkout changed after merge was planned: {}",
                     plan.target
                 );
                 Ok(())
@@ -759,31 +759,31 @@ pub(crate) fn apply_with_destination(
         recovery::transaction_with_objects(
             repo,
             &edits,
-            Some("git graft land"),
+            Some("git graft merge"),
             objects.as_deref(),
             || {
                 if let Some(format) = &format {
                     verify_ref_locks(&admin, &reference, format)?;
                     ensure!(
                         PrimaryHead::read(repo)? == head,
-                        "primary checkout HEAD changed after landing was planned"
+                        "primary checkout HEAD changed after merge was planned"
                     );
                 }
                 if branch_tip(repo, &reference)? != plan.old {
                     bail!(
-                        "destination tip changed after landing was planned: {}",
+                        "destination tip changed after merge was planned: {}",
                         plan.target
                     );
                 }
                 ensure!(
                     destination(&reference, head.is_some())?.is_none(),
-                    "destination was checked out after landing was planned: {}",
+                    "destination was checked out after merge was planned: {}",
                     plan.target
                 );
                 publish()?;
                 ensure!(
                     destination(&reference, head.is_some())?.is_none(),
-                    "destination was checked out while preparing the landing: {}",
+                    "destination was checked out while preparing the merge: {}",
                     plan.target
                 );
                 Ok(())

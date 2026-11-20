@@ -97,7 +97,7 @@ fn verified_store(p: &Project, root: &Path, name: &str) -> Result<PathBuf> {
             && name
                 .bytes()
                 .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
-        "invalid private landing object store name"
+        "invalid private merge object store name"
     );
     let path = root.join(name);
     registry::owned_directory(&path)?;
@@ -109,12 +109,12 @@ fn verified_store(p: &Project, root: &Path, name: &str) -> Result<PathBuf> {
             && !registry::exists(&path.join("objects/info/alternates"))?
             && git::absolute_git_dir(&path)? == path
             && git::text(&path, &["rev-parse", "--is-bare-repository"])? == "true",
-        "private landing object store ownership is unverified"
+        "private merge object store ownership is unverified"
     );
     let format = git::text(&path, &["rev-parse", "--show-object-format"])?;
     ensure!(
         store_name(&format, &shallow_boundary(&path)?) == name,
-        "private landing object store history boundary changed"
+        "private merge object store history boundary changed"
     );
     Ok(path)
 }
@@ -197,7 +197,7 @@ fn create_plan_pins(store: &Path, plan: &Plan) -> Result<()> {
     sync_objects(store)?;
     for (reference, oid) in plan_pins(plan) {
         match recovery::direct_ref(store, &reference)? {
-            Some(existing) => ensure!(existing == oid, "private landing pin disagrees with plan"),
+            Some(existing) => ensure!(existing == oid, "private merge pin disagrees with plan"),
             None => git::create_private_ref(store, &reference, oid)?,
         }
         sync_pin_directories(store, &reference)?;
@@ -216,7 +216,7 @@ fn store_for_plan(p: &Project, plan: &Plan) -> Result<PathBuf> {
     for (reference, oid) in plan_pins(plan) {
         ensure!(
             recovery::direct_ref(&store, &reference)?.as_deref() == Some(oid),
-            "private landing pin is missing or changed at {reference}"
+            "private merge pin is missing or changed at {reference}"
         );
     }
     Ok(store)
@@ -326,7 +326,7 @@ pub(crate) fn prepare(
                     lock.close();
                 }
                 scratch::purge(p, &root, &store)
-                    .context("retain unverified private landing scratch")?;
+                    .context("retain unverified private merge scratch")?;
             }
             return Err(error);
         }
@@ -455,7 +455,7 @@ fn apply_result(p: &Project, plan: &Plan, store: &Path) -> Result<()> {
     result
 }
 
-/// Append and pin the inverse of one completed landing for deterministic retry.
+/// Append and pin the inverse of one completed merge for deterministic retry.
 pub(crate) fn undo(p: &Project, plan: &Plan, id: &str) -> Result<Value> {
     let store = store_for_plan(p, plan)?;
     let reference = format!("{}/undo/{}", namespace(id), plan_key(plan));
@@ -752,7 +752,7 @@ mod tests {
         )?;
         config(&bare)?;
         let (p, _lock) = Project::open(&bare)?;
-        let plan = fixture.plan_squash(&p, "bare primary landing")?;
+        let plan = fixture.plan_squash(&p, "bare primary merge")?;
         git::bytes(
             &bare,
             &["worktree", "add", git::path_str(&external)?, "main"],
@@ -1034,10 +1034,10 @@ mod tests {
         let hooks = fixture.root.path().join("hooks");
         fs::create_dir(&hooks).unwrap();
         let hook = hooks.join("reference-transaction");
-        fs::write(&hook, "#!/bin/sh\nif [ \"$1\" = prepared ]; then\n  while read -r old new ref; do\n    if [ \"$ref\" = refs/heads/main ]; then\n      echo 'landing fixture rejected the ref transaction' >&2\n      exit 1\n    fi\n  done\nfi\n").unwrap();
+        fs::write(&hook, "#!/bin/sh\nif [ \"$1\" = prepared ]; then\n  while read -r old new ref; do\n    if [ \"$ref\" = refs/heads/main ]; then\n      echo 'merge fixture rejected the ref transaction' >&2\n      exit 1\n    fi\n  done\nfi\n").unwrap();
         fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).unwrap();
         let error = format!("{:#}", apply(&fixture.p, &plan).unwrap_err());
-        assert!(error.contains("landing fixture rejected the ref transaction"));
+        assert!(error.contains("merge fixture rejected the ref transaction"));
         assert_eq!(run(&fixture.p.repo, &["rev-parse", "HEAD"]), fixture.base);
         assert_eq!(run(&fixture.workspace, &["rev-parse", "HEAD"]), tip);
         assert!(!fixture.p.repo.join("feature.txt").exists());

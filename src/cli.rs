@@ -24,9 +24,11 @@ pub enum Cmd {
     /// Make the primary checkout's installed dependencies reusable.
     Seed(api::SeedLayer),
     /// Merge a graft's commits into a local branch, then archive the graft.
-    Land(api::Land),
-    /// Archive a graft, or every expired graft with --expired.
-    Prune(api::Prune),
+    Merge(api::Land),
+    /// Archive a graft and its files. Refuses if it has unmerged work unless --discard is given.
+    Remove(api::DropWorkspace),
+    /// Archive every expired graft. Previews unless --apply is given.
+    Prune(api::Gc),
     /// Reopen an archived graft.
     Restore(api::Owned),
     /// Protect a graft from moves, pruning and cleanup.
@@ -130,8 +132,9 @@ impl From<Cmd> for workspace::Command {
                 },
             },
             Cmd::Seed(args) => Op::SeedLayer(args),
-            Cmd::Land(args) => Op::land(args),
-            Cmd::Prune(args) => prune(args),
+            Cmd::Merge(args) => Op::land(args),
+            Cmd::Remove(args) => Op::Drop(args),
+            Cmd::Prune(args) => Op::Gc(args),
             Cmd::Restore(args) => Op::Restore(args),
             Cmd::Lock { workspace, reason } => Op::Lock { workspace, reason },
             Cmd::Unlock(args) => Op::Unlock(args),
@@ -139,22 +142,5 @@ impl From<Cmd> for workspace::Command {
             Cmd::Repair { workspace, path } => Op::Repair { workspace, path },
             Cmd::Heartbeat(args) => Op::Heartbeat(args),
         }
-    }
-}
-
-/// `prune NAME` archives one graft; `prune --expired` sweeps the expired ones.
-/// clap guarantees exactly one of the two was given.
-fn prune(args: api::Prune) -> workspace::Command {
-    match args.name {
-        Some(name) => workspace::Command::Drop(api::DropWorkspace {
-            name,
-            // clap requires a lease whenever a name is given.
-            lease: args.lease.unwrap_or_default(),
-            discard: args.discard,
-        }),
-        None => workspace::Command::Gc(api::Gc {
-            apply: args.apply,
-            purge_cache: args.purge_cache,
-        }),
     }
 }

@@ -65,7 +65,7 @@ impl ServerHandler for Server {
                 env!("CARGO_PKG_VERSION"),
             ))
             .with_instructions(format!(
-                "{instructions} A graft is an independent copy of the repository for one task. Call graft_new, work inside the returned path, then graft_land to merge it into a branch. For ordinary work in a trusted clone, omit history from graft_new to honor the project setting (default: local). Choose isolated when the graft should only receive the selected commit's reachable history. Each newline-delimited message may contain up to {MAX_REQUEST_BYTES} bytes. Larger messages are discarded."
+                "{instructions} A graft is an independent copy of the repository for one task. Call graft_add, work inside the returned path, then graft_merge to merge it into a branch. For ordinary work in a trusted clone, omit history from graft_add to honor the project setting (default: local). Choose isolated when the graft should only receive the selected commit's reachable history. Each newline-delimited message may contain up to {MAX_REQUEST_BYTES} bytes. Larger messages are discarded."
             ))
     }
 
@@ -76,7 +76,7 @@ impl ServerHandler for Server {
     ) -> Result<ListToolsResult, ErrorData> {
         let mut tools = vec![
             tool::<Spawn>(
-                "graft_new",
+                "graft_add",
                 "Create a graft: an independent copy of the repository with its own branch. Returns the graft's path and lease; keep the lease, it authorizes every later call. Omit history for normal work (the project setting defaults to local, which reuses the trusted clone's Git objects). Choose isolated to keep unrelated objects such as staged blobs or other branches' commits out.",
                 false,
                 false,
@@ -110,14 +110,14 @@ impl ServerHandler for Server {
         }
         tools.extend([
             tool::<Land>(
-                "graft_land",
-                "Merge a graft's commits into a local branch, then archive the graft. Set undo to reverse an earlier land instead: it appends a commit only if the branch is still at the landed commit. Lockfile reconciliation needs host --allow-exec.",
+                "graft_merge",
+                "Merge a graft's commits into a local branch, then archive the graft. Set undo to reverse an earlier merge instead: it appends a commit only if the branch is still at the merged commit. Lockfile reconciliation needs host --allow-exec.",
                 false,
                 true,
             ),
             tool::<DropWorkspace>(
-                "graft_prune",
-                "Archive a graft and its files. Refuses if the graft has local work or unlanded commits unless discard is set; keep the recovery lease to reopen it.",
+                "graft_remove",
+                "Archive a graft and its files. Refuses if the graft has local work or unmerged commits unless discard is set; keep the recovery lease to reopen it.",
                 false,
                 true,
             ),
@@ -155,7 +155,7 @@ impl ServerHandler for Server {
         let args = request.arguments.unwrap_or_default();
         let op = match name {
             "graft_list" => parse::<Empty>(args).map(|_| Command::List)?,
-            "graft_new" => {
+            "graft_add" => {
                 Command::Spawn(Spawn::from_mcp(args, !self.allow_exec).map_err(|e| {
                     ErrorData::invalid_params(format!("Invalid tool arguments: {e}"), None)
                 })?)
@@ -165,7 +165,7 @@ impl ServerHandler for Server {
             "graft_exec" => Command::Exec(parse(args)?),
             "graft_add_dependency" => Command::AddDep(parse(args)?),
             "graft_restore" => Command::Restore(parse(args)?),
-            "graft_land" => {
+            "graft_merge" => {
                 let explicit_into = args.contains_key("into");
                 let land: Land = parse(args)?;
                 land.check_undo(explicit_into).map_err(|e| {
@@ -179,7 +179,7 @@ impl ServerHandler for Server {
                 }
                 Command::land(land)
             }
-            "graft_prune" => Command::Drop(parse(args)?),
+            "graft_remove" => Command::Drop(parse(args)?),
             _ => {
                 return Err(ErrorData::invalid_params(
                     format!("Unknown tool: {name}"),
