@@ -33,7 +33,7 @@ Medians on a Homebrew checkout (3,484 entries), macOS arm64, APFS, Git 2.56, aga
 | Later checkout + first `git status` | 768 ms | **321 ms** | 383 ms |
 | Unique data written per checkout | 0.31 MiB | **0.29 MiB** | 28.55 MiB |
 
-Graft clones whole tracked directories with one filesystem call, proves each file's bytes with Git's own index stat test, and records stat data so Git never rehashes the new checkout. [Benchmarks, method and raw samples](docs/benchmarks.md)
+Graft clones whole tracked directories with one filesystem call, proves each file's bytes with Git's own index stat test, and records stat data so Git never rehashes the new checkout. On small repositories a worktree is still quicker to create, because a standalone repository has a fixed setup cost of about 150–190 ms. [Benchmarks, method and raw samples](docs/benchmarks.md)
 
 ## Install
 

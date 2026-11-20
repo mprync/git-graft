@@ -16,6 +16,17 @@ Homebrew/brew at `bc63375ac3a4` has 3,484 tracked entries: 3,318 regular files a
 
 Ten rounds measured first checkouts and sixteen measured later ones. Each round gave every arm its own APFS clone of the same checkout and ran `git status` in it first, so the clone's index matched its files and the data was warm, as after `git clone`. Arms rotated and alternated order between rounds, and every result had to report a clean `git status`. Other processes kept the host's load average between 4 and 9, so a single run can vary by tens of milliseconds; the paired medians are the comparison to use. [Raw samples](measurements/macos-arm64/homebrew-directory-clones.json)
 
+### Small and freshly committed repositories
+
+Creating a standalone repository has a fixed cost that a linked worktree does not: reserving a recoverable workspace, snapshotting the object store and running Git's checks takes Graft about 150–190 ms even when there is almost nothing to check out. Below a few thousand files, `git worktree add` is therefore faster in absolute terms, although both finish in a fraction of a second. These first-checkout medians use synthetic repositories whose objects are all loose, as right after `git commit`:
+
+| Repository | git-graft | `git worktree add` |
+| --- | ---: | ---: |
+| 50 files | 190 ms | 26 ms |
+| 2,000 files | 343 ms | 163 ms |
+
+The disk saving holds at every size, and from a few thousand files upward Graft's directory clones overtake the cost of writing every file.
+
 ## Disk use per checkout
 
 Each value is the increase in physical APFS data extents under a directory holding the primary checkout and its checkouts, measured after each new checkout with [`e2e/apfs-file-data.py`](../e2e/apfs-file-data.py).
