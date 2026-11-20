@@ -395,11 +395,12 @@ pub(super) mod direct {
             // Git also applies info/attributes and user and system rules when
             // the selected tree has no .gitattributes of its own.
             let attributes = scope.spawn(|| {
-                checkout_conversions(
-                    checkout.proof_command(),
-                    (!checkout.planned).then_some(oid),
-                    files,
-                )
+                let source = if checkout.planned {
+                    AttributeSource::Index
+                } else {
+                    AttributeSource::Commit(oid)
+                };
+                checkout_conversions(checkout.proof_command(), source, files.iter())
             });
             let tracked = donor_index(&primary)?;
             let policy = config
@@ -479,6 +480,26 @@ pub(super) mod direct {
                     _ => candidates[index] = false,
                 }
             }
+            if !expanded.is_empty() {
+                // The size proof assumes the primary's own attributes, which
+                // may differ from the selected commit's, convert only line
+                // endings. One batched query covers every expanded path.
+                let indices: Vec<usize> = (0..files.len()).filter(|&index| crlf[index]).collect();
+                let primary_conversions = checkout_conversions(
+                    git_command(&primary),
+                    AttributeSource::Worktree,
+                    indices.iter().map(|&index| &files[index]),
+                );
+                crate::trace::mark("checkout: primary attributes of expanded paths");
+                // Any failure leaves every expanded path to Git.
+                let primary_conversions = primary_conversions.unwrap_or_default();
+                for (position, index) in indices.into_iter().enumerate() {
+                    if primary_conversions.get(position) != Some(&Conversion::Raw) {
+                        crlf[index] = false;
+                        candidates[index] = false;
+                    }
+                }
+            }
             if let Some(trusted) = trusted.as_mut() {
                 trusted.expand(expanded);
             }
@@ -530,6 +551,27 @@ pub(super) mod direct {
     /// is as large as B, not the expansion, and goes to Git. The raw hash of
     /// an expanded path can never prove Git's bytes, so those paths are never
     /// hashed.
+    ///
+    /// ## The primary's own attributes
+    ///
+    /// The premise that only Git's line-ending clean stands between F and B
+    /// holds for the primary's attributes, not the selected commit's, which
+    /// decide what the graft gets. The primary's working tree can carry an
+    /// older or uncommitted `.gitattributes`, `.git/info/attributes` or
+    /// external rules with `ident`, a `filter`, `working-tree-encoding`, or
+    /// `text`, `eol` or `crlf` settings. Those smudge or clean more than CRs,
+    /// and `ident` adds bytes, so a file they wrote could reach the expanded
+    /// size by coincidence while Git's stat test still vouches for it. So
+    /// `plan` also runs one batched `git check-attr --all --stdin` in the
+    /// primary, reading its working tree as its own clean does, and expands
+    /// a path only when no such attribute applies there. Any other answer,
+    /// or no answer, leaves the path to Git.
+    ///
+    /// [`Written::Raw`] paths do not take this check: like every path on the
+    /// default checkout, they are proven by the blob's own size with the
+    /// stat test, or by hashing F against B, and a primary conversion that
+    /// changes the size fails the size test. They share the default path's
+    /// remaining premise that the primary applies no size-preserving filter.
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     enum Written {
         Raw,

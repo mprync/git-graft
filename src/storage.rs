@@ -635,7 +635,11 @@ fn conversion_reason(checkout: &mut Checkout<'_>) -> Result<Option<&'static str>
     if !checkout.inspect_attributes {
         return Ok(None);
     }
-    let Ok(conversions) = checkout_conversions(checkout.command(), Some(oid), entries) else {
+    let Ok(conversions) = checkout_conversions(
+        checkout.command(),
+        AttributeSource::Commit(oid),
+        entries.iter(),
+    ) else {
         return Ok(Some("cannot inspect committed attributes"));
     };
     if conversions.contains(&Conversion::Git) {
@@ -660,23 +664,49 @@ enum Conversion {
     Git,
 }
 
+/// Where `git check-attr` reads `.gitattributes` files from.
+#[derive(Clone, Copy)]
+enum AttributeSource<'a> {
+    /// The selected commit's tree.
+    Commit(&'a str),
+    /// The command's index.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    Index,
+    /// The command's own checkout: its working tree's files, falling back to
+    /// its index as Git's own clean and status do.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    Worktree,
+}
+
 // --all omits absent attributes, so a filter literally named "unspecified"
 // still routes the file to Git. Keep names as bytes throughout.
-fn checkout_conversions(
+fn checkout_conversions<'a>(
     mut command: Command,
-    oid: Option<&str>,
-    files: &[Entry],
+    source: AttributeSource<'_>,
+    files: impl Iterator<Item = &'a Entry> + Clone,
 ) -> Result<Vec<Conversion>> {
-    let source = oid.map_or_else(|| "--cached".into(), |oid| format!("--source={oid}"));
+    command
+        .env("GIT_NO_REPLACE_OBJECTS", "1")
+        .args(["check-attr", "--all", "-z", "--stdin"]);
+    match source {
+        AttributeSource::Commit(oid) => {
+            command.arg(format!("--source={oid}"));
+        }
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        AttributeSource::Index => {
+            command.arg("--cached");
+        }
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        AttributeSource::Worktree => {
+            command.env_remove("GIT_ATTR_SOURCE");
+        }
+    }
     let output = crate::git::bounded_stdout(
-        command
-            .env("GIT_NO_REPLACE_OBJECTS", "1")
-            .args(["check-attr", &source, "--all", "-z", "--stdin"])
-            .stdin(Stdio::from(path_input(files.iter())?)),
+        command.stdin(Stdio::from(path_input(files.clone())?)),
         16 * 1024 * 1024,
     )?;
     if output.is_empty() {
-        return Ok(vec![Conversion::Raw; files.len()]);
+        return Ok(vec![Conversion::Raw; files.count()]);
     }
     let mut paths = std::collections::HashMap::new();
     let mut fields = output
@@ -697,7 +727,6 @@ fn checkout_conversions(
         *current = conversion.max(*current);
     }
     let conversions = files
-        .iter()
         .map(|entry| {
             paths
                 .remove(entry.name.as_slice())
@@ -1814,6 +1843,63 @@ mod tests {
             // script and nine documents; Git writes sub/file and docs/3.txt.
             assert_eq!(result["primary_reused_files"], 10, "{result}");
             assert_eq!(result["private_files"], 2, "{result}");
+        }
+    }
+
+    /// The primary's uncommitted `.gitattributes` smudges a file that Git
+    /// expands to CRLF for the selected commit. `ident` and the filter each
+    /// add as many bytes as the blob has LFs, so the primary's stat-clean file has exactly the
+    /// expanded size, yet holds different bytes.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn local_does_not_reuse_expanded_files_the_primary_smudged() {
+        let (temp, repo, _) = fixture();
+        // `$Id$` expands by 43 bytes, one for each of the 43 LFs.
+        let blob = [b"$Id$\n".to_vec(), b"line\n".repeat(42)].concat();
+        fs::write(repo.join("stamped"), &blob).unwrap();
+        command(&repo, &["add", "."]);
+        command(&repo, &["commit", "-qm", "stamped"]);
+        let oid = command(&repo, &["rev-parse", "HEAD"]);
+        let expanded = [b"$Id$\r\n".to_vec(), b"line\r\n".repeat(42)].concat();
+        for (name, attributes) in [
+            ("ident", "stamped ident -text\n"),
+            ("filter", "stamped filter=pad -text\n"),
+        ] {
+            let donor = temp.path().join(format!("donor-{name}"));
+            let workspace = temp.path().join(format!("workspace-{name}"));
+            for path in [&donor, &workspace] {
+                independent(&repo, path);
+                command(path, &["config", "core.autocrlf", "true"]);
+            }
+            command(
+                &donor,
+                &["config", "filter.pad.smudge", "cat && printf %043d 0"],
+            );
+            // Git rehashes racily clean files, so the filter must also clean.
+            command(&donor, &["config", "filter.pad.clean", "sed '$d'"]);
+            fs::write(donor.join(".gitattributes"), attributes).unwrap();
+            command(&donor, &["read-tree", "-u", "-m", &oid]);
+            let smudged = fs::read(donor.join("stamped")).unwrap();
+            assert_eq!(smudged.len(), expanded.len(), "{name}");
+            assert_ne!(smudged, expanded, "{name}");
+            assert_eq!(
+                command(&donor, &["status", "--porcelain"]),
+                "?? .gitattributes"
+            );
+            let result =
+                materialize_local(&workspace, &temp.path().join("state"), &oid, &[], &donor)
+                    .unwrap();
+            assert_eq!(fs::read(workspace.join("stamped")).unwrap(), expanded);
+            assert_eq!(
+                fs::read(workspace.join("sub/file")).unwrap(),
+                b"committed\r\n"
+            );
+            assert_eq!(command(&workspace, &["status", "--porcelain"]), "");
+            if probe(&donor, &workspace).unwrap() {
+                // script and sub/file; Git writes stamped.
+                assert_eq!(result["primary_reused_files"], 2, "{name} {result}");
+                assert_eq!(result["private_files"], 1, "{name} {result}");
+            }
         }
     }
 
