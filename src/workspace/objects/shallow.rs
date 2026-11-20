@@ -164,7 +164,7 @@ pub(super) fn fetch(primary: &Path, workspace: &Path, tip: &str) -> Result<Vec<P
     verify(&quarantine, primary, tip)?;
     ensure!(
         shallow_file(primary)? == original,
-        "destination Git shallow boundaries changed during import; retry land"
+        "destination Git shallow boundaries changed during import; retry merge"
     );
 
     // Let Git install and protect the verified packs against concurrent GC.
@@ -196,7 +196,7 @@ pub(super) fn fetch(primary: &Path, workspace: &Path, tip: &str) -> Result<Vec<P
 
 fn verify(quarantine: &Quarantine, primary: &Path, tip: &str) -> Result<u64> {
     graph_count(quarantine.command(primary), tip).context(
-        "cannot land shallow workspace because its ancestry cannot be resolved in the destination",
+        "cannot merge shallow workspace because its ancestry cannot be resolved in the destination",
     )
 }
 
@@ -221,7 +221,7 @@ pub(super) fn import_plan_inputs(
     let tip_count = verify(&quarantine, primary, tip)?;
     ensure!(
         shallow_file(primary)? == original,
-        "destination Git shallow boundaries changed during import; retry land"
+        "destination Git shallow boundaries changed during import; retry merge"
     );
 
     // Only the two requested closures pass from the combined view into

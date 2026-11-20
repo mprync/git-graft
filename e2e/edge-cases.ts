@@ -6,7 +6,7 @@ import { parseExact, type Scenario } from './harness.ts';
 type Context = Parameters<Scenario['run']>[0];
 type Workspace = ReturnType<Context['spawn']>;
 function layer(workspace: Workspace, name: string, action: string, key = 'node-v1'): string[] {
-  return ['layer', name, '--lease', workspace.lease, action, '--key', key, ...(action === 'forget' ? [] : ['--copy'])];
+  return ['deps', 'layer', action, name, '--lease', workspace.lease, '--key', key, ...(action === 'remove' ? [] : ['--copy'])];
 }
 function write(path: string, data: string): void {
   mkdirSync(dirname(path), { recursive: true });
@@ -35,24 +35,24 @@ export const cases: Scenario[] = [
       const pathKey = Object.keys(ctx.env).find(key => key.toUpperCase() === 'PATH');
       assert(pathKey && ctx.env[pathKey]);
       ctx.env[pathKey] = dirname(ctx.bin) + delimiter + ctx.env[pathKey];
-      const created = object(JSON.parse(ctx.git(['graft', 'spawn', 'subcommand'], nested)));
+      const created = object(JSON.parse(ctx.git(['graft', 'add', 'subcommand'], nested)));
       assert(typeof created.lease === 'string' && typeof created.path === 'string');
       ctx.env.GIT_GRAFT_LEASE = created.lease;
       const heartbeat = object(JSON.parse(ctx.git(['graft', 'heartbeat', 'subcommand'], nested)));
       assert.equal(heartbeat.name, 'subcommand');
       assert.equal(heartbeat.phase, 'ready');
       assert.equal(ctx.git(['rev-parse', '--abbrev-ref', 'HEAD'], created.path), 'graft/subcommand');
-      ctx.git(['graft', 'drop', 'subcommand'], nested);
+      ctx.git(['graft', 'remove', 'subcommand'], nested);
       assert.equal(existsSync(created.path), false);
       assert.equal(ctx.git(['status', '--porcelain']), '');
     },
   },
   {
-    name: 'spawn validates portable names and keeps same-named primary branches private',
+    name: 'graft creation validates portable names and keeps same-named primary branches private',
     run(ctx) {
       const head = ctx.git(['rev-parse', 'HEAD']);
       for (const name of ['../escape', 'CAPS', 'nul', '1agent', 'a'.repeat(49)]) {
-        assert.equal(ctx.fail(['spawn', name]).code, 'invalid_name');
+        assert.equal(ctx.fail(['add', name]).code, 'invalid_name');
       }
       assert.equal(existsSync(join(ctx.root, 'escape')), false);
       ctx.git(['branch', 'graft/occupied']);
@@ -61,7 +61,7 @@ export const cases: Scenario[] = [
       assert.equal(ctx.git(['branch', '--show-current'], workspace.path), 'graft/occupied');
       write(join(workspace.path, 'tracked.txt'), 'private same-name branch\n');
       ctx.git(['commit', '-qam', 'private commit'], workspace.path);
-      ctx.cli(['drop', ...owned, '--discard']);
+      ctx.cli(['remove', ...owned, '--discard']);
       ctx.cli(['restore', ...owned]);
       assert.equal(ctx.git(['show', 'graft/occupied:tracked.txt'], workspace.path), 'private same-name branch');
       assert.equal(ctx.git(['rev-parse', 'graft/occupied']), head);
@@ -134,7 +134,7 @@ export const cases: Scenario[] = [
     },
   },
   {
-    name: 'layer rejects duplicate save and corrupt provenance on restore or forget',
+    name: 'layer rejects duplicate save and corrupt provenance on restore or remove',
     run(ctx) {
       npmProject(ctx);
       const producer = ctx.spawn('producer');
@@ -144,14 +144,14 @@ export const cases: Scenario[] = [
       const saved = ctx.cli(layer(producer, 'producer', 'save'));
       assert.equal(typeof saved.digest, 'string');
       assert.match(String(ctx.fail(layer(producer, 'producer', 'save')).message), /already exists/i);
-      const env = ctx.cli(['env', 'producer']);
+      const env = ctx.cli(['status', 'producer', '--env']);
       assert.equal(typeof env.cache_dir, 'string');
       const provenance = join(dirname(String(env.cache_dir)), 'layers', String(saved.digest), 'provenance.json');
       const valid = readFileSync(provenance, 'utf8');
       const broken = object(parseExact(valid));
       broken.compatibility = 'wrong';
       writeFileSync(provenance, JSON.stringify(broken));
-      for (const action of ['restore', 'forget']) {
+      for (const action of ['restore', 'remove']) {
         assert.match(String(ctx.fail(layer(consumer, 'consumer', action)).message), /invalid layer provenance/i);
       }
       assert.equal(existsSync(join(consumer.path, 'node_modules')), false);
@@ -160,7 +160,7 @@ export const cases: Scenario[] = [
       writeFileSync(provenance, valid);
       ctx.cli(layer(consumer, 'consumer', 'restore'));
       assert.equal(readFileSync(join(consumer.path, 'node_modules', 'fixture', 'index.js'), 'utf8'), 'original\n');
-      ctx.cli(layer(producer, 'producer', 'forget'));
+      ctx.cli(layer(producer, 'producer', 'remove'));
       assert.equal(existsSync(provenance), false);
       assert.equal(readFileSync(installed, 'utf8'), 'original\n');
       rmSync(join(consumer.path, 'node_modules'), { recursive: true });

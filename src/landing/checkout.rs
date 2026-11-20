@@ -93,7 +93,7 @@ impl Update {
     pub(super) fn matches(&self, plan: &Plan) -> Result<()> {
         ensure!(
             self.is_for(plan),
-            self.recovery_required("another checked-out landing is still pending")
+            self.recovery_required("another checked-out merge is still pending")
         );
         Ok(())
     }

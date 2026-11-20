@@ -46,7 +46,7 @@ fn verify_candidate(repo: &Path, commit: &str, tree: &str, landed: &str) -> Resu
         headers.next() == Some(expected_tree.as_bytes())
             && headers.next() == Some(expected_parent.as_bytes())
             && !headers.any(|line| line.starts_with(b"parent ")),
-        "the pinned undo commit does not match the completed landing"
+        "the pinned undo commit does not match the completed merge"
     );
     Ok(())
 }
@@ -105,7 +105,7 @@ pub(crate) fn reverse(
     if plan.old == plan.new {
         return Err(fault(
             "nothing_to_undo",
-            "The landing did not advance its destination",
+            "The merge did not advance its destination",
             json!({"target": plan.target}),
         ));
     }
@@ -126,7 +126,7 @@ pub(crate) fn reverse(
             commit
         }
         None => {
-            let message = format!("Undo graft landing into {}", plan.target);
+            let message = format!("Undo graft merge into {}", plan.target);
             let mut command = git::command(repo);
             git::use_private_objects(&mut command, objects);
             create_candidate(command, objects, undo_ref, &old_tree, &plan.new, &message)?

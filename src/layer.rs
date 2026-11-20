@@ -617,7 +617,7 @@ fn save_layer(
     check_source: impl FnOnce() -> Result<()>,
 ) -> Result<Value> {
     if entry_exists(layer)? {
-        bail!("layer already exists; forget it explicitly before replacing it");
+        bail!("layer already exists; remove it explicitly before replacing it");
     }
     let source_digest = source_contents(checkout)?;
     let layers = layer.parent().context("missing layer directory")?;

@@ -1018,7 +1018,7 @@ mod tests {
             }
             run(&workspace, &["switch", "-c", "recovered", &other])?;
             assert_eq!(git::oid(&workspace, "HEAD")?, other);
-            let private = commit(&workspace, "workspace only")?;
+            let private = commit(&workspace, "graft only")?;
             assert!(run(&moved, &["cat-file", "-e", &private]).is_err());
             assert_eq!(git::oid(&moved, "HEAD")?, base);
             assert_eq!(git::text(&moved, &["rev-parse", ":staged"])?, staged);

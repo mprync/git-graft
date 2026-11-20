@@ -1,6 +1,7 @@
 //! Entry points for the Git subcommand and the stdio MCP server.
 mod api;
 mod cache;
+mod cli;
 mod engine;
 mod git;
 mod landing;
@@ -21,9 +22,12 @@ use std::{path::PathBuf, process::ExitCode};
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(version, about)]
+#[command(
+    version,
+    about = "Run many coding agents on one repository without filling your disk. A faster, lighter replacement for git worktree."
+)]
 struct Cli {
-    /// Git checkout or subdirectory to manage.
+    /// Repository checkout (or a subdirectory of it) whose grafts to manage.
     #[arg(long, global = true, default_value = ".")]
     repo: PathBuf,
     /// Print compact JSON (the default is indented JSON).
@@ -35,20 +39,19 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Entry {
-    /// Serve the local repository over MCP on stdin/stdout.
+    /// Serve grafts to agents over MCP on stdin/stdout.
     Mcp {
-        /// Advertise tools that execute programs and package managers.
+        /// Let agents run programs and install dependencies in grafts.
         #[arg(long)]
         allow_exec: bool,
     },
     #[command(flatten)]
-    Workspace(workspace::Command),
+    Workspace(cli::Cmd),
 }
 
 fn run(repo: PathBuf, mut command: Entry) -> anyhow::Result<Option<serde_json::Value>> {
-    if let Entry::Workspace(
-        workspace::Command::Move { path, .. } | workspace::Command::Repair { path, .. },
-    ) = &mut command
+    if let Entry::Workspace(cli::Cmd::Move { path, .. } | cli::Cmd::Repair { path, .. }) =
+        &mut command
     {
         *path = std::path::absolute(&*path)?;
     }
@@ -64,7 +67,7 @@ fn run(repo: PathBuf, mut command: Entry) -> anyhow::Result<Option<serde_json::V
     };
     match command {
         Entry::Mcp { allow_exec } => mcp::serve(repo, allow_exec).map(|_| None),
-        Entry::Workspace(command) => workspace::run(&repo, command).map(Some),
+        Entry::Workspace(command) => workspace::run(&repo, command.into()).map(Some),
     }
 }
 

@@ -118,16 +118,16 @@ export const dependencySpace: Scenario = {
       const name = `dependency-graft-${i}`;
       const workspace = i === 0 ? first : ctx.spawn(name, ['--history', 'local']);
       graftPaths.push(workspace.path);
-      if (i === 0) ctx.cli(['add-dep',name,'--lease',workspace.lease,'--manager','npm','--offline']);
+      if (i === 0) ctx.cli(['deps','add',name,'--lease',workspace.lease,'--manager','npm','--offline']);
       const action = i === 0 ? 'save' : 'restore';
-      const args = ['layer',name,'--lease',workspace.lease,action,'--key','npm-space-fixture-v1'];
+      const args = ['deps','layer',action,name,'--lease',workspace.lease,'--key','npm-space-fixture-v1'];
       let result: Record<string, unknown>;
       if (i === 0) {
         const attempt = ctx.command(ctx.bin, ['--repo',ctx.repo,'--json',...args]);
         assert.ifError(attempt.error);
         if (attempt.status === 0) {
           result = JSON.parse(attempt.stdout);
-          ctx.coverCli('layer');
+          ctx.coverCli('deps');
         } else {
           const refusal = JSON.parse(attempt.stderr || attempt.stdout);
           assert.equal(refusal.code,'cow_unavailable');

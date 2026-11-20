@@ -1,4 +1,4 @@
-//! Workspace creation, inspection, integration and recoverable retirement.
+//! Graft creation, inspection, integration and recoverable retirement.
 mod land;
 mod objects;
 mod registry;
@@ -6,7 +6,6 @@ mod registry;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, ensure};
-use clap::Subcommand;
 use serde_json::{Value, json};
 
 use crate::{api, engine, git, layer, registry::Project, runtime::Runtime, storage};
@@ -18,68 +17,56 @@ use registry::{Record, Status};
 
 pub(crate) use api::Spawn;
 
-#[derive(Debug, Subcommand)]
+/// One operation on a project's grafts. Built from the command line (see
+/// `cli`) or from an MCP tool call, then run by [`run`].
+#[derive(Debug)]
 pub enum Command {
-    /// Create an independent repository from a local commit.
-    #[command(visible_alias = "add")]
     Spawn(Spawn),
-    /// Show active and recoverable independent repositories.
     List,
-    /// Inspect the workspace, including its current HEAD and files.
     Status(api::Name),
-    /// Check local Git and source-sharing capabilities.
     Doctor,
-    /// Renew the workspace lease.
     Heartbeat(api::Owned),
-    /// Show this workspace's runtime and cache paths.
     Env(api::Name),
-    /// Execute a program in the workspace.
     Exec(api::Exec),
-    /// Register a package manager for cache and dependency reuse.
     RegisterManager(api::RegisterManager),
-    /// List registered package managers.
     ListManagers,
-    /// Remove a registered package manager.
     UnregisterManager(api::ManagerName),
-    /// Add dependencies or perform a locked install.
     AddDep(api::AddDep),
-    /// Seed installed dependencies from the primary checkout.
     SeedLayer(api::SeedLayer),
-    /// Save, restore or forget an installed dependency layer.
-    Layer(api::Layer),
-    /// Transfer committed work to a local branch and archive the repository.
+    /// Save, restore or forget; the string is the action.
+    Layer(&'static str, api::Layer),
     Land(api::Land),
-    /// Archive the complete independent repository and its files.
-    #[command(visible_alias = "remove")]
     Drop(api::DropWorkspace),
-    /// Reopen an archived repository.
     Restore(api::Owned),
-    /// Append a reversal commit to the exact landed destination.
     UndoLand(api::Owned),
-    /// Protect against moves, retirement and cleanup.
     Lock {
-        #[command(flatten)]
         workspace: api::Owned,
-        #[arg(long)]
         reason: Option<String>,
     },
-    /// Release an explicit workspace lock.
     Unlock(api::Owned),
-    /// Move a workspace to an available path on its volume.
     Move {
-        #[command(flatten)]
         workspace: api::Owned,
         path: PathBuf,
     },
-    /// Reconnect a workspace that was moved using the filesystem.
     Repair {
-        #[command(flatten)]
         workspace: api::Owned,
         path: PathBuf,
     },
-    /// Preview or archive eligible expired workspaces.
-    #[command(visible_alias = "prune")]
     Gc(api::Gc),
+}
+
+impl Command {
+    /// `merge`, or its reversal when `undo` was requested.
+    pub(crate) fn land(land: api::Land) -> Self {
+        if land.undo {
+            Self::UndoLand(api::Owned {
+                name: land.name,
+                lease: land.lease,
+            })
+        } else {
+            Self::Land(land)
+        }
+    }
 }
 
 fn summary(r: &Record) -> Value {
@@ -188,7 +175,7 @@ fn spawn(p: &Project, origin: &Path, mut args: Spawn) -> Result<Value> {
     if let Some(current) = previous {
         ensure!(
             current.request == request,
-            "request ID was used with different spawn options"
+            "request ID was used with different add options"
         );
         if current.status == Status::Active {
             registry::verify(p, &current)?;
@@ -298,8 +285,8 @@ fn spawn(p: &Project, origin: &Path, mut args: Spawn) -> Result<Value> {
     if let Err(error) = build {
         return Err(api::fault(
             "spawn_incomplete",
-            format!("Workspace creation stopped: {error:#}"),
-            json!({"name":r.name,"lease":r.lease,"path":r.path,"recovery":"Inspect the reserved path. Drop with --discard to archive the partial repository."}),
+            format!("Creating the graft stopped: {error:#}"),
+            json!({"name":r.name,"lease":r.lease,"path":r.path,"recovery":"Inspect the reserved path. Run remove with --discard to archive the partial graft."}),
         ));
     }
     Ok(with_lease(&r))
@@ -310,7 +297,7 @@ fn clean(path: &Path, allow_ignored: bool) -> Result<()> {
     let changes = git::changes(path)?;
     ensure!(
         changes.iter().all(|c| allow_ignored && c.status == "!!"),
-        "workspace has local changes or ignored files; its files and index have been retained"
+        "graft has local changes or ignored files; its files and index have been retained"
     );
     Ok(())
 }
@@ -350,7 +337,7 @@ fn destination_contains(p: &Project, plan: &crate::landing::Plan) -> Result<bool
     }
     ensure!(
         present.status.success(),
-        "could not inspect the landing result: {}",
+        "could not inspect the merge result: {}",
         String::from_utf8_lossy(&present.stderr)
     );
     let output = git::raw(
@@ -367,7 +354,7 @@ fn destination_contains(p: &Project, plan: &crate::landing::Plan) -> Result<bool
         Some(0) => Ok(true),
         Some(1) => Ok(false),
         _ => anyhow::bail!(
-            "could not verify the recorded landing on {}: {}",
+            "could not verify the recorded merge on {}: {}",
             plan.target,
             String::from_utf8_lossy(&output.stderr)
         ),
@@ -379,7 +366,7 @@ fn land_workspace(p: &Project, opts: &api::Land) -> Result<Value> {
     if let Ok(r) = registry::load_retired(p, &opts.name, &opts.lease) {
         ensure!(
             r.plan.as_ref().is_some_and(|plan| plan.target == opts.into),
-            "retirement does not match requested land"
+            "retirement does not match requested merge"
         );
         return Ok(receipt(&r));
     }
@@ -387,17 +374,14 @@ fn land_workspace(p: &Project, opts: &api::Land) -> Result<Value> {
     if r.retiring_to().is_some() {
         ensure!(
             r.plan.as_ref().is_some_and(|plan| plan.target == opts.into),
-            "retry the recorded landing"
+            "retry the recorded merge"
         );
         return retire(p, &r.name, &r.lease, Status::Landed);
     }
-    ensure!(
-        r.status == Status::Active,
-        "workspace creation is incomplete"
-    );
+    ensure!(r.status == Status::Active, "graft creation is incomplete");
     registry::preflight_retire(p, &r)?;
     if let Some(plan) = &r.plan {
-        ensure!(plan.target == opts.into, "retry land into {}", plan.target);
+        ensure!(plan.target == opts.into, "retry merge into {}", plan.target);
         if destination_contains(p, plan)? {
             crate::landing::finish_applied_checkout(&p.repo, plan)?;
         }
@@ -405,7 +389,7 @@ fn land_workspace(p: &Project, opts: &api::Land) -> Result<Value> {
     if !opts.discard_ignored {
         ensure!(
             !git::changes(&r.path)?.iter().any(|c| c.status == "!!"),
-            "workspace has ignored files; use --discard-ignored to retain them in its archive"
+            "graft has ignored files, such as build output; rerun with --discard-ignored to keep them in its archive"
         );
     }
     let plan = if let Some(plan) = &r.plan {
@@ -424,7 +408,7 @@ fn land_workspace(p: &Project, opts: &api::Land) -> Result<Value> {
         clean(&r.path, opts.discard_ignored)?;
         ensure!(
             git::oid(&r.path, "HEAD")? == plan.tip,
-            "workspace HEAD changed during land"
+            "graft HEAD changed during merge"
         );
         land::apply(p, &plan)
     };
@@ -442,7 +426,7 @@ fn land_workspace(p: &Project, opts: &api::Land) -> Result<Value> {
     clean(&r.path, opts.discard_ignored)?;
     ensure!(
         git::oid(&r.path, "HEAD")? == plan.tip,
-        "workspace advanced; retirement remains pending"
+        "graft advanced; archiving remains pending"
     );
     retire(p, &r.name, &r.lease, Status::Landed)
 }
@@ -452,7 +436,7 @@ fn drop_workspace(p: &Project, opts: &api::DropWorkspace) -> Result<Value> {
     if let Ok(r) = registry::load_retired(p, &opts.name, &opts.lease) {
         ensure!(
             r.status == Status::Dropped || opts.discard,
-            "workspace was retired by landing"
+            "graft was archived by merge"
         );
         return Ok(receipt(&r));
     }
@@ -468,7 +452,7 @@ fn drop_workspace(p: &Project, opts: &api::DropWorkspace) -> Result<Value> {
         if let Some(plan) = &r.plan {
             ensure!(
                 opts.discard,
-                "a landing is pending; retry land or explicitly archive the complete repository with --discard"
+                "a merge is pending; retry merge or explicitly archive the complete repository with --discard"
             );
             // A disconnected land can leave a plan behind while someone
             // continues editing the private checkout. Preserve those edits
@@ -484,18 +468,18 @@ fn drop_workspace(p: &Project, opts: &api::DropWorkspace) -> Result<Value> {
         if !opts.discard {
             ensure!(
                 r.status == Status::Active,
-                "partial workspace requires --discard to archive"
+                "partial graft requires --discard to archive"
             );
             clean(&r.path, false)?;
             if let Some(base) = &r.base {
                 ensure!(
                     git::oid(&r.path, "HEAD")? == *base,
-                    "land the workspace commits or explicitly archive with --discard"
+                    "merge the graft's commits or archive it explicitly with --discard"
                 );
             } else {
                 ensure!(
                     unborn(&r.path)?,
-                    "land the workspace commits or explicitly archive with --discard"
+                    "merge the graft's commits or archive it explicitly with --discard"
                 );
             }
         }
@@ -606,14 +590,14 @@ pub fn run(repo: &Path, command: Command) -> Result<Value> {
                 let source = registry::authenticate(p, name, lease)?;
                 ensure!(
                     source.status == Status::Active && source.plan.is_none(),
-                    "workspace has a pending operation"
+                    "graft has a pending operation"
                 );
                 let _workspace_lock = registry::workspace_lock(p, name)?;
                 registry::verify(p, &source)?;
                 return crate::package_manager::register(p, &source.path, a);
             }
             (None, None) => return crate::package_manager::register(p, &p.repo, a),
-            _ => anyhow::bail!("workspace and lease must be supplied together"),
+            _ => anyhow::bail!("--graft and --lease must be given together"),
         },
         Command::Status(a) => return report_status(p, &a.name),
         Command::Spawn(_) => {
@@ -627,7 +611,7 @@ pub fn run(repo: &Path, command: Command) -> Result<Value> {
                     parent.id == location.id
                         && parent.status == Status::Active
                         && dunce::canonicalize(repo)?.starts_with(&parent.path),
-                    "the invoking workspace moved or is no longer active"
+                    "the invoking graft moved or is no longer active"
                 );
                 registry::verify(p, &parent)?;
                 parent.path
@@ -642,10 +626,7 @@ pub fn run(repo: &Path, command: Command) -> Result<Value> {
         Command::Restore(a) => return Ok(with_lease(&registry::restore(p, &a.name, &a.lease)?)),
         Command::UndoLand(a) => {
             let r = registry::load_retired(p, &a.name, &a.lease)?;
-            let plan = r
-                .plan
-                .as_ref()
-                .context("workspace was not retired by landing")?;
+            let plan = r.plan.as_ref().context("graft was not archived by merge")?;
             let mut value = land::undo(p, plan, &a.lease)?;
             value["name"] = json!(r.name);
             return Ok(value);
@@ -687,12 +668,12 @@ pub fn run(repo: &Path, command: Command) -> Result<Value> {
         Command::Exec(a) => (&a.name, &a.lease),
         Command::AddDep(a) => (&a.name, &a.lease),
         Command::Heartbeat(a) => (&a.name, &a.lease),
-        Command::Layer(a) => (&a.name, &a.lease),
+        Command::Layer(_, a) => (&a.name, &a.lease),
     };
     let mut r = registry::authenticate(p, name, lease)?;
     ensure!(
         r.status == Status::Active && r.plan.is_none(),
-        "workspace has a pending operation"
+        "graft has a pending operation"
     );
     let _workspace_lock = registry::workspace_lock(p, name)?;
     registry::verify(p, &r)?;
@@ -703,7 +684,7 @@ pub fn run(repo: &Path, command: Command) -> Result<Value> {
     }
     match command {
         Command::Heartbeat(_) => Ok(summary(&r)),
-        Command::Layer(a) => layer::run(&r.path, &p.state, &a.action, &a.key, a.copy),
+        Command::Layer(action, a) => layer::run(&r.path, &p.state, action, &a.key, a.copy),
         Command::Exec(a) => {
             ensure!(!a.argv.is_empty(), "program and arguments are required");
             let profile = crate::package_manager::execution(p, a.manager.as_deref(), &a.argv[0])?;

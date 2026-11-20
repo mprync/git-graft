@@ -34,7 +34,7 @@ pub fn validate_name(name: &str) -> Result<()> {
     {
         return Err(fault(
             "invalid_name",
-            "Use a portable workspace name of 1–48 lowercase letters, numbers or hyphens, starting with a letter",
+            "Use a portable graft name of 1–48 lowercase letters, numbers or hyphens, starting with a letter",
             Value::Null,
         ));
     }
@@ -270,7 +270,7 @@ fn verify_relocation(root: &Path, mut scan: impl FnMut(&Path) -> Result<()>) -> 
         let result = scan(root);
         ensure!(
             crate::cache::directory_identity(root)? == identity,
-            "workspace directory changed during relocation checks"
+            "graft directory changed during relocation checks"
         );
         attempts += 1;
         // Native Git maintenance can rename a pack index between readdir and
@@ -351,7 +351,7 @@ fn scan_relocation_tree(root: &Path) -> Result<()> {
             if child == admin {
                 ensure!(
                     is_dir,
-                    "workspace Git administration is not an ordinary directory"
+                    "graft Git administration is not an ordinary directory"
                 );
             }
             head |= !is_dir && name.eq_ignore_ascii_case("HEAD");
@@ -371,7 +371,7 @@ fn scan_relocation_tree(root: &Path) -> Result<()> {
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 pub(crate) fn check_relocation_tree(_root: &Path) -> Result<()> {
-    anyhow::bail!("workspace relocation is unsupported on this platform");
+    anyhow::bail!("graft relocation is unsupported on this platform");
 }
 
 fn nested_git_metadata(path: &Path) -> anyhow::Error {
@@ -630,7 +630,7 @@ impl Project {
         let (repo, common) = discover_primary(&invocation)?;
         let name = repo
             .file_name()
-            .context("cannot place workspaces adjacent to filesystem root")?;
+            .context("cannot place grafts adjacent to filesystem root")?;
         let mut sibling = name.to_os_string();
         sibling.push(".graft");
         let root = repo.with_file_name(sibling);
@@ -665,7 +665,7 @@ impl Project {
             "lock is not a regular file"
         );
         let lock = OpenOptions::new().read(true).write(true).open(&lock_path)?;
-        lock.lock().context("lock workspace registry")?;
+        lock.lock().context("lock graft registry")?;
         let id = String::from_utf8(regular(&state.join("project-id"))?)?;
         ensure!(
             Uuid::parse_str(&id)?.to_string() == id,
@@ -711,7 +711,7 @@ impl Project {
             }
         }
         let lock = open_lock(&lock_path)?;
-        lock.lock().context("lock workspace registry")?;
+        lock.lock().context("lock graft registry")?;
         let id = if exists(&id_file)? {
             let id = String::from_utf8(regular(&id_file)?)?;
             ensure!(
@@ -800,7 +800,7 @@ impl Project {
     /// Only a directory created for this repository may contain managed trees.
     pub fn root(&self, create: bool) -> Result<()> {
         if create && !exists(&self.root)? {
-            let parent = self.root.parent().context("workspace root has no parent")?;
+            let parent = self.root.parent().context("graft root has no parent")?;
             let mut builder = tempfile::Builder::new();
             builder.prefix(".git-graft-pending-");
             #[cfg(unix)]
@@ -816,19 +816,19 @@ impl Project {
                 // The stage may be writable by another user. Remove it only
                 // if it is still empty, without traversing its contents.
                 let _ = fs::remove_dir(staged.keep());
-                return Err(error).context("cannot create a private workspace root");
+                return Err(error).context("cannot create a private graft root");
             }
             publish_marked_directory(staged, &self.root, self.id().as_bytes())?;
         }
         let metadata =
-            owned_directory(&self.root).context("workspace root is not an ordinary directory")?;
+            owned_directory(&self.root).context("graft root is not an ordinary directory")?;
         #[cfg(unix)]
         require_private_mode(&self.root, &metadata)?;
         #[cfg(not(unix))]
         let _ = metadata;
         ensure!(
             regular(&self.root.join(CACHE_OWNER))? == self.id().as_bytes(),
-            "workspace root belongs to another repository: {}",
+            "graft root belongs to another repository: {}",
             self.root.display()
         );
         Ok(())
@@ -1019,7 +1019,7 @@ mod tests {
 
         create_private_dir(&project.root)?;
         fs::write(project.root.join(CACHE_OWNER), project.id())?;
-        fs::write(project.root.join("private-note"), "existing workspace data")?;
+        fs::write(project.root.join("private-note"), "existing graft data")?;
         let root_acl = fixture_acl(&project.root)?;
         assert!(root_acl.contains("inherited allow"));
         assert_eq!(
@@ -1029,7 +1029,7 @@ mod tests {
         assert!(project.require_private_workspaces().is_err());
         assert_eq!(
             fs::read_to_string(project.root.join("private-note"))?,
-            "existing workspace data"
+            "existing graft data"
         );
         assert_eq!(fixture_acl(&project.root)?, root_acl);
         assert_eq!(fixture_acl(temp.path())?, parent_acl);

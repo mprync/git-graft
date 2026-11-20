@@ -282,7 +282,7 @@ pub(super) fn marked_dir(path: &Path, id: &str, create: bool) -> Result<()> {
         .with_context(|| format!("invalid workspace namespace marker at {}", path.display()))?;
     ensure!(
         owner.project_id == id && owner.directory == directory,
-        "workspace namespace ownership is unverified at {}",
+        "graft namespace ownership is unverified at {}",
         path.display()
     );
     Ok(())
@@ -311,7 +311,7 @@ fn validate_fresh_root(p: &Project) -> Result<()> {
         for entry in fs::read_dir(&p.root)? {
             ensure!(
                 entry?.file_name() == CACHE_OWNER,
-                "workspace root contains preexisting data at {}",
+                "graft root contains preexisting data at {}",
                 p.root.display()
             );
         }
@@ -395,7 +395,7 @@ fn validate_plan(plan: &Plan) -> Result<()> {
             && !plan.target.starts_with("refs/")
             && !plan.target.starts_with("graft/")
             && plan.target != "HEAD",
-        "invalid workspace landing target"
+        "invalid workspace merge target"
     );
     git::checked_oid(&plan.old)?;
     git::checked_oid(&plan.new)?;
@@ -436,7 +436,7 @@ fn validate_record(r: &Record) -> Result<()> {
     }
     ensure!(
         r.branch.is_some() || r.base.is_some(),
-        "workspace has no starting ref"
+        "graft has no starting ref"
     );
     if let Some(plan) = &r.plan {
         validate_plan(plan)?;
@@ -469,7 +469,7 @@ fn validate_record(r: &Record) -> Result<()> {
     ensure!(
         r.archive.is_some()
             == (r.status.retired() || matches!(r.transition, Some(Transition::Retire { .. }))),
-        "workspace archive does not match its journal phase"
+        "graft archive does not match its journal phase"
     );
     match &r.transition {
         Some(Transition::Place { from }) => {
@@ -520,7 +520,7 @@ fn read_record(directory: &Path, id: &str) -> Result<Record> {
     canonical_uuid(id)?;
     let r: Record = serde_json::from_slice(&regular(&directory.join(format!("{id}.json")))?)
         .context("invalid workspace record")?;
-    ensure!(r.id == id, "workspace record ID mismatch");
+    ensure!(r.id == id, "graft record ID mismatch");
     validate_record(&r)?;
     Ok(r)
 }
@@ -554,7 +554,7 @@ fn records(p: &Project) -> Result<Vec<Record>> {
     for r in &found {
         ensure!(
             r.project == p.repo,
-            "workspace record belongs to a different primary"
+            "graft record belongs to a different primary"
         );
         if let Some(path) = &r.archive {
             ensure!(
@@ -599,11 +599,7 @@ fn current<'a>(records: &'a [Record], name: &str) -> Option<&'a Record> {
 }
 
 fn not_found(name: &str) -> anyhow::Error {
-    fault(
-        "not_found",
-        format!("No managed workspace named {name}"),
-        Value::Null,
-    )
+    fault("not_found", format!("No graft named {name}"), Value::Null)
 }
 
 fn bad_lease(name: &str) -> anyhow::Error {
@@ -655,10 +651,7 @@ fn persist(p: &Project, r: &Record) -> Result<()> {
 fn write_record(directory: &Path, r: &Record) -> Result<()> {
     validate_record(r)?;
     let path = directory.join(format!("{}.json", r.id));
-    ensure!(
-        absent_or_regular(&path)?,
-        "workspace record path is occupied"
-    );
+    ensure!(absent_or_regular(&path)?, "graft record path is occupied");
     atomic(&path, &serde_json::to_vec(r)?)
 }
 
@@ -671,7 +664,7 @@ fn absent_or_regular(path: &Path) -> Result<bool> {
     }
 }
 
-/// Persist runtime data or a landing plan on the current generation.
+/// Persist runtime data or a merge plan on the current generation.
 pub fn save(p: &Project, r: &Record) -> Result<()> {
     let directory = record_directory(p, false)?;
     let mut live = read_record(&directory, &r.id)?;
@@ -699,23 +692,20 @@ fn verify_at(
 ) -> Result<Option<usize>> {
     ensure!(
         dunce::canonicalize(path)? == path,
-        "workspace path traverses an alias at {}",
+        "graft path traverses an alias at {}",
         path.display()
     );
     ensure!(
         Identity::read(path)? == *identity,
-        "workspace directory was replaced at {}",
+        "graft directory was replaced at {}",
         path.display()
     );
     let admin = path.join(".git");
     let actual: Marker = serde_json::from_slice(&regular(&admin.join(MARKER))?)?;
-    ensure!(
-        actual == *expected,
-        "workspace ownership marker does not match"
-    );
+    ensure!(actual == *expected, "graft ownership marker does not match");
     ensure!(
         !exists(&admin.join("commondir"))?,
-        "workspace uses an external Git common directory"
+        "graft uses an external Git common directory"
     );
     if !initialized {
         return Ok(None);
@@ -738,7 +728,7 @@ fn verify_at(
     }
     ensure!(
         !exists(&objects.join("info/alternates"))?,
-        "workspace depends on an external Git object store"
+        "graft depends on an external Git object store"
     );
     let raw = regular(&admin.join("HEAD"))?;
     let head = without_line_ending(&raw);
@@ -746,14 +736,14 @@ fn verify_at(
         return verify_reftable_head(path, &admin);
     }
     if let Some(branch) = head.strip_prefix(b"ref: refs/heads/") {
-        ensure!(valid_branch(branch), "workspace has an invalid Git HEAD");
+        ensure!(valid_branch(branch), "graft has an invalid Git HEAD");
         Ok(None)
     } else {
         ensure!(
             matches!(head.len(), 40 | 64)
                 && head.iter().all(u8::is_ascii_hexdigit)
                 && head.iter().any(|byte| *byte != b'0'),
-            "workspace has an invalid Git HEAD"
+            "graft has an invalid Git HEAD"
         );
         Ok(Some(head.len()))
     }
@@ -788,7 +778,7 @@ fn verify_reftable_head(path: &Path, admin: &Path) -> Result<Option<usize>> {
                 without_line_ending(&head.stdout)
                     .strip_prefix(b"refs/heads/")
                     .is_some_and(valid_branch),
-                "workspace has an invalid reftable Git HEAD"
+                "graft has an invalid reftable Git HEAD"
             );
             Ok(None)
         }
@@ -821,7 +811,7 @@ fn registered_path(p: &Project, name: &str, path: &Path) -> Result<()> {
     validate_path(path)?;
     ensure!(
         !overlaps(path, &p.repo) && !overlaps(path, &p.common),
-        "workspace path overlaps the primary repository"
+        "graft path overlaps the primary repository"
     );
     if overlaps(path, &p.root) {
         ensure!(
@@ -835,7 +825,7 @@ fn registered_path(p: &Project, name: &str, path: &Path) -> Result<()> {
 fn verify_current(p: &Project, r: &Record) -> Result<()> {
     ensure!(
         r.project == p.repo && !r.status.retired() && r.transition.is_none(),
-        "workspace lifecycle transition requires recovery"
+        "graft lifecycle transition requires recovery"
     );
     registered_path(p, &r.name, &r.path)?;
     verify_checkout(p, r, &r.path)
@@ -882,11 +872,11 @@ fn verify_git_location(path: &Path, detached: Option<usize>) -> Result<()> {
     let oid_len = match format.trim_end_matches('\r') {
         "sha1" => 40,
         "sha256" => 64,
-        _ => bail!("workspace has an unsupported Git object format"),
+        _ => bail!("graft has an unsupported Git object format"),
     };
     ensure!(
         detached.is_none_or(|len| len == oid_len),
-        "workspace has an invalid Git HEAD"
+        "graft has an invalid Git HEAD"
     );
     Ok(())
 }
@@ -933,7 +923,7 @@ pub fn discover(path: &Path) -> Result<Option<Location>> {
         let r = read_record(&directory, &m.id)?;
         ensure!(
             r.name == m.name && r.project == m.project,
-            "workspace marker does not match the registry"
+            "graft marker does not match the registry"
         );
         // After a filesystem rename the invoking shell can already be in the
         // new location. Route it to the project so the operation can replay.
@@ -946,7 +936,7 @@ pub fn discover(path: &Path) -> Result<Option<Location>> {
             r.path == path
                 || transition_path.is_some_and(|destination| destination == path)
                 || r.archive.as_deref() == Some(path),
-            "workspace path does not match the registry; run repair from the primary"
+            "graft path does not match the registry; run repair from the primary"
         );
         if r.archive.as_deref() == Some(path) {
             let archives = path
@@ -973,20 +963,18 @@ fn candidate_path(path: &Path) -> Result<PathBuf> {
     validate_path(path)?;
     let name = path
         .file_name()
-        .context("workspace destination must name a directory")?;
+        .context("graft destination must name a directory")?;
     let parent = path
         .parent()
         .context("missing workspace destination parent")?;
     let result = dunce::canonicalize(parent)?.join(name);
     ensure!(
         result == path,
-        "workspace destination must use its canonical parent"
+        "graft destination must use its canonical parent"
     );
     #[cfg(windows)]
     {
-        let name = name
-            .to_str()
-            .context("workspace destination must be UTF-8")?;
+        let name = name.to_str().context("graft destination must be UTF-8")?;
         ensure!(
             !name.ends_with([' ', '.'])
                 && !name
@@ -1083,9 +1071,9 @@ fn relocate(p: &Project, r: &Record, from: &Path, to: &Path, fresh_placement: bo
         })?;
         if let Err(error) = verify_checkout(p, r, to) {
             rename_exclusive(to, from).context(
-                "workspace changed during rename and could not be returned to its original path",
+                "graft changed during rename and could not be returned to its original path",
             )?;
-            return Err(error).context("workspace changed during rename");
+            return Err(error).context("graft changed during rename");
         }
     }
     // Persist the directory entries before committing the journal record.
@@ -1120,7 +1108,7 @@ fn placement_source(root: &Path, r: &Record, from: &Path) -> Result<()> {
 fn resume(p: &Project, r: &mut Record) -> Result<()> {
     ensure!(
         r.project == p.repo,
-        "workspace record belongs to a different primary"
+        "graft record belongs to a different primary"
     );
     registered_path(p, &r.name, &r.path)?;
     match r
@@ -1330,7 +1318,7 @@ pub fn finish(p: &Project, r: &mut Record) -> Result<()> {
     let mut live = matching_record(&directory, r)?;
     ensure!(
         live.project == p.repo && live.status == Status::Pending && live.transition.is_none(),
-        "workspace is not pending or placement requires recovery"
+        "graft is not pending or placement requires recovery"
     );
     registered_path(p, &live.name, &live.path)?;
     let detached = verify_at(
@@ -1365,10 +1353,10 @@ pub fn move_workspace(p: &Project, name: &str, lease: &str, path: &Path) -> Resu
     let mut r = authenticate(p, name, lease)?;
     let _lock = workspace_lock(p, name)?;
     require_unlocked(&r)?;
-    ensure!(r.plan.is_none(), "workspace has a landing in progress");
+    ensure!(r.plan.is_none(), "graft has a merge in progress");
     let to = safe_destination(p, &r, path)?;
     if let Some(Transition::Move { to: pending }) = &r.transition {
-        ensure!(*pending == to, "workspace already has a move in progress");
+        ensure!(*pending == to, "graft already has a move in progress");
     } else {
         verify(p, &r)?;
         if r.path == to {
@@ -1382,7 +1370,7 @@ pub fn move_workspace(p: &Project, name: &str, lease: &str, path: &Path) -> Resu
         ensure_unoccupied(&to)?;
         ensure!(
             same_filesystem(&r.path, &to)?,
-            "workspace moves must stay on the same filesystem"
+            "graft moves must stay on the same filesystem"
         );
         r.transition = Some(Transition::Move { to });
         persist(p, &r)?;
@@ -1408,7 +1396,7 @@ pub fn repair(p: &Project, name: &str, lease: &str, path: &Path) -> Result<Recor
             r.transition = None;
             persist(p, &r)?;
         }
-        Some(_) => bail!("workspace has a lifecycle transition in progress"),
+        Some(_) => bail!("graft has a lifecycle transition in progress"),
     }
     Ok(r)
 }
@@ -1417,7 +1405,7 @@ pub fn lock(p: &Project, name: &str, lease: &str, reason: Option<&str>) -> Resul
     let mut r = authenticate(p, name, lease)?;
     let _lock = workspace_lock(p, name)?;
     verify(p, &r)?;
-    ensure!(r.plan.is_none(), "workspace has a landing in progress");
+    ensure!(r.plan.is_none(), "graft has a merge in progress");
     r.locked = Some(reason.unwrap_or_default().into());
     persist(p, &r)?;
     Ok(r)
@@ -1436,7 +1424,7 @@ fn begin_retirement(p: &Project, r: &mut Record, status: Status) -> Result<()> {
     require_unlocked(r)?;
     ensure!(
         (status == Status::Landed) == r.plan.is_some(),
-        "retirement does not match the workspace landing plan"
+        "retirement does not match the workspace merge plan"
     );
     match &r.transition {
         Some(Transition::Retire {
@@ -1444,7 +1432,7 @@ fn begin_retirement(p: &Project, r: &mut Record, status: Status) -> Result<()> {
         }) => {
             ensure!(
                 *pending == status,
-                "workspace already has a retirement in progress"
+                "graft already has a retirement in progress"
             );
         }
         _ => {
@@ -1457,7 +1445,7 @@ fn begin_retirement(p: &Project, r: &mut Record, status: Status) -> Result<()> {
     resume(p, r)
 }
 
-/// Check before applying mutations to the primary. A landing already
+/// Check before applying mutations to the primary. A merge already
 /// interrupted during its archive move can proceed directly to replay.
 pub fn preflight_retire(p: &Project, r: &Record) -> Result<()> {
     if r.retiring_to().is_none() {
@@ -1479,7 +1467,7 @@ fn require_movable_git(r: &Record, path: &Path) -> Result<()> {
     check_relocation_tree(path)?;
     ensure!(
         !has_linked_checkouts(path)?,
-        "workspace has external Git linked checkouts"
+        "graft has external Git linked checkouts"
     );
     if r.initialized {
         // A configured worktree path can change meaning after an otherwise
@@ -1497,7 +1485,7 @@ fn ensure_relocatable_worktree(path: &Path) -> Result<()> {
                 && std::str::from_utf8(&config.stdout).is_ok_and(|value| Path::new(
                     value.trim_end_matches(['\r', '\n'])
                 ) == Path::new(".."))),
-        "workspace has a configured or unverified Git working directory"
+        "graft has a configured or unverified Git working directory"
     );
     Ok(())
 }
@@ -1537,7 +1525,7 @@ pub fn retire(p: &Project, name: &str, lease: &str, status: Status) -> Result<Re
     if let Ok(completed) = load_retired(p, name, lease) {
         ensure!(
             completed.status == status,
-            "workspace was retired by another operation"
+            "graft was retired by another operation"
         );
         return Ok(completed);
     }
@@ -1566,7 +1554,7 @@ pub fn restore(p: &Project, name: &str, lease: &str) -> Result<Record> {
     let _lock = workspace_lock(p, name)?;
     ensure!(
         active.as_ref().is_none_or(|active| active.id == r.id),
-        "workspace name is already in use"
+        "graft name is already in use"
     );
     if r.transition.is_none() {
         let archive = recorded_archive(p, &r)?;
@@ -1576,7 +1564,7 @@ pub fn restore(p: &Project, name: &str, lease: &str) -> Result<Record> {
         ensure_unoccupied(&r.path)?;
         ensure!(
             same_filesystem(&archive, &r.path)?,
-            "workspace restores must stay on the same filesystem"
+            "graft restores must stay on the same filesystem"
         );
         r.transition = Some(Transition::Restore {
             lease: Uuid::new_v4().to_string(),
@@ -1682,7 +1670,7 @@ fn open_existing_lock(p: &Project, name: &str) -> Result<WorkspaceLock> {
     let metadata = fs::symlink_metadata(&lock)?;
     ensure!(
         metadata.is_file() && !is_reparse_point(&metadata),
-        "workspace lock is not an ordinary file"
+        "graft lock is not an ordinary file"
     );
     try_lock(
         fs::OpenOptions::new().read(true).write(true).open(lock)?,
@@ -1812,7 +1800,7 @@ mod tests {
         assert!(discover(&manual).is_err());
         let repaired = repair(p, &r.name, &r.lease, &manual)?;
         verify(p, &repaired)?;
-        let found = discover(&manual)?.context("workspace location missing")?;
+        let found = discover(&manual)?.context("graft location missing")?;
         assert_eq!(found.project, p.repo);
         assert_eq!(found.name, r.name);
         assert_eq!(found.id, r.id);

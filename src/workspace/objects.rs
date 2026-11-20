@@ -357,13 +357,13 @@ fn copy_attributes(source: &Path, target: &Path) -> Result<()> {
 fn require_pristine(root: &Path) -> Result<()> {
     ensure!(
         fs::symlink_metadata(root)?.is_dir(),
-        "workspace root must be a directory"
+        "graft root must be a directory"
     );
     for entry in fs::read_dir(root)? {
         let entry = entry?;
         ensure!(
             entry.file_name() == ".git" && entry.file_type()?.is_dir(),
-            "workspace is not empty"
+            "graft is not empty"
         );
         for admin in fs::read_dir(entry.path())? {
             let admin = admin?;
@@ -871,7 +871,7 @@ pub(super) fn remove_import_pin(private: &Path, reference: &str, expected: &str)
     Ok(())
 }
 
-/// Copy the old and workspace commits into a private landing repository.
+/// Copy the old and workspace commits into a private merge repository.
 pub(super) fn import_plan_inputs(
     private: &Path,
     primary: &Path,
@@ -971,7 +971,7 @@ mod tests {
             let primary = temp.path().join("original primary");
             let state = temp.path().join("state");
             let first = temp.path().join("first");
-            let workspace = temp.path().join("workspace with ' and $ characters");
+            let workspace = temp.path().join("graft with ' and $ characters");
             for path in [&primary, &state, &first, &workspace] {
                 fs::create_dir(path)?;
             }
@@ -1037,7 +1037,7 @@ mod tests {
             let moved = temp.path().join("moved primary");
             fs::rename(&primary, &moved)?;
             git::bytes(&workspace, &["read-tree", "-m", "-u", "HEAD"])?;
-            let tip = commit(&workspace, "workspace edit")?;
+            let tip = commit(&workspace, "graft edit")?;
             run(&workspace, &["branch", "private", &parent])?;
             run(&workspace, &["tag", "private-tag", &tip])?;
             // upload-pack must ignore executable repository-local config.

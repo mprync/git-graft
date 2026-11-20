@@ -350,11 +350,11 @@ export const cases: Scenario[] = [
         assert(existsSync(verifiedBase));
         for (const [name, lease] of [
           ['polluted-warm', warm.lease], ['invalidated-warm', changed.lease], ['invalidated-parent', child.lease],
-        ]) ctx.cli(['drop', name, '--lease', lease]);
+        ]) ctx.cli(['remove', name, '--lease', lease]);
       }
-      ctx.cli(['drop', 'cache-prime', '--lease', first.lease]);
-      ctx.cli(['gc', '--apply']);
-      const preview = object(ctx.cli(['gc', '--purge-cache']).cache);
+      ctx.cli(['remove', 'cache-prime', '--lease', first.lease]);
+      ctx.cli(['prune', '--apply']);
+      const preview = object(ctx.cli(['prune', '--purge-cache']).cache);
       assert(Array.isArray(preview.candidates));
       assert(Array.isArray(preview.blocked));
       assert(preview.blocked.some(entry => object(entry).path === foreign));
@@ -363,7 +363,7 @@ export const cases: Scenario[] = [
         assert(preview.blocked.some(entry => object(entry).path === base));
         assert(existsSync(verifiedBase));
       }
-      const applied = object(ctx.cli(['gc', '--purge-cache', '--apply']).cache);
+      const applied = object(ctx.cli(['prune', '--purge-cache', '--apply']).cache);
       assert(Array.isArray(applied.removed));
       if (verifiedBase) {
         assert(applied.removed.includes(verifiedBase));
@@ -386,7 +386,7 @@ export const cases: Scenario[] = [
       const branches = ctx.git(['branch', '--list', 'graft/*']);
       const registry = ctx.cli(['list']);
       for (const [name, path] of [['sparse-escape', '../escape'], ['sparse-missing', 'missing'], ['sparse-file', 'tracked.txt']]) {
-        ctx.fail(['spawn', name, '--sparse', path]);
+        ctx.fail(['add', name, '--sparse', path]);
         assert.equal(ctx.git(['worktree', 'list', '--porcelain']), before);
         assert.equal(ctx.git(['branch', '--list', 'graft/*']), branches);
         assert.deepEqual(ctx.cli(['list']), registry);

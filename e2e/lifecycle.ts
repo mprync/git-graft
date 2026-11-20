@@ -17,7 +17,7 @@ function array(value: unknown): unknown[] {
   return value;
 }
 function drop(ctx: Context, name: string, lease: string, ...args: string[]): Record<string, unknown> {
-  return ctx.cli(['drop', name, '--lease', lease, ...args]);
+  return ctx.cli(['remove', name, '--lease', lease, ...args]);
 }
 function commit(ctx: Context, cwd: string, message: string): void {
   ctx.git(['add', '-A'], cwd);
@@ -57,8 +57,8 @@ export const cases: Scenario[] = [
       const changes = array(status.changes).map(object);
       assert.ok(changes.some((v) => v.path === 'tracked.txt'));
       assert.ok(changes.some((v) => v.path === 'untracked.txt'));
-      ctx.fail(['spawn', 'agent']);
-      ctx.fail(['drop', 'agent', '--lease', w.lease]);
+      ctx.fail(['add', 'agent']);
+      ctx.fail(['remove', 'agent', '--lease', w.lease]);
       assert.equal(readFileSync(join(w.path, 'tracked.txt'), 'utf8'), 'dirty\n');
       drop(ctx, 'agent', w.lease, '--discard');
       assert.equal(existsSync(w.path), false);
@@ -72,7 +72,7 @@ export const cases: Scenario[] = [
       ctx.git(['worktree', 'add', '-qb', 'other', linked]);
       writeFileSync(join(linked, 'tracked.txt'), 'native user edit\n');
       const head = ctx.git(['rev-parse', 'HEAD'], linked);
-      assert.match(String(ctx.fail(['spawn', 'native-input'], linked).message), /primary repository/i);
+      assert.match(String(ctx.fail(['add', 'native-input'], linked).message), /primary repository/i);
       const w = ctx.spawn('agent');
       assert.ok(names(ctx.cli(['list']).workspaces).includes('agent'));
       assert.equal(ctx.git(['rev-parse', 'HEAD'], w.path), head);
@@ -83,21 +83,21 @@ export const cases: Scenario[] = [
     },
   },
   {
-    name: 'drop refuses untracked ignored and unmerged work',
+    name: 'prune refuses untracked ignored and unmerged work',
     run(ctx) {
       const w = ctx.spawn('agent');
       writeFileSync(join(w.path, 'untracked'), 'keep');
-      ctx.fail(['drop', 'agent', '--lease', w.lease]);
+      ctx.fail(['remove', 'agent', '--lease', w.lease]);
       assert.equal(readFileSync(join(w.path, 'untracked'), 'utf8'), 'keep');
       rmSync(join(w.path, 'untracked'));
       mkdirSync(join(w.path, 'ignored'));
       writeFileSync(join(w.path, 'ignored', 'data'), 'keep ignored');
-      ctx.fail(['drop', 'agent', '--lease', w.lease]);
+      ctx.fail(['remove', 'agent', '--lease', w.lease]);
       assert.equal(readFileSync(join(w.path, 'ignored', 'data'), 'utf8'), 'keep ignored');
       rmSync(join(w.path, 'ignored'), { recursive: true });
       writeFileSync(join(w.path, 'tracked.txt'), 'committed\n');
       commit(ctx, w.path, 'unmerged');
-      ctx.fail(['drop', 'agent', '--lease', w.lease]);
+      ctx.fail(['remove', 'agent', '--lease', w.lease]);
       assert.equal(ctx.git(['show', 'HEAD:tracked.txt'], w.path), 'committed');
       drop(ctx, 'agent', w.lease, '--discard');
     },
@@ -107,7 +107,7 @@ export const cases: Scenario[] = [
     run(ctx) {
       const w = ctx.spawn('agent');
       writeFileSync(join(w.path, 'tracked.txt'), 'integrate\n');
-      const result = ctx.cli(['land', 'agent', '--lease', w.lease, '--commit', 'integrate'], w.path);
+      const result = ctx.cli(['merge', 'agent', '--lease', w.lease, '--commit', 'integrate'], w.path);
       assert.equal(result.commit, ctx.git(['rev-parse', 'main']));
       assert.equal(existsSync(w.path), false);
       assert.equal(ctx.git(['branch', '--list', 'graft/agent']), '');
@@ -135,7 +135,7 @@ export const cases: Scenario[] = [
       mkdirSync(modules, { recursive: true });
       writeFileSync(join(modules, 'index.js'), 'module.exports = 1;\n');
       function save(key: string): string {
-        const layer = ctx.cli(['layer', 'agent', '--lease', w.lease, 'save', '--key', key, '--copy']);
+        const layer = ctx.cli(['deps','layer','save','agent','--lease',w.lease, '--key', key, '--copy']);
         assert.equal(typeof layer.digest, 'string');
         return join(layerDir, String(layer.digest));
       }
@@ -143,15 +143,15 @@ export const cases: Scenario[] = [
       const changed = save('changed');
       const change = join(changed, 'user-note.txt');
       writeFileSync(change, 'preserve changed layer');
-      assert.equal(object(ctx.cli(['gc', '--purge-cache']).cache).eligible, false);
-      assert.equal(object(ctx.cli(['gc', '--purge-cache', '--apply']).cache).purged, false);
+      assert.equal(object(ctx.cli(['prune', '--purge-cache']).cache).eligible, false);
+      assert.equal(object(ctx.cli(['prune', '--purge-cache', '--apply']).cache).purged, false);
       assert.ok(existsSync(npm));
       assert.ok(existsSync(verified));
       drop(ctx, 'agent', w.lease, '--discard');
-      ctx.cli(['gc', '--apply']);
+      ctx.cli(['prune', '--apply']);
       assert.ok(existsSync(npm));
       assert.ok(existsSync(verified));
-      const preview = object(ctx.cli(['gc', '--purge-cache']).cache);
+      const preview = object(ctx.cli(['prune', '--purge-cache']).cache);
       assert.equal(preview.eligible, true);
       assert.equal(preview.purged, false);
       assert.ok(existsSync(verified));
@@ -165,7 +165,7 @@ export const cases: Scenario[] = [
       const candidates = array(preview.candidates);
       for (const path of removable) assert(candidates.includes(path), `Expected a purge candidate at ${path}`);
       for (const path of blocked) assert(!candidates.includes(path), `Unexpected purge candidate at ${path}`);
-      const applied = object(ctx.cli(['gc', '--purge-cache', '--apply']).cache);
+      const applied = object(ctx.cli(['prune', '--purge-cache', '--apply']).cache);
       assert.equal(applied.purged, true);
       assert.deepEqual(array(applied.removed).sort(), candidates.sort());
       for (const report of [preview, applied]) {
@@ -200,7 +200,7 @@ export const cases: Scenario[] = [
         const deadline = Date.now() + 10000;
         while (!existsSync(started) && Date.now() < deadline) await delay(25);
         assert.ok(existsSync(started), `exec did not start: ${stderr}`);
-        assert.equal(ctx.fail(['drop', 'agent', '--lease', w.lease, '--discard']).code, 'workspace_busy');
+        assert.equal(ctx.fail(['remove', 'agent', '--lease', w.lease, '--discard']).code, 'workspace_busy');
         assert.equal(ctx.fail(['move', 'agent', join(ctx.root, 'busy move'), '--lease', w.lease]).code, 'workspace_busy');
         assert.ok(existsSync(w.path));
         const peer = ctx.spawn('peer');
@@ -218,15 +218,15 @@ export const cases: Scenario[] = [
     },
   },
   {
-    name: 'hidden index flags protect local edits from drop and land',
+    name: 'hidden index flags protect local edits from prune and land',
     run(ctx) {
       const w = ctx.spawn('agent');
       const base = ctx.git(['rev-parse', 'HEAD']);
       for (const flag of ['assume-unchanged', 'skip-worktree']) {
         writeFileSync(join(w.path, 'tracked.txt'), flag + '\n');
         ctx.git(['update-index', '--' + flag, 'tracked.txt'], w.path);
-        assert.equal(ctx.fail(['drop', 'agent', '--lease', w.lease]).code, 'hidden_changes');
-        assert.equal(ctx.fail(['land', 'agent', '--lease', w.lease]).code, 'hidden_changes');
+        assert.equal(ctx.fail(['remove', 'agent', '--lease', w.lease]).code, 'hidden_changes');
+        assert.equal(ctx.fail(['merge', 'agent', '--lease', w.lease]).code, 'hidden_changes');
         assert.equal(readFileSync(join(w.path, 'tracked.txt'), 'utf8'), flag + '\n');
         assert.equal(ctx.git(['rev-parse', 'HEAD']), base);
         ctx.git(['update-index', '--no-' + flag, 'tracked.txt'], w.path);
@@ -248,7 +248,7 @@ export const cases: Scenario[] = [
         ctx.unavailable(`Cannot create directory symlink to verify redirection protection: ${String(error)}`);
       }
       try {
-        ctx.fail(['drop', 'agent', '--lease', w.lease, '--discard']);
+        ctx.fail(['remove', 'agent', '--lease', w.lease, '--discard']);
         assert.ok(existsSync(moved));
       } finally {
         unlinkSync(w.path);
@@ -258,7 +258,7 @@ export const cases: Scenario[] = [
     },
   },
   {
-    name: 'spawn request id survives disconnect and rejects adoption',
+    name: 'graft request id survives disconnect and rejects adoption',
     run(ctx) {
       const id = 'b4826629-f8e7-4736-ac38-f2950d40f642';
       const other = '938fb238-a7d9-4c90-a572-13c701d535a1';
@@ -273,19 +273,19 @@ export const cases: Scenario[] = [
       assert.equal(retry.path, first.path);
       assert.equal(retry.result.base, original);
       assert.equal(ctx.git(['rev-parse', 'HEAD'], first.path), original);
-      ctx.fail(['spawn', 'agent', '--request-id', other]);
-      ctx.fail(['spawn', 'agent', '--request-id', id, '--base', 'main']);
-      ctx.fail(['spawn', 'agent', '--request-id', id, '--sparse', 'different']);
+      ctx.fail(['add', 'agent', '--request-id', other]);
+      ctx.fail(['add', 'agent', '--request-id', id, '--base', 'main']);
+      ctx.fail(['add', 'agent', '--request-id', id, '--sparse', 'different']);
       assert.equal(ctx.git(['rev-parse', 'HEAD'], first.path), original);
       drop(ctx, 'agent', id);
-      ctx.fail(['spawn', 'another', '--request-id', id]);
+      ctx.fail(['add', 'another', '--request-id', id]);
     },
   },
   {
-    name: 'concurrent retries of the same spawn reserve one identity',
+    name: 'concurrent retries of the same graft creation reserve one identity',
     async run(ctx) {
       const id = '80dd84ae-2182-42d5-ad09-1b14d6d9480a';
-      const args = ['--repo', ctx.repo, '--json', 'spawn', 'concurrent', '--request-id', id];
+      const args = ['--repo', ctx.repo, '--json', 'add', 'concurrent', '--request-id', id];
       const spawn = promisify(execFile);
       const attempts = await Promise.allSettled(Array.from({ length: 3 }, () =>
         spawn(ctx.bin, args, { cwd: ctx.repo, env: ctx.env, timeout: 30_000 })));
@@ -301,11 +301,11 @@ export const cases: Scenario[] = [
       assert.equal(ctx.git(['rev-parse', 'HEAD'], first.path), ctx.git(['rev-parse', 'HEAD']));
       ctx.git(['fsck', '--full'], first.path);
       drop(ctx, 'concurrent', id);
-      ctx.coverCli('spawn');
+      ctx.coverCli('add');
     },
   },
   {
-    name: 'drop replay and reused slug reject stale lease',
+    name: 'prune replay and reused slug reject stale lease',
     run(ctx) {
       const first = ctx.spawn('agent');
       const result = drop(ctx, 'agent', first.lease);
