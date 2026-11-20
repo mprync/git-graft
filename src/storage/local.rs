@@ -660,9 +660,18 @@ pub(super) mod direct {
                 .collect()
         })?;
         let mut missing = Vec::new();
-        for (cloned, paths) in batches {
+        let mut installed = HashMap::new();
+        for (cloned, paths, stats) in batches {
             receipt.cloned.merge(cloned);
             missing.extend(paths);
+            installed.extend(stats.into_iter().map(|(entry, stat)| {
+                let record = index_stat::Installed {
+                    blob: entry.blob.clone(),
+                    mode: entry.mode,
+                    stat,
+                };
+                (entry.name.clone(), record)
+            }));
         }
         if let Some(ready) = ready {
             ready()?;
@@ -689,8 +698,9 @@ pub(super) mod direct {
             }
             count_native(checkout.worktree, missing.into_iter(), &mut receipt.private);
         }
-        // Cloned entries retain read-tree's empty stat fields. No later stat
-        // refresh can bless an edit that arrived after a path was installed.
+        // Like Git's own checkout, record each cloned file's stat as captured
+        // immediately after installation; no later refresh blesses an edit.
+        index_stat::record(&checkout.index, &installed)?;
         receipt.primary.files = receipt.cloned.files;
         receipt.primary.bytes = receipt.cloned.bytes;
         let backend = match (receipt.cloned.files, cfg!(target_os = "macos")) {
@@ -701,6 +711,9 @@ pub(super) mod direct {
         Ok(receipt.json(backend, None))
     }
 
+    /// Cloned bytes, entries Git must check out, and cloned entries' stat data.
+    type Batch<'a> = (Counts, Vec<&'a Entry>, Vec<(&'a Entry, index_stat::Stat)>);
+
     fn clone_batch<'a>(
         files: &'a [Entry],
         candidates: &[bool],
@@ -710,9 +723,10 @@ pub(super) mod direct {
         sha256: bool,
         #[cfg(target_os = "macos")] hints: Option<&[std::sync::OnceLock<early::Verified>]>,
         #[cfg(target_os = "linux")] scratch: &native::Root,
-    ) -> Result<(Counts, Vec<&'a Entry>)> {
+    ) -> Result<Batch<'a>> {
         let mut counts = Counts::default();
         let mut missing = Vec::new();
+        let mut installed = Vec::new();
         let mut buffer = [0; 64 * 1024];
         #[cfg(target_os = "macos")]
         let mut hints = hints.map(|batch| batch.iter());
@@ -790,9 +804,14 @@ pub(super) mod direct {
                 }
                 destination.install_local_clone(path, scratch)?;
             }
+            // Capture the installed inode right away, as Git's checkout does.
+            // A file Graft cannot stat keeps empty stat data and is rehashed.
+            if let Ok(info) = destination.regular_stat(path) {
+                installed.push((entry, index_stat::Stat::from_libc(&info)));
+            }
             counts.add(metadata.len());
         }
-        Ok((counts, missing))
+        Ok((counts, missing, installed))
     }
 
     fn verified_blob(

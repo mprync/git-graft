@@ -19,6 +19,8 @@ use std::{
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod cache;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod index_stat;
 mod local;
 mod tip_index;
 pub(crate) use tip_index::TipIndex;
