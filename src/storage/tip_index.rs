@@ -9,8 +9,6 @@ use std::{
 };
 
 pub(crate) struct TipIndex {
-    #[cfg(target_os = "macos")]
-    pub(super) donors: Option<super::local::direct::EarlyDonors>,
     pub(super) entries: Vec<Entry>,
     rows: Vec<u8>,
     pub(crate) tree: String,
@@ -29,8 +27,6 @@ impl TipIndex {
             write!(tree, "{byte:02x}")?;
         }
         Ok(Self {
-            #[cfg(target_os = "macos")]
-            donors: None,
             entries,
             rows,
             tree,
@@ -55,11 +51,6 @@ impl TipIndex {
             .iter()
             .filter(|entry| entry.mode != 0o160000)
             .map(|entry| entry.blob.as_str())
-    }
-
-    #[cfg(target_os = "macos")]
-    pub(crate) fn start_donors(&mut self, root: &std::path::Path) {
-        self.donors = super::local::direct::EarlyDonors::start(root, &self.entries);
     }
 
     pub(super) fn prepare(&self, checkout: &LocalCheckout<'_>) -> Result<()> {

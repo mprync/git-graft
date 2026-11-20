@@ -7,10 +7,10 @@
 //! and ignored files are never copied by design. Each clone is listed again
 //! afterwards; a clone that picked up a concurrently created entry is discarded
 //! and its files take the per-file path. Every cloned entry is then verified
-//! before its stat data is recorded: a regular file by a still-valid donor
-//! check or by hashing its bytes, a link by hashing its target. An entry that
+//! before its stat data is recorded: a regular file by Git's own stat test on
+//! an unchanged donor or by hashing its bytes, a link by hashing its target. An entry that
 //! fails verification is removed and left for Git to check out.
-use super::{early, link_matches, verified_blob};
+use super::{link_matches, verified_blob};
 use crate::storage::{Counts, Entry, cache::Stamp, index_stat, native::Root};
 use anyhow::{Context, Result};
 use std::{
@@ -19,7 +19,6 @@ use std::{
     io,
     os::unix::{ffi::OsStrExt, fs::PermissionsExt},
     path::Path,
-    sync::OnceLock,
 };
 
 /// Smaller directories gain nothing over per-file clones.
@@ -178,7 +177,6 @@ pub(super) fn clone_directories<'a>(
     donor: &Root,
     destination: &Root,
     policy: Policy<'_>,
-    hints: Option<&[OnceLock<early::Verified>]>,
 ) -> Result<Cloned<'a>> {
     let mut cloned = Cloned {
         covered: vec![false; files.len()],
@@ -202,7 +200,6 @@ pub(super) fn clone_directories<'a>(
             name = directory;
         }
     }
-    let hint = |index: usize| hints.and_then(|hints| hints[index].get());
     let clones = std::thread::scope(|scope| -> Result<Vec<Clone>> {
         let mut workers = Vec::new();
         for lane in lanes(members.into_iter().collect(), |(_, indexes)| indexes.len()) {
@@ -228,17 +225,8 @@ pub(super) fn clone_directories<'a>(
                         if members.len() < MIN_FILES {
                             continue;
                         }
-                        // Stamp donor files that lack an early check before cloning.
-                        let before = members
-                            .iter()
-                            .map(|&index| {
-                                let entry = &files[index];
-                                if entry.mode == LINK || hint(index).is_some() {
-                                    return None;
-                                }
-                                donor.regular_stat(entry.path().ok()?).ok()
-                            })
-                            .collect();
+                        // Stamp donor files before cloning them.
+                        let before = stat_donors(files, &members, &donor, policy.reuse_ancestors)?;
                         let shape = self::shape(files, &members, &name);
                         if clone_one(&name, &shape, &donor, &destination, policy.reuse_ancestors)? {
                             clones.push(Clone {
@@ -280,7 +268,6 @@ pub(super) fn clone_directories<'a>(
                         let index = item.members[at];
                         let checked = Checked {
                             entry: &files[index],
-                            hint: hint(index),
                             before: item.before[at].as_ref(),
                         };
                         let outcome = verify(&checked, &donor, &destination, policy, &mut buffer)?;
@@ -326,6 +313,41 @@ pub(super) fn clone_directories<'a>(
         }
     }
     Ok(cloned)
+}
+
+/// `lstat` each regular donor file, using several workers for large sets.
+fn stat_donors(
+    files: &[Entry],
+    members: &[usize],
+    donor: &Root,
+    reuse_ancestors: bool,
+) -> Result<Vec<Option<libc::stat>>> {
+    let stat = |root: &Root, index: usize| {
+        let entry = &files[index];
+        if entry.mode == LINK {
+            return None;
+        }
+        root.regular_stat(entry.path().ok()?).ok()
+    };
+    if members.len() < 512 {
+        return Ok(members.iter().map(|&index| stat(donor, index)).collect());
+    }
+    std::thread::scope(|scope| {
+        let mut workers = Vec::new();
+        for chunk in members.chunks(members.len().div_ceil(WORKERS)) {
+            let root = donor.checkout_worker(reuse_ancestors)?;
+            workers.push(scope.spawn(move || {
+                chunk
+                    .iter()
+                    .map(|&index| stat(&root, index))
+                    .collect::<Vec<_>>()
+            }));
+        }
+        Ok(workers
+            .into_iter()
+            .flat_map(crate::workspace::joined)
+            .collect())
+    })
 }
 
 /// Split jobs across at most [`WORKERS`] lanes, largest first, by `weight`.
@@ -383,7 +405,6 @@ fn clone_one(
 /// One cloned entry and what is known about its donor.
 struct Checked<'a> {
     entry: &'a Entry,
-    hint: Option<&'a early::Verified>,
     before: Option<&'a libc::stat>,
 }
 
@@ -419,21 +440,16 @@ fn verify(
     let Ok(info) = destination.regular_stat(file_path) else {
         return Ok(Outcome::Broken);
     };
-    // An early donor check still holds if the donor's stamp is unchanged now.
     // A donor whose stat Git itself trusts, unchanged across the clone, needs
-    // no hashing either.
-    let verified = checked
-        .hint
-        .is_some_and(|hint| hint.reopen(donor, file_path).is_some())
-        || checked.before.is_some_and(|before| {
-            trusted_donor(donor, file_path, before, entry, policy.trusted)
-                || donor_unchanged(donor, file_path, before, entry, buffer, policy.sha256)
-        })
-        || destination
-            .regular_metadata(file_path)
-            .is_ok_and(|(mut file, metadata)| {
-                verified_blob(&mut file, &metadata, buffer, &entry.blob, policy.sha256)
-            });
+    // no hashing.
+    let verified = checked.before.is_some_and(|before| {
+        trusted_donor(donor, file_path, before, entry, policy.trusted)
+            || donor_unchanged(donor, file_path, before, entry, buffer, policy.sha256)
+    }) || destination.regular_metadata(file_path).is_ok_and(
+        |(mut file, metadata)| {
+            verified_blob(&mut file, &metadata, buffer, &entry.blob, policy.sha256)
+        },
+    );
     if !verified {
         destination.discard(file_path)?;
         return Ok(Outcome::Missing);
@@ -585,7 +601,7 @@ mod tests {
             sha256: false,
             reuse_ancestors: false,
         };
-        let cloned = clone_directories(&rows, &candidates, &donor, &destination, policy, None)?;
+        let cloned = clone_directories(&rows, &candidates, &donor, &destination, policy)?;
         assert!(!destination_path.join("docs/.env").exists());
         assert!(
             !destination_path.join("docs").exists(),

@@ -134,15 +134,7 @@ fn materialize_with<F: FnOnce() -> Result<()>>(
     let planned = direct::plan(&checkout, &oid, sparse, files, state, primary, sizes)?;
     crate::trace::mark("checkout: plan donors");
     let receipt = match planned {
-        Ok(plan) => direct::install(
-            &checkout,
-            &oid,
-            files,
-            plan,
-            #[cfg(target_os = "macos")]
-            metadata.index.and_then(|index| index.donors.as_ref()),
-            ready,
-        )?,
+        Ok(plan) => direct::install(&checkout, &oid, files, plan, ready)?,
         Err(reason) => {
             ready()?;
             checkout.native(&oid, sparse, files, reason)?
@@ -329,10 +321,6 @@ pub(super) mod direct {
     use sha1::Digest;
     use std::{collections::HashMap, fs::File, io::Read, os::unix::fs::MetadataExt};
 
-    #[cfg(target_os = "macos")]
-    mod early;
-    #[cfg(target_os = "macos")]
-    pub(in crate::storage) use early::EarlyDonors;
     #[cfg(target_os = "macos")]
     mod tree;
 
@@ -679,7 +667,6 @@ pub(super) mod direct {
         oid: &str,
         files: &[Entry],
         plan: Plan,
-        #[cfg(target_os = "macos")] early: Option<&EarlyDonors>,
         ready: F,
     ) -> Result<Value> {
         let mut command = checkout.proof_command();
@@ -743,7 +730,6 @@ pub(super) mod direct {
                 sha256,
                 reuse_ancestors,
             },
-            early.map(|early| early.batch(0, files.len())),
         )?;
         #[cfg(target_os = "macos")]
         let covered = directories.covered.as_slice();
@@ -761,8 +747,6 @@ pub(super) mod direct {
             let mut flags = plan.candidates.as_slice();
             let mut skipped = covered;
             for chunk in source_chunks(files) {
-                #[cfg(target_os = "macos")]
-                let hints = early.map(|early| early.batch(files.len() - flags.len(), chunk.len()));
                 let (eligible, remaining) = flags.split_at(chunk.len());
                 flags = remaining;
                 let (skip, remaining) = skipped.split_at(chunk.len());
@@ -785,8 +769,6 @@ pub(super) mod direct {
                         mode,
                         sha256,
                         trusted,
-                        #[cfg(target_os = "macos")]
-                        hints,
                         #[cfg(target_os = "linux")]
                         &temporary,
                     )
@@ -887,21 +869,13 @@ pub(super) mod direct {
         mode: u32,
         sha256: bool,
         trusted: Option<&index_stat::Trusted>,
-        #[cfg(target_os = "macos")] hints: Option<&[std::sync::OnceLock<early::Verified>]>,
         #[cfg(target_os = "linux")] scratch: &native::Root,
     ) -> Result<Batch<'a>> {
         let mut counts = Counts::default();
         let mut missing = Vec::new();
         let mut installed = Vec::new();
         let mut buffer = [0; 64 * 1024];
-        #[cfg(target_os = "macos")]
-        let mut hints = hints.map(|batch| batch.iter());
         for ((entry, &eligible), &done) in files.iter().zip(candidates).zip(skip) {
-            #[cfg(target_os = "macos")]
-            let hint = hints
-                .as_mut()
-                .and_then(Iterator::next)
-                .and_then(std::sync::OnceLock::get);
             if done {
                 continue;
             }
@@ -910,15 +884,7 @@ pub(super) mod direct {
                 continue;
             }
             let path = entry.path()?;
-            #[cfg(target_os = "macos")]
-            let cached = hint.and_then(|verified| verified.reopen(donor, path));
-            #[cfg(target_os = "linux")]
-            let cached = None;
-            let verified = cached.is_some();
-            let Ok((mut file, metadata)) = cached
-                .map(Ok)
-                .unwrap_or_else(|| donor.regular_metadata(path))
-            else {
+            let Ok((mut file, metadata)) = donor.regular_metadata(path) else {
                 missing.push(entry);
                 continue;
             };
@@ -930,22 +896,19 @@ pub(super) mod direct {
             };
             // A tracked index entry can still name a staged change, an
             // assume-unchanged file or a checkout produced with old filters.
-            // Hash the source bytes independently, including same-size edits.
-            // Git's own stat test, unchanged across the clone below, also
-            // proves the bytes.
-            let trusted = !verified
-                && trusted.is_some_and(|trusted| {
-                    trusted.holds(
-                        &entry.name,
-                        &entry.blob,
-                        entry.mode,
-                        &index_stat::Stat::from_metadata(&metadata),
-                        metadata.len(),
-                    )
-                });
+            // Git's own stat test, unchanged across the clone below, proves
+            // the bytes; otherwise hash them, catching same-size edits.
+            let trusted = trusted.is_some_and(|trusted| {
+                trusted.holds(
+                    &entry.name,
+                    &entry.blob,
+                    entry.mode,
+                    &index_stat::Stat::from_metadata(&metadata),
+                    metadata.len(),
+                )
+            });
             if !same_mode
-                || (!verified
-                    && !trusted
+                || (!trusted
                     && !verified_blob(&mut file, &metadata, &mut buffer, &entry.blob, sha256))
             {
                 missing.push(entry);

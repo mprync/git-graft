@@ -134,12 +134,6 @@ pub(in crate::workspace) fn prepare_checkout_proof(
         objects.push((id.to_owned(), loose(kind, bytes)?));
         Ok(())
     })?;
-    #[cfg(target_os = "macos")]
-    let index = {
-        let mut index = index;
-        index.start_donors(primary);
-        index
-    };
     Ok(LoosePlan {
         base: base.to_owned(),
         index,
