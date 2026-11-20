@@ -4,11 +4,51 @@ on:
   push:
   pull_request:
   workflow_dispatch:
+    inputs:
+      filesystems:
+        description: Space-separated filesystems to verify (apfs ntfs ext4 btrfs); empty runs all
+        required: false
+        default: ''
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  select:
+    name: Select filesystems
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      include: ${{ steps.pick.outputs.include }}
+    steps:
+      - id: pick
+        env:
+          WANTED: ${{ inputs.filesystems }}
+        shell: python
+        run: |
+          import json, os
+          runs = [
+              {"id": "macOS 15 APFS clonefile", "runner": "macos-15", "filesystem": "apfs",
+               "expected-backend": "clonefile", "test-volume": "runner"},
+              {"id": "Windows 2025 NTFS Git fallback", "runner": "windows-2025", "filesystem": "ntfs",
+               "expected-backend": "git", "test-volume": "runner"},
+              {"id": "Ubuntu 24.04 loop ext4 Git fallback", "runner": "ubuntu-24.04", "filesystem": "ext4",
+               "expected-backend": "git", "test-volume": "loop"},
+              {"id": "Ubuntu 24.04 loop btrfs reflink", "runner": "ubuntu-24.04", "filesystem": "btrfs",
+               "expected-backend": "reflink", "test-volume": "loop"},
+          ]
+          wanted = set(os.environ.get("WANTED", "").split())
+          unknown = wanted - {run["filesystem"] for run in runs}
+          if unknown:
+              raise SystemExit(f"unknown filesystems: {' '.join(sorted(unknown))}")
+          chosen = [run for run in runs if not wanted or run["filesystem"] in wanted]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"include={json.dumps(chosen)}\n")
+
   msrv:
     name: Rust 1.89 locked build
     runs-on: ubuntu-24.04
@@ -23,32 +63,13 @@ jobs:
 
   verify:
     name: ${{ matrix.id }}
+    needs: select
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - id: macOS 15 APFS clonefile
-            runner: macos-15
-            filesystem: apfs
-            expected-backend: clonefile
-            test-volume: runner
-          - id: Windows 2025 NTFS Git fallback
-            runner: windows-2025
-            filesystem: ntfs
-            expected-backend: git
-            test-volume: runner
-          - id: Ubuntu 24.04 loop ext4 Git fallback
-            runner: ubuntu-24.04
-            filesystem: ext4
-            expected-backend: git
-            test-volume: loop
-          - id: Ubuntu 24.04 loop btrfs reflink
-            runner: ubuntu-24.04
-            filesystem: btrfs
-            expected-backend: reflink
-            test-volume: loop
+        include: ${{ fromJSON(needs.select.outputs.include) }}
     env:
       CARGO_TERM_COLOR: always
       CARGO_INCREMENTAL: 0
