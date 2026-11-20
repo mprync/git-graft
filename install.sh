@@ -133,6 +133,18 @@ fetch() {
   esac
 }
 
+# SHA256SUMS comes from the same release as the archive. When the GitHub CLI
+# is installed and signed in, also check the archive's signed build provenance,
+# which proves it was built by this repository's release workflow.
+verify_provenance() {
+  case $BASE in https://github.com/*) ;; *) return 0 ;; esac
+  if have gh && gh auth status >/dev/null 2>&1; then
+    gh attestation verify "$1" --repo "$REPO" >/dev/null 2>&1 ||
+      die "build provenance check failed for $(basename "$1"); nothing was installed"
+    say "Verified build provenance"
+  fi
+}
+
 sha256_of() {
   if have sha256sum; then
     sha256sum "$1" | awk '{print $1}'
@@ -310,6 +322,7 @@ main() {
     die "checksum mismatch for $asset (expected $expected_lc, got ${actual_lc:-nothing}); nothing was installed"
   fi
   say "Verified SHA-256 of $asset"
+  verify_provenance "$TMP_ROOT/$asset"
 
   mkdir "$TMP_ROOT/extract"
   extract "$TMP_ROOT/$asset" "$TMP_ROOT/extract"

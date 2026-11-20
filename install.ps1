@@ -127,6 +127,21 @@ function Install-GitGraft {
         }
         Write-Host "Verified SHA-256 of $asset"
 
+        # SHA256SUMS comes from the same release as the archive. When the GitHub
+        # CLI is installed and signed in, also check the archive's signed build
+        # provenance from this repository's release workflow.
+        $gh = Get-Command gh -ErrorAction SilentlyContinue
+        if ($gh -and $BaseUrl.StartsWith('https://github.com/')) {
+            & $gh.Source auth status *> $null
+            if ($LASTEXITCODE -eq 0) {
+                & $gh.Source attestation verify $zipPath --repo $repo *> $null
+                if ($LASTEXITCODE -ne 0) {
+                    throw "Build provenance check failed for $asset; nothing was installed."
+                }
+                Write-Host 'Verified build provenance'
+            }
+        }
+
         $extractDir = Join-Path $work 'extract'
         Expand-Archive -LiteralPath $zipPath -DestinationPath $extractDir -Force
         $stem = [IO.Path]::GetFileNameWithoutExtension($asset)

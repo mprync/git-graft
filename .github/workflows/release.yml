@@ -426,14 +426,15 @@ jobs:
       - name: Create the release and upload every asset
         run: |
           set -euo pipefail
+          # Published assets are pinned by checksum in package manifests and in
+          # provenance attestations, so a release is never rebuilt in place.
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            # Re-run of a tag that already has a release: refresh its assets.
-            gh release upload "$TAG" release/* --clobber --repo "$GITHUB_REPOSITORY"
-          else
-            flags=(--verify-tag --generate-notes --title "$TAG")
-            if [[ "$PRERELEASE" == "true" ]]; then flags+=(--prerelease); fi
-            gh release create "$TAG" release/* "${flags[@]}" --repo "$GITHUB_REPOSITORY"
+            echo "::error::Release $TAG already exists. Publish a new version instead of replacing its assets."
+            exit 1
           fi
+          flags=(--verify-tag --generate-notes --title "$TAG")
+          if [[ "$PRERELEASE" == "true" ]]; then flags+=(--prerelease); fi
+          gh release create "$TAG" release/* "${flags[@]}" --repo "$GITHUB_REPOSITORY"
 
   render-packages:
     name: Render package manifests
@@ -584,8 +585,12 @@ jobs:
           WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGET_TOKEN }}
         run: |
           $ErrorActionPreference = 'Stop'
-          # Microsoft publishes wingetcreate only as a rolling download, so it cannot be hash-pinned here.
-          Invoke-WebRequest -Uri https://aka.ms/wingetcreate/latest -OutFile wingetcreate.exe
+          # A pinned wingetcreate release, verified before it sees the token.
+          $uri = 'https://github.com/microsoft/winget-create/releases/download/v1.28.1.0/wingetcreate.exe'
+          Invoke-WebRequest -Uri $uri -OutFile wingetcreate.exe
+          $expected = '63d980ba79e97042395bd6eb5992c2db9e01e9e7a8a22958a95c288f27310413'
+          $actual = (Get-FileHash -LiteralPath wingetcreate.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actual -ne $expected) { throw "wingetcreate SHA-256 mismatch: $actual" }
           .\wingetcreate.exe submit packages/winget
           if ($LASTEXITCODE -ne 0) { throw 'wingetcreate submit failed' }
 
