@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, renameSync, symlinkSync, u
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
-import type { Scenario } from './harness.ts';
+import { objectResult, type Scenario } from './harness.ts';
 
 type Context = Parameters<Scenario['run']>[0];
 
@@ -33,6 +33,7 @@ export const cases: Scenario[] = [
     run(ctx) {
       const doctor = ctx.cli(['doctor']);
       assert.ok(doctor.git && doctor.common_dir && doctor.source_storage);
+      assert.equal(typeof objectResult(doctor.file_sharing).shared, 'boolean', 'doctor reports whether grafts share files');
       assert.equal(doctor.git, ctx.git(['--version']));
       assert.equal(doctor.git_minimum, '2.46.0');
       assert.equal(doctor.git_supported, true);

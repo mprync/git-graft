@@ -588,9 +588,11 @@ pub fn run(repo: &Path, command: Command) -> Result<Value> {
     }
     let (name, lease) = match &command {
         Command::Doctor => {
+            let source = storage::doctor(&p.state)?;
+            let native = source["native_clone"].as_bool().unwrap_or(false);
             return Ok(json!({"common_dir":p.common,
-            "source_storage":storage::doctor(&p.state)?,"git":version,
-            "git_minimum":git::MINIMUM_VERSION,"git_supported":supported}));
+            "source_storage":source,"file_sharing":storage::file_sharing(&p.repo, native),
+            "git":version,"git_minimum":git::MINIMUM_VERSION,"git_supported":supported}));
         }
         Command::List => {
             return Ok(

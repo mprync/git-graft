@@ -1386,6 +1386,34 @@ pub fn doctor(state: &Path) -> Result<Value> {
     )
 }
 
+/// Whether new grafts of `checkout` can share its files' data blocks, and if not,
+/// why and how to fix it. A filesystem without cloning or a setting that makes Git
+/// rewrite line endings at checkout means every file is written in full.
+pub fn file_sharing(checkout: &Path, native_clone: bool) -> Value {
+    if !native_clone {
+        return json!({"shared": false, "reason": "the filesystem cannot clone files"});
+    }
+    let setting = |key: &str| {
+        crate::git::text(checkout, &["config", "--get", key])
+            .ok()
+            .map(|value| value.trim().to_ascii_lowercase())
+    };
+    let autocrlf = setting("core.autocrlf");
+    let rewrites = match autocrlf.as_deref() {
+        Some("true") => Some("core.autocrlf=true"),
+        Some("input") => None,
+        _ => (setting("core.eol").as_deref() == Some("crlf")).then_some("core.eol=crlf"),
+    };
+    match rewrites {
+        Some(setting) => json!({
+            "shared": false,
+            "reason": format!("{setting} makes Git rewrite line endings at checkout"),
+            "fix": "git config --global core.autocrlf input",
+        }),
+        None => json!({"shared": true}),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1401,6 +1429,21 @@ mod tests {
     }
     fn fixture() -> (tempfile::TempDir, PathBuf, String) {
         fixture_with_format("sha1")
+    }
+
+    #[test]
+    fn file_sharing_reports_line_ending_rewrites() {
+        let (_temp, repo, _) = fixture();
+        assert_eq!(file_sharing(&repo, false)["shared"], false);
+        command(&repo, &["config", "core.autocrlf", "input"]);
+        assert_eq!(file_sharing(&repo, true)["shared"], true);
+        command(&repo, &["config", "core.autocrlf", "true"]);
+        let report = file_sharing(&repo, true);
+        assert_eq!(report["shared"], false);
+        assert_eq!(report["fix"], "git config --global core.autocrlf input");
+        command(&repo, &["config", "core.autocrlf", "false"]);
+        command(&repo, &["config", "core.eol", "crlf"]);
+        assert_eq!(file_sharing(&repo, true)["shared"], false);
     }
 
     #[test]
