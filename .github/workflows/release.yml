@@ -79,8 +79,8 @@ jobs:
       - name: Detect which optional publishing credentials exist
         id: credentials
         env:
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          SCOOP_BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
+          HOMEBREW_TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+          SCOOP_BUCKET_DEPLOY_KEY: ${{ secrets.SCOOP_BUCKET_DEPLOY_KEY }}
           CHOCOLATEY_API_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
           WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
           AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
@@ -88,8 +88,8 @@ jobs:
           set -euo pipefail
           flag() { if [[ -n "$2" ]]; then echo "$1=true"; else echo "$1=false"; fi; }
           {
-            flag homebrew "$HOMEBREW_TAP_TOKEN"
-            flag scoop "$SCOOP_BUCKET_TOKEN"
+            flag homebrew "$HOMEBREW_TAP_DEPLOY_KEY"
+            flag scoop "$SCOOP_BUCKET_DEPLOY_KEY"
             flag chocolatey "$CHOCOLATEY_API_KEY"
             flag winget "$WINGET_TOKEN"
             flag aur "$AUR_SSH_KEY"
@@ -487,7 +487,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ env.TAP_REPO }}
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          # A write deploy key scoped to the tap repository alone.
+          ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
           path: tap
       - name: Commit the formula
         working-directory: tap
@@ -523,7 +524,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ env.SCOOP_REPO }}
-          token: ${{ secrets.SCOOP_BUCKET_TOKEN }}
+          # A write deploy key scoped to the bucket repository alone.
+          ssh-key: ${{ secrets.SCOOP_BUCKET_DEPLOY_KEY }}
           path: bucket
       - name: Commit the manifest
         working-directory: bucket
