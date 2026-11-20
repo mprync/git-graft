@@ -586,7 +586,7 @@ export const cases: Scenario[] = [
       assert.match(String(ctx.fail(drop).message), /merge is pending/);
       assert.equal(read(workspace.path, 'feature.txt'), 'edit after failure\n');
       const retired = ctx.cli([...drop, '--discard']);
-      assert.equal(retired.action, 'merge');
+      assert.equal(retired.action, 'land');
       assert.equal(retired.commit, tip);
       assert.equal(retired.recovery_lease, workspace.lease);
       assert(!existsSync(workspace.path));
@@ -655,7 +655,7 @@ export const cases: Scenario[] = [
       assertWorkspace();
 
       const retired = ctx.cli(['remove', ...owned, '--discard']);
-      assert.equal(retired.action, 'merge');
+      assert.equal(retired.action, 'land');
       assert.equal(retired.commit, tip);
       assert.equal(retired.previous, base);
       assert.equal(retired.recovery_lease, workspace.lease);

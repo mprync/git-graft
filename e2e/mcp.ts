@@ -1041,7 +1041,7 @@ export const cases: Scenario[] = [
 
         const forgotten = ctx.cli(layerArgs('remove', name, consumer.lease, key));
         assert.deepEqual(forgotten, {
-          action: 'remove', digest, backend: mode.backend, logical_bytes: 0, cloned_bytes: 0, copied_bytes: 0,
+          action: 'forget', digest, backend: mode.backend, logical_bytes: 0, cloned_bytes: 0, copied_bytes: 0,
           ...(process.platform === 'win32' ? { retained: true } : {}),
         });
         assert.deepEqual(readdirSync(layers).filter(entry => entry !== '.git-graft-id'), []);
