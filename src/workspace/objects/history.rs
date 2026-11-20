@@ -864,8 +864,8 @@ fn pack_with_donors(
         };
         // A private graph walk verifies all companion packs through the same
         // descriptors it traverses. Other paths still need their own verifier.
-        let may_walk =
-            cfg!(target_os = "macos") && full_tip.is_some() && !candidates_to_filter.is_empty();
+        let preview = cfg!(target_os = "macos") && full_tip.is_some();
+        let may_walk = preview && !candidates_to_filter.is_empty();
         let verify = (!may_walk).then(|| scope.spawn(verify_whole));
 
         let mut filtered = Vec::new();
@@ -875,7 +875,7 @@ fn pack_with_donors(
                 break;
             }
             if let Ok(candidate) = mixed::prepare(
-                if full_tip.is_some() && cfg!(target_os = "macos") {
+                if preview {
                     stage
                         .parent()
                         .and_then(Path::parent)
@@ -887,7 +887,7 @@ fn pack_with_donors(
                 &remaining,
                 width,
                 parent_objects.is_some(),
-                full_tip.is_some() && cfg!(target_os = "macos"),
+                preview,
             ) {
                 for id in &candidate.ids {
                     ensure!(remaining.remove(id), "duplicate filtered Git object");

@@ -259,34 +259,23 @@ pub(super) fn purge(p: &Project, root: &Path, dir: &Path) -> Result<()> {
 pub(super) fn recover(p: &Project, root: &Path) -> Result<()> {
     let mut retained = 0usize;
     for entry in fs::read_dir(root)? {
-        let entry = entry?;
-        if entry
-            .file_name()
-            .to_str()
-            .is_some_and(|name| name.starts_with(".planning-"))
+        let path = entry?.path();
+        let name = path.file_name().and_then(|name| name.to_str());
+        let message = if name.is_some_and(|name| name.starts_with(".planning-")) {
+            format!(
+                "interrupted landing planning scratch retained at {}",
+                path.display()
+            )
+        } else if name.is_some_and(|name| name.starts_with(".pending-"))
+            && let Err(error) = purge(p, root, &path)
         {
-            retained += 1;
-            if retained <= 3 {
-                eprintln!(
-                    "git-graft: interrupted landing planning scratch retained at {}",
-                    entry.path().display()
-                );
-            }
+            format!("landing scratch retained at {}: {error:#}", path.display())
+        } else {
             continue;
-        }
-        if entry
-            .file_name()
-            .to_str()
-            .is_some_and(|name| name.starts_with(".pending-"))
-            && let Err(error) = purge(p, root, &entry.path())
-        {
-            retained += 1;
-            if retained <= 3 {
-                eprintln!(
-                    "git-graft: landing scratch retained at {}: {error:#}",
-                    entry.path().display()
-                );
-            }
+        };
+        retained += 1;
+        if retained <= 3 {
+            eprintln!("git-graft: {message}");
         }
     }
     if retained > 3 {

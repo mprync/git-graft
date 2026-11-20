@@ -138,7 +138,8 @@ fn open_store(p: &Project, root: &Path) -> Result<(String, PathBuf, bool)> {
         scratch::checkpoint(p, &stage)?;
         return Ok((name, stage, true));
     }
-    Ok((name.clone(), verified_store(p, root, &name)?, false))
+    let path = verified_store(p, root, &name)?;
+    Ok((name, path, false))
 }
 
 fn sync_pin_directories(store: &Path, reference: &str) -> Result<()> {
@@ -223,21 +224,20 @@ pub(crate) fn prepare(
                 &format!("--object-format={format}"),
             ],
         )?;
-        let object_path = store.join("objects");
-        let path = git::path_str(&object_path)?;
-        let mut escaped = String::new();
-        for ch in path.chars() {
+        // A C-quoted entry keeps this single absolute path from naming another alternate.
+        let mut alternate = String::from("\"");
+        for ch in git::path_str(&store.join("objects"))?.chars() {
             match ch {
-                '\\' => escaped.push_str(r"\\"),
-                '"' => escaped.push_str(r#"\""#),
-                ch if ch.is_ascii_control() => escaped.push_str(&format!("\\{:03o}", ch as u32)),
-                ch => escaped.push(ch),
+                '\\' => alternate.push_str(r"\\"),
+                '"' => alternate.push_str(r#"\""#),
+                ch if ch.is_ascii_control() => alternate.push_str(&format!("\\{:03o}", ch as u32)),
+                ch => alternate.push(ch),
             }
         }
-        let path = escaped;
+        alternate.push_str("\"\n");
         registry::atomic(
             &temp.path().join("objects/info/alternates"),
-            format!("\"{path}\"\n").as_bytes(),
+            alternate.as_bytes(),
         )?;
         if registry::exists(&store.join("shallow"))? {
             registry::atomic(
@@ -1025,13 +1025,13 @@ mod tests {
             .unwrap_or_else(|| panic!("{error:#}"));
         assert_eq!(fault.code, "merge_conflict");
         let root = stores(&fixture.p, false).unwrap();
-        assert!(!fs::read_dir(&root).unwrap().any(|entry| {
-            entry
-                .unwrap()
-                .file_name()
-                .to_string_lossy()
-                .starts_with(".pending-")
-        }));
+        let has_pending = || {
+            fs::read_dir(&root).unwrap().any(|entry| {
+                let name = entry.unwrap().file_name();
+                name.to_string_lossy().starts_with(".pending-")
+            })
+        };
+        assert!(!has_pending());
         assert_eq!(
             fixture
                 .plan()
@@ -1041,13 +1041,7 @@ mod tests {
                 .code,
             "merge_conflict"
         );
-        assert!(!fs::read_dir(&root).unwrap().any(|entry| {
-            entry
-                .unwrap()
-                .file_name()
-                .to_string_lossy()
-                .starts_with(".pending-")
-        }));
+        assert!(!has_pending());
         assert_eq!(fault.details["paths"], json!([file]));
         let conflicts = fault.details["conflicts"].as_array().unwrap();
         assert_eq!(conflicts.len(), 1);

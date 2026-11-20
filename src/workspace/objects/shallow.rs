@@ -82,11 +82,7 @@ pub(super) fn initialize(source: &Path, root: &Path, base: &str) -> Result<Optio
     if selected.is_empty() {
         return Ok(None);
     }
-    let mut contents = String::new();
-    for oid in selected {
-        contents.push_str(&oid);
-        contents.push('\n');
-    }
+    let contents = selected.iter().map(|oid| format!("{oid}\n")).collect();
     publish(root, base, contents).map(Some)
 }
 

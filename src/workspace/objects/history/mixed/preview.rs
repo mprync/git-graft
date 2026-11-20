@@ -1,7 +1,6 @@
 //! Verify a tentative v2 index with native Git while traversing the same anonymous pack.
 use super::{ObjectId, Pack, Result, cache, ensure, transfer_git};
 use anyhow::Context;
-use sha2::Digest;
 use std::{
     fs::File,
     io::{Seek, Write},
@@ -57,11 +56,8 @@ impl Preview {
             index.extend_from_slice(&n.to_be_bytes());
         }
         index.extend_from_slice(trailer);
-        let digest = match trailer.len() {
-            20 => sha1::Sha1::digest(&index).to_vec(),
-            32 => sha2::Sha256::digest(&index).to_vec(),
-            _ => anyhow::bail!("unsupported hash"),
-        };
+        // The pack trailer from `mixed::prepare` is always a supported width.
+        let digest = super::trailer_digest(trailer.len(), &index)?;
         index.extend_from_slice(&digest);
         let name: String = trailer.iter().map(|b| format!("{b:02x}")).collect();
         Ok(Self { name, input, index })

@@ -178,27 +178,24 @@ impl Directory {
                 libc::RENAME_NOREPLACE,
             )
         };
-        if result == 0 {
-            Ok(())
-        } else {
-            Err(io::Error::last_os_error())
-        }
+        os_result(result)
     }
 
     fn remove_directory(&self, name: &CStr) -> io::Result<()> {
-        if unsafe { libc::unlinkat(self.0.as_raw_fd(), name.as_ptr(), libc::AT_REMOVEDIR) } == 0 {
-            Ok(())
-        } else {
-            Err(io::Error::last_os_error())
-        }
+        os_result(unsafe { libc::unlinkat(self.0.as_raw_fd(), name.as_ptr(), libc::AT_REMOVEDIR) })
     }
 
     fn create_directory(&self, name: &CStr) -> io::Result<()> {
-        if unsafe { libc::mkdirat(self.0.as_raw_fd(), name.as_ptr(), 0o777) } == 0 {
-            Ok(())
-        } else {
-            Err(io::Error::last_os_error())
-        }
+        os_result(unsafe { libc::mkdirat(self.0.as_raw_fd(), name.as_ptr(), 0o777) })
+    }
+}
+
+/// Map a libc call's zero-on-success result to the thread's OS error.
+fn os_result(result: libc::c_int) -> io::Result<()> {
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
     }
 }
 

@@ -346,11 +346,7 @@ pub(super) fn prepare(
         unchanged_bytes -= gap_end - start;
     }
     let payload = &bytes[..plan.end];
-    let trailer = match width {
-        20 => sha1::Sha1::digest(payload).to_vec(),
-        32 => sha2::Sha256::digest(payload).to_vec(),
-        _ => bail!("unsupported Git object format"),
-    };
+    let trailer = trailer_digest(width, payload)?;
     file.seek(SeekFrom::Start(plan.end as u64))?;
     file.write_all(&trailer)?;
     file.set_len((plan.end + width) as u64)?;
@@ -370,6 +366,15 @@ pub(super) fn prepare(
         scratch,
         ids: plan.ids,
         unchanged_bytes: unchanged_bytes as u64,
+    })
+}
+
+/// Git's pack or index trailer: the object-format hash of the preceding bytes.
+fn trailer_digest(width: usize, bytes: &[u8]) -> Result<Vec<u8>> {
+    Ok(match width {
+        20 => sha1::Sha1::digest(bytes).to_vec(),
+        32 => sha2::Sha256::digest(bytes).to_vec(),
+        _ => bail!("unsupported Git object format"),
     })
 }
 

@@ -13,8 +13,8 @@ use std::{
 };
 
 use super::{ObjectId, Pack};
-use crate::recovery::rename_exclusive;
 use crate::workspace::objects::{clone_file, open_regular, sync_directory};
+use crate::{cache::private_stage, recovery::rename_exclusive, registry::exists};
 
 pub(crate) const DIR: &str = "independent-packs-v2";
 pub(crate) const MARKER: &str = "graft-pack-cache";
@@ -310,10 +310,8 @@ impl<'a> Cache<'a> {
             return Ok(0);
         }
         prepare_root(&self.root)?;
-        match fs::symlink_metadata(&self.key) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
-            Ok(_) => return Ok(0),
+        if exists(&self.key)? {
+            return Ok(0);
         }
         let stage = private_tempdir_in(&self.root)?;
         let directories = inputs
@@ -407,14 +405,11 @@ impl<'a> Cache<'a> {
 /// Locate only the cache namespace created by this object backend.
 pub(crate) fn history_cache_root(state: &Path) -> Result<Option<PathBuf>> {
     let root = state.join(DIR);
-    match fs::symlink_metadata(&root) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error.into()),
-        Ok(_) => {
-            validate_root(&root)?;
-            Ok(Some(root))
-        }
+    if !exists(&root)? {
+        return Ok(None);
     }
+    validate_root(&root)?;
+    Ok(Some(root))
 }
 
 /// Verify a generation and return a stable proof for GC's quarantine check.
@@ -559,7 +554,7 @@ fn write_synced(path: &Path, bytes: &[u8]) -> Result<()> {
 }
 
 pub(super) fn private_tempdir_in(parent: &Path) -> Result<tempfile::TempDir> {
-    private_tempdir(parent, ".tmp")
+    private_stage(parent, ".tmp")
 }
 
 // Native Git prunes expired tmp_* directories under objects/pack, including
@@ -574,18 +569,7 @@ pub(super) fn temporary_pack_dir(parent: &Path) -> Result<tempfile::TempDir> {
             "donor pack directory is not privately writable"
         );
     }
-    private_tempdir(parent, "tmp_pack_graft_")
-}
-
-fn private_tempdir(parent: &Path, prefix: &str) -> Result<tempfile::TempDir> {
-    let mut builder = tempfile::Builder::new();
-    builder.prefix(prefix);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        builder.permissions(fs::Permissions::from_mode(0o700));
-    }
-    Ok(builder.tempdir_in(parent)?)
+    private_stage(parent, "tmp_pack_graft_")
 }
 
 pub(super) fn clone_checked(source: &File, destination: &Path) -> Result<()> {

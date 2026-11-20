@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 use crate::{
     api::fault,
+    cache::private_stage,
     git,
     landing::Plan,
     recovery::rename_exclusive,
@@ -26,6 +27,8 @@ pub(super) const MARKER: &str = "graft-workspace.json";
 const NAMESPACE: &str = "workspaces";
 const LEGACY_MARKER: &str = "graft-independent.json";
 const ARCHIVES: &str = ".retired";
+/// Prefix of the private stage a new workspace or namespace is built in.
+const PENDING: &str = ".pending-";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -77,6 +80,11 @@ impl Record {
             Some(Transition::Retire { status, .. }) => Some(status),
             _ => None,
         }
+    }
+
+    /// A live record, or a retired one being restored, owns its name.
+    fn holds_name(&self) -> bool {
+        !self.status.retired() || matches!(self.transition, Some(Transition::Restore { .. }))
     }
 }
 
@@ -266,21 +274,10 @@ fn project_id(common: &Path) -> Result<String> {
     Ok(id)
 }
 
-fn staging_directory(parent: &Path) -> Result<tempfile::TempDir> {
-    let mut builder = tempfile::Builder::new();
-    builder.prefix(".pending-");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        builder.permissions(fs::Permissions::from_mode(0o700));
-    }
-    Ok(builder.tempdir_in(parent)?)
-}
-
 pub(super) fn marked_dir(path: &Path, id: &str, create: bool) -> Result<()> {
     if create && !exists(path)? {
         let parent = path.parent().context("namespace has no parent")?;
-        let stage = staging_directory(parent)?;
+        let stage = private_stage(parent, PENDING)?;
         let owner = NamespaceOwner {
             project_id: id.into(),
             directory: file_id(stage.path())?,
@@ -289,16 +286,15 @@ pub(super) fn marked_dir(path: &Path, id: &str, create: bool) -> Result<()> {
     }
     let metadata = owned_directory(path)?;
     #[cfg(unix)]
-    {
+    let directory = {
         use std::os::unix::fs::PermissionsExt;
         ensure!(
             metadata.permissions().mode() & 0o077 == 0,
             "shared directory at {}",
             path.display()
         );
-    }
-    #[cfg(unix)]
-    let directory = unix_file_id(&metadata);
+        unix_file_id(&metadata)
+    };
     #[cfg(not(unix))]
     let directory = {
         let _ = metadata;
@@ -608,7 +604,7 @@ fn records(p: &Project) -> Result<Vec<Record>> {
         } else if !r.status.retired() {
             ensure!(ports.insert(r.port), "duplicate live workspace port");
         }
-        if !r.status.retired() || matches!(r.transition, Some(Transition::Restore { .. })) {
+        if r.holds_name() {
             ensure!(
                 live.insert(&r.name),
                 "multiple live records for workspace {}",
@@ -621,10 +617,7 @@ fn records(p: &Project) -> Result<Vec<Record>> {
 }
 
 fn current<'a>(records: &'a [Record], name: &str) -> Option<&'a Record> {
-    records.iter().find(|r| {
-        r.name == name
-            && (!r.status.retired() || matches!(r.transition, Some(Transition::Restore { .. })))
-    })
+    records.iter().find(|r| r.name == name && r.holds_name())
 }
 
 fn not_found(name: &str) -> anyhow::Error {
@@ -684,15 +677,20 @@ fn persist(p: &Project, r: &Record) -> Result<()> {
 fn write_record(directory: &Path, r: &Record) -> Result<()> {
     validate_record(r)?;
     let path = directory.join(format!("{}.json", r.id));
-    match fs::symlink_metadata(&path) {
-        Ok(metadata) => ensure!(
-            metadata.is_file() && !is_reparse_point(&metadata),
-            "workspace record path is occupied"
-        ),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-        Err(error) => return Err(error.into()),
-    }
+    ensure!(
+        absent_or_regular(&path)?,
+        "workspace record path is occupied"
+    );
     atomic(&path, &serde_json::to_vec(r)?)
+}
+
+/// Whether `path` is missing or an ordinary file reached without a link.
+fn absent_or_regular(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => Ok(metadata.is_file() && !is_reparse_point(&metadata)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(true),
+        Err(error) => Err(error.into()),
+    }
 }
 
 /// Persist runtime data or a landing plan on the current generation.
@@ -754,15 +752,11 @@ fn verify_at(
     }
     for name in ["config", "config.worktree", "index", "packed-refs"] {
         let file = admin.join(name);
-        match fs::symlink_metadata(&file) {
-            Ok(metadata) => ensure!(
-                metadata.is_file() && !is_reparse_point(&metadata),
-                "workspace Git metadata is redirected at {}",
-                file.display()
-            ),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
-        }
+        ensure!(
+            absent_or_regular(&file)?,
+            "workspace Git metadata is redirected at {}",
+            file.display()
+        );
     }
     ensure!(
         !exists(&objects.join("info/alternates"))?,
@@ -835,6 +829,16 @@ fn verify_endpoint(p: &Project, r: &Record, path: &Path) -> Result<Option<usize>
     verify_at(path, &r.identity, &marker(p, &r.id, &r.name), r.initialized)
 }
 
+/// Verify the workspace identity at `path` and, once Git is initialized,
+/// that Git resolves its working directory there.
+fn verify_checkout(p: &Project, r: &Record, path: &Path) -> Result<()> {
+    let detached = verify_endpoint(p, r, path)?;
+    if r.initialized {
+        verify_git_location(path, detached)?;
+    }
+    Ok(())
+}
+
 fn registered_path(p: &Project, name: &str, path: &Path) -> Result<()> {
     validate_path(path)?;
     ensure!(
@@ -856,11 +860,7 @@ fn verify_current(p: &Project, r: &Record) -> Result<()> {
         "workspace lifecycle transition requires recovery"
     );
     registered_path(p, &r.name, &r.path)?;
-    let detached = verify_endpoint(p, r, &r.path)?;
-    if r.initialized {
-        verify_git_location(&r.path, detached)?;
-    }
-    Ok(())
+    verify_checkout(p, r, &r.path)
 }
 
 fn matching_record(directory: &Path, r: &Record) -> Result<Record> {
@@ -1032,7 +1032,7 @@ fn safe_destination(p: &Project, r: &Record, path: &Path) -> Result<PathBuf> {
             Some(Transition::Move { to }) => Some(to.as_path()),
             _ => None,
         };
-        if !other.status.retired() || matches!(other.transition, Some(Transition::Restore { .. })) {
+        if other.holds_name() {
             ensure!(
                 !overlaps(&dest, &other.path)
                     && !other_target.is_some_and(|to| overlaps(&dest, to)),
@@ -1060,6 +1060,16 @@ fn archive_path(p: &Project, r: &Record, create: bool) -> Result<PathBuf> {
     Ok(root.join(&r.id))
 }
 
+/// The archive path, checked against the one the record journaled.
+fn recorded_archive(p: &Project, r: &Record) -> Result<PathBuf> {
+    let archive = archive_path(p, r, false)?;
+    ensure!(
+        r.archive.as_ref() == Some(&archive),
+        "invalid workspace archive path"
+    );
+    Ok(archive)
+}
+
 pub(super) fn sync_directory(path: &Path) -> Result<()> {
     #[cfg(unix)]
     File::open(path)?.sync_all()?;
@@ -1077,15 +1087,8 @@ fn same_filesystem(source: &Path, destination: &Path) -> Result<bool> {
 /// operation's result from preexisting or replacement filesystem entries.
 fn relocate(p: &Project, r: &Record, from: &Path, to: &Path, fresh_placement: bool) -> Result<()> {
     ensure!(from != to, "source and destination must differ");
-    let verify_destination = || {
-        let detached = verify_endpoint(p, r, to)?;
-        if r.initialized {
-            verify_git_location(to, detached)?;
-        }
-        Ok::<(), anyhow::Error>(())
-    };
     if exists(to)? {
-        verify_destination()
+        verify_checkout(p, r, to)
             .with_context(|| format!("destination {} is occupied", to.display()))?;
         ensure!(
             !exists(from)? || verify_endpoint(p, r, from).is_err(),
@@ -1100,7 +1103,7 @@ fn relocate(p: &Project, r: &Record, from: &Path, to: &Path, fresh_placement: bo
         rename_exclusive(from, to).with_context(|| {
             format!("move workspace from {} to {}", from.display(), to.display())
         })?;
-        if let Err(error) = verify_destination() {
+        if let Err(error) = verify_checkout(p, r, to) {
             rename_exclusive(to, from).context(
                 "workspace changed during rename and could not be returned to its original path",
             )?;
@@ -1130,7 +1133,7 @@ fn placement_source(root: &Path, r: &Record, from: &Path) -> Result<()> {
             && from
                 .file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with(".pending-")),
+                .is_some_and(|name| name.starts_with(PENDING)),
         "invalid pending workspace location"
     );
     Ok(())
@@ -1158,11 +1161,7 @@ fn resume(p: &Project, r: &mut Record) -> Result<()> {
             r.path = to;
         }
         Transition::Retire { status, from } => {
-            let archive = archive_path(p, r, false)?;
-            ensure!(
-                r.archive.as_ref() == Some(&archive),
-                "invalid workspace archive path"
-            );
+            let archive = recorded_archive(p, r)?;
             if let Some(from) = &from {
                 placement_source(&p.root, r, from)?;
             }
@@ -1170,11 +1169,7 @@ fn resume(p: &Project, r: &mut Record) -> Result<()> {
             r.status = status;
         }
         Transition::Restore { lease, port } => {
-            let archive = archive_path(p, r, false)?;
-            ensure!(
-                r.archive.as_ref() == Some(&archive),
-                "invalid workspace archive path"
-            );
+            let archive = recorded_archive(p, r)?;
             safe_destination(p, r, &r.path)?;
             relocate(p, r, &archive, &r.path, false)?;
             r.previous.push(Retirement {
@@ -1250,7 +1245,7 @@ pub fn reserve(
             && r.request == request
             && !r.status.retired()
         {
-            if matches!(r.transition, Some(Transition::Place { .. })) {
+            if r.placing() {
                 resume(p, &mut r)?;
             }
             verify_current(p, &r)?;
@@ -1295,7 +1290,7 @@ pub fn reserve(
     let namespace = directory.parent().context("missing workspace namespace")?;
     let _lock = lock_in(namespace, name)?;
     // Assemble the identity before exposing the workspace at its named path.
-    let stage = staging_directory(&root)?;
+    let stage = private_stage(&root, PENDING)?;
     let admin = stage.path().join(".git");
     dir(&admin)?;
     let id = Uuid::new_v4().to_string();
@@ -1310,6 +1305,7 @@ pub fn reserve(
     crate::trace::mark("reserve: identity");
     let port = port_for(&known, name)?;
     let started = now();
+    let from = stage.keep();
     let mut r = Record {
         id,
         name: name.into(),
@@ -1329,17 +1325,14 @@ pub fn reserve(
         project: p.repo.clone(),
         identity,
         initialized: false,
-        transition: Some(Transition::Place { from: stage.keep() }),
+        transition: Some(Transition::Place { from: from.clone() }),
         previous: Vec::new(),
     };
     let result = (|| {
         write_record(&directory, &r)?;
         crate::trace::mark("reserve: write placement");
-        let Some(Transition::Place { from }) = &r.transition else {
-            unreachable!("new reservations begin in placement");
-        };
         // The private stage was just created with only our .git marker.
-        relocate(p, &r, from, &r.path, true)?;
+        relocate(p, &r, &from, &r.path, true)?;
         crate::trace::mark("reserve: relocate");
         r.transition = None;
         write_record(&directory, &r)
@@ -1424,10 +1417,7 @@ pub fn repair(p: &Project, name: &str, lease: &str, path: &Path) -> Result<Recor
     let mut r = authenticate(p, name, lease)?;
     let _lock = workspace_lock(p, name)?;
     let path = safe_destination(p, &r, path)?;
-    let detached = verify_endpoint(p, &r, &path)?;
-    if r.initialized {
-        verify_git_location(&path, detached)?;
-    }
+    verify_checkout(p, &r, &path)?;
     require_movable_git(&r, &path)?;
     match &r.transition {
         Some(Transition::Move { to }) if *to == path => resume(p, &mut r)?,
@@ -1601,15 +1591,8 @@ pub fn restore(p: &Project, name: &str, lease: &str) -> Result<Record> {
         "workspace name is already in use"
     );
     if r.transition.is_none() {
-        let archive = archive_path(p, &r, false)?;
-        ensure!(
-            r.archive.as_ref() == Some(&archive),
-            "invalid workspace archive path"
-        );
-        let detached = verify_endpoint(p, &r, &archive)?;
-        if r.initialized {
-            verify_git_location(&archive, detached)?;
-        }
+        let archive = recorded_archive(p, &r)?;
+        verify_checkout(p, &r, &archive)?;
         require_movable_git(&r, &archive)?;
         safe_destination(p, &r, &r.path)?;
         ensure_unoccupied(&r.path)?;

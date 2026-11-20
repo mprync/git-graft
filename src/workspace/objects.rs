@@ -391,6 +391,7 @@ pub(super) fn initialize(
         format,
     } = *source;
     let branch_ref = branch.map(|branch| format!("refs/heads/{branch}"));
+    let reference = branch_ref.as_deref().unwrap_or("HEAD");
     if let Some(name) = branch {
         // Git init validates the full refname when it creates HEAD.
         ensure!(
@@ -454,15 +455,7 @@ pub(super) fn initialize(
     if history == History::Tip
         && let Some(plan) = discovery.take().and_then(CheckoutDiscovery::finish)
     {
-        return history::tip::checkout(
-            source,
-            root,
-            state,
-            &base,
-            branch_ref.as_deref().unwrap_or("HEAD"),
-            plan,
-            transfer,
-        );
+        return history::tip::checkout(source, root, state, &base, reference, plan, transfer);
     }
     let receipt = transfer()?;
     crate::trace::mark("init: transfer objects");
@@ -473,13 +466,7 @@ pub(super) fn initialize(
         let checkout = std::thread::scope(|scope| -> Result<Value> {
             let verified =
                 std::thread::Builder::new().spawn_scoped(scope, || plan.verify_local(root))?;
-            finish_head(
-                primary,
-                root,
-                branch_ref.as_deref().unwrap_or("HEAD"),
-                &base,
-                None,
-            )?;
+            finish_head(primary, root, reference, &base, None)?;
             crate::trace::mark("init: head and config");
             crate::storage::materialize_planned(
                 root,
@@ -497,13 +484,7 @@ pub(super) fn initialize(
         })?;
         return Ok((receipt, Some(checkout)));
     }
-    finish_head(
-        primary,
-        root,
-        branch_ref.as_deref().unwrap_or("HEAD"),
-        &base,
-        None,
-    )?;
+    finish_head(primary, root, reference, &base, None)?;
     Ok((receipt, None))
 }
 
@@ -536,22 +517,8 @@ pub(super) fn open_regular(path: &Path) -> io::Result<File> {
             "expected a regular file",
         ));
     }
-    let mut options = fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt;
-        use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
-        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
-    }
-    let file = options.open(path)?;
-    let metadata = file.metadata()?;
-    if !metadata.is_file() {
+    let file = crate::cache::open_no_follow(path)?;
+    if !file.metadata()?.is_file() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "expected a regular file",
@@ -899,68 +866,56 @@ pub(super) fn import_plan_inputs(
     old: &str,
     tip: &str,
 ) -> Result<Vec<PackLock>> {
+    let same_format = || {
+        let format = object_format(primary)?;
+        ensure!(
+            object_format(private)? == format && object_format(workspace)? == format,
+            "Git object formats differ"
+        );
+        Ok(format)
+    };
     if shallow::is_shallow(private)?
         || shallow::is_shallow(primary)?
         || shallow::is_shallow(workspace)?
     {
-        let format = object_format(primary)?;
-        ensure!(
-            object_format(private)? == format && object_format(workspace)? == format,
-            "Git object formats differ"
-        );
+        same_format()?;
         let old = exact_commit(primary, old)?;
         let tip = exact_commit(workspace, tip)?;
         shallow::import_plan_inputs(private, primary, workspace, &old, &tip)?;
-        Ok(Vec::new())
-    } else {
-        let old = exact_commit(primary, old)?;
-        let format = object_format(primary)?;
-        ensure!(
-            object_format(private)? == format && object_format(workspace)? == format,
-            "Git object formats differ"
-        );
-        // A ref makes the verified base visible to fetch-pack negotiation and
-        // protects it until the durable plan pins have been written.
-        let cached = if import_prefix.is_some() {
-            plan_cache::restore(private, state, format, &old)?
-        } else {
-            None
-        };
-        let mut locks = if let Some(cached) = cached {
-            cached
-        } else {
-            transfer_result(private, primary, &old)?
-        };
-        if let Some(import_prefix) = import_prefix {
-            let pin = format!("{import_prefix}/base");
-            run(
-                private,
-                &[
-                    "update-ref",
-                    "--no-deref",
-                    &pin,
-                    &old,
-                    &"0".repeat(old.len()),
-                ],
-            )?;
-        }
-        locks.extend(transfer_result(private, workspace, tip)?);
-        if let Some(import_prefix) = import_prefix {
-            let tip = exact_commit(workspace, tip)?;
-            let pin = format!("{import_prefix}/tip");
-            run(
-                private,
-                &[
-                    "update-ref",
-                    "--no-deref",
-                    &pin,
-                    &tip,
-                    &"0".repeat(tip.len()),
-                ],
-            )?;
-        }
-        Ok(locks)
+        return Ok(Vec::new());
     }
+    let old = exact_commit(primary, old)?;
+    let format = same_format()?;
+    // A ref makes the verified base visible to fetch-pack negotiation and
+    // protects it until the durable plan pins have been written.
+    let pin = |name: &str, oid: &str| match import_prefix {
+        Some(prefix) => run(
+            private,
+            &[
+                "update-ref",
+                "--no-deref",
+                &format!("{prefix}/{name}"),
+                oid,
+                &"0".repeat(oid.len()),
+            ],
+        )
+        .map(drop),
+        None => Ok(()),
+    };
+    let cached = match import_prefix {
+        Some(_) => plan_cache::restore(private, state, format, &old)?,
+        None => None,
+    };
+    let mut locks = match cached {
+        Some(locks) => locks,
+        None => transfer_result(private, primary, &old)?,
+    };
+    pin("base", &old)?;
+    locks.extend(transfer_result(private, workspace, tip)?);
+    if import_prefix.is_some() {
+        pin("tip", &exact_commit(workspace, tip)?)?;
+    }
+    Ok(locks)
 }
 
 #[cfg(test)]
