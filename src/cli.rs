@@ -9,8 +9,7 @@ use crate::{api, workspace};
 #[derive(Debug, Subcommand)]
 pub enum Cmd {
     /// Create a graft: a lightweight, independent copy of the repository.
-    #[command(visible_alias = "add")]
-    New(api::Spawn),
+    Add(api::Spawn),
     /// List active and recoverable grafts.
     List,
     /// Show a graft's HEAD and changed files, or its environment with --env.
@@ -21,8 +20,6 @@ pub enum Cmd {
     Exec(api::Exec),
     /// Install and reuse dependencies.
     Deps(Deps),
-    /// Make the primary checkout's installed dependencies reusable.
-    Seed(api::SeedLayer),
     /// Merge a graft's commits into a local branch, then archive the graft.
     Merge(api::Land),
     /// Archive a graft and its files. Refuses if it has unmerged work unless --discard is given.
@@ -70,8 +67,10 @@ pub struct Deps {
 enum DepsCommand {
     /// Install packages in a graft, or run a locked install from its lockfile.
     Add(api::AddDep),
-    /// Save, restore or forget a graft's installed dependencies.
+    /// Save, restore or remove a graft's installed dependencies.
     Layer(LayerArgs),
+    /// Share the primary checkout's installed dependencies with future grafts.
+    Share(api::SeedLayer),
     /// Register package managers so grafts reuse their caches and installs.
     Manager(ManagerArgs),
 }
@@ -89,7 +88,7 @@ enum LayerAction {
     /// Restore saved dependencies into the graft.
     Restore(api::Layer),
     /// Delete the saved dependencies for a key.
-    Forget(api::Layer),
+    Remove(api::Layer),
 }
 
 #[derive(Debug, Args)]
@@ -112,7 +111,7 @@ impl From<Cmd> for workspace::Command {
     fn from(cmd: Cmd) -> Self {
         use workspace::Command as Op;
         match cmd {
-            Cmd::New(args) => Op::Spawn(args),
+            Cmd::Add(args) => Op::Spawn(args),
             Cmd::List => Op::List,
             Cmd::Status(api::StatusArgs { name, env: false }) => Op::Status(api::Name { name }),
             Cmd::Status(api::StatusArgs { name, env: true }) => Op::Env(api::Name { name }),
@@ -120,10 +119,11 @@ impl From<Cmd> for workspace::Command {
             Cmd::Exec(args) => Op::Exec(args),
             Cmd::Deps(Deps { command }) => match command {
                 DepsCommand::Add(args) => Op::AddDep(args),
+                DepsCommand::Share(args) => Op::SeedLayer(args),
                 DepsCommand::Layer(LayerArgs { action }) => match action {
                     LayerAction::Save(target) => Op::Layer("save", target),
                     LayerAction::Restore(target) => Op::Layer("restore", target),
-                    LayerAction::Forget(target) => Op::Layer("forget", target),
+                    LayerAction::Remove(target) => Op::Layer("forget", target),
                 },
                 DepsCommand::Manager(ManagerArgs { command }) => match command {
                     ManagerCommand::Add(args) => Op::RegisterManager(args),
@@ -131,7 +131,6 @@ impl From<Cmd> for workspace::Command {
                     ManagerCommand::Remove(args) => Op::UnregisterManager(args),
                 },
             },
-            Cmd::Seed(args) => Op::SeedLayer(args),
             Cmd::Merge(args) => Op::land(args),
             Cmd::Remove(args) => Op::Drop(args),
             Cmd::Prune(args) => Op::Gc(args),

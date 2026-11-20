@@ -1313,7 +1313,7 @@ pub fn reserve(
     })();
     if let Err(error) = result {
         return Err(fault(
-            "new_incomplete",
+            "add_incomplete",
             format!("Workspace reservation could not be placed: {error:#}"),
             json!({"name":r.name,"lease":r.lease,"path":r.path}),
         ));

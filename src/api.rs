@@ -243,7 +243,7 @@ pub struct AddDep {
     pub packages: Vec<String>,
 }
 
-/// Which graft's installed dependencies to save, restore or forget.
+/// Which graft's installed dependencies to save, restore or remove.
 #[derive(Debug, Args)]
 pub struct Layer {
     /// Name of the graft.
@@ -260,14 +260,15 @@ pub struct Layer {
 
 #[derive(Debug, Args)]
 pub struct SeedLayer {
-    /// Attest that this relocatable install matches the lock, toolchain, flags and environment named by the key and contains no private data.
+    /// Attest that this relocatable install matches the lock, toolchain, flags and environment named by the key, is
+    /// independent of other source files, contains no private data and keeps its installation inputs valid.
     #[arg(long)]
     pub key: String,
-    /// Share this install with future grafts that have a compatible key. Attest that it is
-    /// independent of other source files and its installation inputs stay valid.
+    /// Take a one-off manual snapshot of the install instead of sharing it with future grafts.
+    /// Restore it into a graft with `deps layer restore`.
     #[arg(long)]
-    pub shared: bool,
-    /// Use independent byte copies for a manual snapshot.
+    pub snapshot: bool,
+    /// Use independent byte copies. Only for --snapshot; sharing requires copy-on-write.
     #[arg(long)]
     pub copy: bool,
 }

@@ -175,7 +175,7 @@ fn spawn(p: &Project, origin: &Path, mut args: Spawn) -> Result<Value> {
     if let Some(current) = previous {
         ensure!(
             current.request == request,
-            "request ID was used with different new options"
+            "request ID was used with different add options"
         );
         if current.status == Status::Active {
             registry::verify(p, &current)?;
@@ -284,7 +284,7 @@ fn spawn(p: &Project, origin: &Path, mut args: Spawn) -> Result<Value> {
     })();
     if let Err(error) = build {
         return Err(api::fault(
-            "new_incomplete",
+            "add_incomplete",
             format!("Creating the graft stopped: {error:#}"),
             json!({"name":r.name,"lease":r.lease,"path":r.path,"recovery":"Inspect the reserved path. Run remove with --discard to archive the partial graft."}),
         ));
