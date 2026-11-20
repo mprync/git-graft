@@ -332,6 +332,7 @@ pub(super) mod direct {
         candidates: Vec<bool>,
         mode: u32,
         /// Symbolic links may be installed as links.
+        #[cfg(target_os = "macos")]
         links: bool,
         /// The primary's index stat data, trusted as `git status` trusts it.
         trusted: Option<index_stat::Trusted>,
@@ -449,6 +450,7 @@ pub(super) mod direct {
             destination,
             candidates,
             mode,
+            #[cfg(target_os = "macos")]
             links: endings.links,
             trusted: sizes.and_then(|sizes| {
                 index_stat::Trusted::read(
@@ -588,6 +590,8 @@ pub(super) mod direct {
         raw_by_default: bool,
         text_uses_lf: bool,
         /// Whether Git checks symbolic links out as links (`core.symlinks`).
+        /// Only macOS installs links by directory clone.
+        #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
         links: bool,
     }
 
@@ -973,6 +977,7 @@ pub(super) mod direct {
     }
 
     /// Whether a symbolic link's target bytes are exactly the Git blob `oid`.
+    #[cfg(target_os = "macos")]
     fn link_matches(target: &[u8], oid: &str, sha256: bool) -> bool {
         let mut buffer = [0; 4096];
         matches_blob(target, target.len() as u64, &mut buffer, oid, sha256).unwrap_or(false)
