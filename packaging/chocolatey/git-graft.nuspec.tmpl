@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>git-graft</id>
+    <version>{{VERSION}}</version>
+    <title>git-graft</title>
+    <authors>{{OWNER}}</authors>
+    <owners>{{OWNER}}</owners>
+    <projectUrl>{{HOMEPAGE}}</projectUrl>
+    <packageSourceUrl>{{HOMEPAGE}}</packageSourceUrl>
+    <licenseUrl>{{HOMEPAGE}}/blob/main/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <projectSourceUrl>{{HOMEPAGE}}</projectSourceUrl>
+    <docsUrl>{{HOMEPAGE}}/blob/main/README.md</docsUrl>
+    <bugTrackerUrl>{{HOMEPAGE}}/issues</bugTrackerUrl>
+    <tags>git workspace mcp reflink cli</tags>
+    <summary>Copy-on-write Git workspaces for people and coding agents</summary>
+    <description>git-graft gives each task a standalone local Git repository, so you can fix a bug in your main checkout while an agent works on the same branch name in a separate workspace. Run it as `git graft`. Requires Git 2.46 or newer.</description>
+    <releaseNotes>{{HOMEPAGE}}/releases/tag/v{{VERSION}}</releaseNotes>
+    <dependencies>
+      <dependency id="git" />
+    </dependencies>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>

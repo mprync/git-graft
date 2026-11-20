@@ -1,0 +1,22 @@
+# Maintainer: {{OWNER}}
+pkgname=git-graft-bin
+pkgver={{VERSION}}
+pkgrel=1
+pkgdesc='Copy-on-write Git workspaces for people and coding agents (prebuilt binary)'
+arch=('x86_64' 'aarch64')
+url='{{HOMEPAGE}}'
+license=('MIT')
+depends=('git')
+provides=('git-graft')
+conflicts=('git-graft')
+options=('!strip')
+source_x86_64=("git-graft-${pkgver}-x86_64.tar.gz::{{RELEASE_URL}}/git-graft-{{VERSION}}-x86_64-unknown-linux-musl.tar.gz")
+source_aarch64=("git-graft-${pkgver}-aarch64.tar.gz::{{RELEASE_URL}}/git-graft-{{VERSION}}-aarch64-unknown-linux-musl.tar.gz")
+sha256sums_x86_64=('{{SHA256:x86_64-unknown-linux-musl}}')
+sha256sums_aarch64=('{{SHA256:aarch64-unknown-linux-musl}}')
+
+package() {
+  cd "${srcdir}/git-graft-{{VERSION}}-${CARCH}-unknown-linux-musl"
+  install -Dm755 git-graft "${pkgdir}/usr/bin/git-graft"
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}

@@ -1,0 +1,632 @@
+name: Release
+
+# A `v*` tag builds, verifies, attests and publishes a release. A manual run
+# (workflow_dispatch) is a dry run: it builds, packages and smoke-tests everything
+# but never attests, publishes a release or touches a package repository.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  # Package repositories and identifiers. Change them here; jobs below read these.
+  TAP_REPO: mprync/homebrew-tap
+  SCOOP_REPO: mprync/scoop-bucket
+  AUR_PACKAGE: git-graft-bin
+  # Pinned nfpm (https://github.com/goreleaser/nfpm) used to build the Linux packages.
+  NFPM_VERSION: 2.49.0
+  NFPM_SHA256_LINUX_X86_64: 2afaa5ffb5e3493402e31e7c67a5a1fb42133e3f66fc315ca0051934125561c7
+  # Published ED25519 host key fingerprint of aur.archlinux.org.
+  AUR_HOST_FINGERPRINT: SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4
+
+jobs:
+  meta:
+    name: Resolve version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+      publish: ${{ steps.version.outputs.publish }}
+      homebrew: ${{ steps.credentials.outputs.homebrew }}
+      scoop: ${{ steps.credentials.outputs.scoop }}
+      chocolatey: ${{ steps.credentials.outputs.chocolatey }}
+      winget: ${{ steps.credentials.outputs.winget }}
+      aur: ${{ steps.credentials.outputs.aur }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Read the Cargo.toml version and compare it with the tag
+        id: version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          cargo_version="$(cargo metadata --locked --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "git-graft") | .version')"
+          if [[ ! "$cargo_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Cargo.toml version '$cargo_version' is not a plain semantic version"
+            exit 1
+          fi
+          publish=false
+          if [[ "$REF_TYPE" == "tag" ]]; then
+            if [[ "$REF_NAME" != "v$cargo_version" ]]; then
+              echo "::error::Tag '$REF_NAME' does not match Cargo.toml version '$cargo_version' (expected 'v$cargo_version')"
+              exit 1
+            fi
+            publish=true
+          fi
+          prerelease=false
+          if [[ "$cargo_version" == *-* ]]; then prerelease=true; fi
+          {
+            echo "version=$cargo_version"
+            echo "prerelease=$prerelease"
+            echo "publish=$publish"
+          } >> "$GITHUB_OUTPUT"
+          echo "Releasing git-graft $cargo_version (publish=$publish, prerelease=$prerelease)"
+      - name: Detect which optional publishing credentials exist
+        id: credentials
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          SCOOP_BUCKET_TOKEN: ${{ secrets.SCOOP_BUCKET_TOKEN }}
+          CHOCOLATEY_API_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          flag() { if [[ -n "$2" ]]; then echo "$1=true"; else echo "$1=false"; fi; }
+          {
+            flag homebrew "$HOMEBREW_TAP_TOKEN"
+            flag scoop "$SCOOP_BUCKET_TOKEN"
+            flag chocolatey "$CHOCOLATEY_API_KEY"
+            flag winget "$WINGET_TOKEN"
+            flag aur "$AUR_SSH_KEY"
+          } >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: meta
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+            archive: tar.gz
+            native: true
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04-arm
+            archive: tar.gz
+            native: true
+          - target: x86_64-apple-darwin
+            runner: macos-15-intel
+            archive: tar.gz
+            native: true
+          - target: aarch64-apple-darwin
+            runner: macos-15
+            archive: tar.gz
+            native: true
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2025
+            archive: zip
+            native: true
+          # Cross-compiled from an x64 runner; the binary is not executed in this job.
+          - target: aarch64-pc-windows-msvc
+            runner: windows-2025
+            archive: zip
+            native: false
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+      TARGET: ${{ matrix.target }}
+      ARCHIVE: ${{ matrix.archive }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the Rust toolchain and target
+        shell: bash
+        run: |
+          rustup toolchain install stable --profile minimal --target "$TARGET"
+          rustup default stable
+          rustc --version
+      - name: Install musl tools
+        if: contains(matrix.target, 'linux-musl')
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools
+          # Compile bundled C code (blake3) against musl headers.
+          echo "CC_${TARGET//-/_}=musl-gcc" >> "$GITHUB_ENV"
+      - name: Link the C runtime statically on Windows
+        if: contains(matrix.target, 'windows')
+        shell: bash
+        run: echo "RUSTFLAGS=-C target-feature=+crt-static" >> "$GITHUB_ENV"
+      - name: Build
+        shell: bash
+        run: cargo build --release --locked --target "$TARGET"
+      - name: Check the built binary reports the release version
+        if: matrix.native
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="target/$TARGET/release/git-graft"
+          if [[ "$TARGET" == *windows* ]]; then bin="$bin.exe"; fi
+          reported="$("$bin" --version)"
+          echo "$reported"
+          [[ "$reported" == *"$VERSION"* ]] || { echo "::error::binary reports '$reported', expected $VERSION"; exit 1; }
+      - name: Create the archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          export COPYFILE_DISABLE=1
+          stem="git-graft-${VERSION}-${TARGET}"
+          bin="git-graft"
+          if [[ "$TARGET" == *windows* ]]; then bin="git-graft.exe"; fi
+          mkdir -p "dist/$stem"
+          cp "target/$TARGET/release/$bin" LICENSE README.md "dist/$stem/"
+          if [[ "$ARCHIVE" == "zip" ]]; then
+            (cd dist && 7z a -tzip -mx=9 "$stem.zip" "$stem" > /dev/null)
+          else
+            (cd dist && tar -czf "$stem.tar.gz" "$stem")
+          fi
+          rm -rf "dist/$stem"
+          ls -l dist
+      - name: Upload the archive
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist-${{ matrix.target }}
+          path: dist/git-graft-*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  linux-packages:
+    name: Linux packages (deb, rpm, apk, Arch)
+    needs: [meta, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download the Linux archives
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: dist-*-linux-musl
+          merge-multiple: true
+          path: archives
+      - name: Install nfpm (checksum pinned)
+        run: |
+          set -euo pipefail
+          file="nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz"
+          curl --proto '=https' --tlsv1.2 -fsSL -o "$RUNNER_TEMP/$file" \
+            "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/$file"
+          echo "${NFPM_SHA256_LINUX_X86_64}  $RUNNER_TEMP/$file" | sha256sum --check --strict -
+          mkdir -p "$RUNNER_TEMP/nfpm"
+          tar -xzf "$RUNNER_TEMP/$file" -C "$RUNNER_TEMP/nfpm" nfpm
+          echo "$RUNNER_TEMP/nfpm" >> "$GITHUB_PATH"
+      - name: Build packages for both architectures
+        run: |
+          set -euo pipefail
+          mkdir -p packages
+          for pair in amd64:x86_64-unknown-linux-musl arm64:aarch64-unknown-linux-musl; do
+            arch="${pair%%:*}"
+            target="${pair#*:}"
+            stem="git-graft-${VERSION}-${target}"
+            mkdir -p "extract/$target"
+            tar -xzf "archives/$stem.tar.gz" -C "extract/$target"
+            for format in deb rpm apk archlinux; do
+              ARCH="$arch" \
+              BINARY_PATH="extract/$target/$stem/git-graft" \
+              LICENSE_PATH="extract/$target/$stem/LICENSE" \
+                nfpm package --config packaging/nfpm.yaml --packager "$format" --target packages/
+            done
+          done
+          ls -l packages
+      - name: Upload the packages
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: dist-packages
+          path: packages/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  assemble:
+    name: Checksums and provenance
+    needs: [meta, build, linux-packages]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      PUBLISH: ${{ needs.meta.outputs.publish }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Download every build output
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: release
+      - name: Add the install scripts and write SHA256SUMS
+        run: |
+          set -euo pipefail
+          cp install.sh install.ps1 release/
+          cd release
+          # One checksum file for every asset, including the install scripts.
+          find . -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort | xargs sha256sum > ../sums.tmp
+          mv ../sums.tmp SHA256SUMS
+          cat SHA256SUMS
+          [[ "$(wc -l < SHA256SUMS)" -ge 16 ]] || { echo "::error::expected at least 16 assets"; exit 1; }
+      - name: Attest build provenance for every asset
+        if: env.PUBLISH == 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: release/SHA256SUMS
+      - name: Upload the release assets
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-assets
+          path: release/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  smoke:
+    name: Install smoke test (${{ matrix.os }})
+    needs: [meta, assemble]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu
+            runner: ubuntu-24.04
+          - os: macos
+            runner: macos-15
+          - os: windows
+            runner: windows-2025
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+    steps:
+      - name: Download the release assets
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: release
+
+      - name: Install with install.sh from the built assets
+        if: matrix.os != 'windows'
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/bin"
+          GIT_GRAFT_DOWNLOAD_BASE="file://$PWD/release" sh release/install.sh --to "$bin"
+          reported="$("$bin/git-graft" --version)"
+          echo "$reported"
+          [[ "$reported" == *"$VERSION"* ]]
+          PATH="$bin:$PATH" git graft --version
+      - name: A tampered SHA256SUMS must abort without installing
+        if: matrix.os != 'windows'
+        run: |
+          set -euo pipefail
+          mkdir tampered
+          cp release/git-graft-* tampered/
+          sed 's/^./0/' release/SHA256SUMS > tampered/SHA256SUMS
+          bin="$RUNNER_TEMP/tampered-bin"
+          if GIT_GRAFT_DOWNLOAD_BASE="file://$PWD/tampered" sh release/install.sh --to "$bin"; then
+            echo "::error::install.sh accepted a tampered SHA256SUMS"
+            exit 1
+          fi
+          [[ ! -e "$bin/git-graft" ]]
+      - name: Install the .deb package
+        if: matrix.os == 'ubuntu'
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y "./release/git-graft_${VERSION}_amd64.deb"
+          reported="$(git graft --version)"
+          echo "$reported"
+          [[ "$reported" == *"$VERSION"* ]]
+          command -v git-graft | grep -x /usr/bin/git-graft
+
+      - name: Install with install.ps1 on Windows PowerShell 5.1 (updates the user PATH)
+        if: matrix.os == 'windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = Join-Path $env:RUNNER_TEMP 'ps51\bin'
+          $env:GIT_GRAFT_DOWNLOAD_BASE = ([Uri](Resolve-Path release).Path).AbsoluteUri
+          .\release\install.ps1 -InstallDir $dir
+          if ($LASTEXITCODE -ne 0 -and $null -ne $LASTEXITCODE) { throw 'install.ps1 failed' }
+          $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+          if (($userPath -split ';') -notcontains $dir) { throw "$dir is missing from the user PATH" }
+          $reported = & "$dir\git-graft.exe" --version
+          Write-Host $reported
+          if ($reported -notlike "*$env:VERSION*") { throw "unexpected version output: $reported" }
+          git graft --version
+      - name: Install with install.ps1 on PowerShell 7, piped to Invoke-Expression
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dir = Join-Path $env:RUNNER_TEMP 'pwsh7\bin'
+          $env:GIT_GRAFT_DOWNLOAD_BASE = ([Uri](Resolve-Path release).Path).AbsoluteUri
+          $env:GIT_GRAFT_INSTALL_DIR = $dir
+          Get-Content -Raw release\install.ps1 | Invoke-Expression
+          $reported = & "$dir\git-graft.exe" --version
+          Write-Host $reported
+          if ($reported -notlike "*$env:VERSION*") { throw "unexpected version output: $reported" }
+      - name: A tampered SHA256SUMS must abort install.ps1
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path tampered | Out-Null
+          Copy-Item release\git-graft-* tampered\
+          (Get-Content release\SHA256SUMS) -replace '^.', '0' | Set-Content tampered\SHA256SUMS
+          $dir = Join-Path $env:RUNNER_TEMP 'tampered\bin'
+          $env:GIT_GRAFT_DOWNLOAD_BASE = ([Uri](Resolve-Path tampered).Path).AbsoluteUri
+          pwsh -NoProfile -File release\install.ps1 -InstallDir $dir -NoPathUpdate
+          if ($LASTEXITCODE -eq 0) { throw 'install.ps1 accepted a tampered SHA256SUMS' }
+          if (Test-Path "$dir\git-graft.exe") { throw 'a binary was installed despite the checksum mismatch' }
+          exit 0
+      - name: Install with install.sh under Git Bash on Windows
+        if: matrix.os == 'windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/gitbash/bin"
+          GIT_GRAFT_DOWNLOAD_BASE="file://$PWD/release" sh release/install.sh --to "$bin"
+          reported="$("$bin/git-graft.exe" --version)"
+          echo "$reported"
+          [[ "$reported" == *"$VERSION"* ]]
+          PATH="$bin:$PATH" git graft --version
+
+  release:
+    name: Publish GitHub Release
+    needs: [meta, assemble, smoke]
+    if: needs.meta.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+      PRERELEASE: ${{ needs.meta.outputs.prerelease }}
+    steps:
+      - name: Download the release assets
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: release
+      - name: Create the release and upload every asset
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            # Re-run of a tag that already has a release: refresh its assets.
+            gh release upload "$TAG" release/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            flags=(--verify-tag --generate-notes --title "$TAG")
+            if [[ "$PRERELEASE" == "true" ]]; then flags+=(--prerelease); fi
+            gh release create "$TAG" release/* "${flags[@]}" --repo "$GITHUB_REPOSITORY"
+          fi
+
+  render-packages:
+    name: Render package manifests
+    needs: [meta, assemble]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+      - name: Download the release assets
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: release
+      - name: Render the manifests from the real checksums
+        run: node scripts/render-packages.ts --version "$VERSION" --sums release/SHA256SUMS --repo "$GITHUB_REPOSITORY" --out packages
+      - name: Upload the rendered manifests
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: package-manifests
+          path: packages
+          if-no-files-found: error
+          retention-days: 14
+
+  # Optional publishers. Each runs only for a stable tag and only when its secret exists.
+
+  homebrew:
+    name: Update Homebrew tap
+    needs: [meta, release, render-packages]
+    if: needs.meta.outputs.publish == 'true' && needs.meta.outputs.prerelease == 'false' && needs.meta.outputs.homebrew == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+    steps:
+      - name: Download the rendered manifests
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: package-manifests
+          path: packages
+      - name: Check out the tap
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.TAP_REPO }}
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+      - name: Commit the formula
+        working-directory: tap
+        run: |
+          set -euo pipefail
+          mkdir -p Formula
+          cp ../packages/homebrew/git-graft.rb Formula/git-graft.rb
+          git add Formula/git-graft.rb
+          if git diff --cached --quiet; then
+            echo "Formula is already up to date."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "git-graft ${VERSION}"
+          git push
+
+  scoop:
+    name: Update Scoop bucket
+    needs: [meta, release, render-packages]
+    if: needs.meta.outputs.publish == 'true' && needs.meta.outputs.prerelease == 'false' && needs.meta.outputs.scoop == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+    steps:
+      - name: Download the rendered manifests
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: package-manifests
+          path: packages
+      - name: Check out the bucket
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ env.SCOOP_REPO }}
+          token: ${{ secrets.SCOOP_BUCKET_TOKEN }}
+          path: bucket
+      - name: Commit the manifest
+        working-directory: bucket
+        run: |
+          set -euo pipefail
+          mkdir -p bucket
+          cp ../packages/scoop/git-graft.json bucket/git-graft.json
+          git add bucket/git-graft.json
+          if git diff --cached --quiet; then
+            echo "Manifest is already up to date."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "git-graft ${VERSION}"
+          git push
+
+  chocolatey:
+    name: Push to Chocolatey
+    needs: [meta, release, render-packages]
+    if: needs.meta.outputs.publish == 'true' && needs.meta.outputs.prerelease == 'false' && needs.meta.outputs.chocolatey == 'true'
+    runs-on: windows-2025
+    timeout-minutes: 15
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+    steps:
+      - name: Download the rendered manifests
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: package-manifests
+          path: packages
+      - name: Pack and push
+        shell: pwsh
+        env:
+          CHOCOLATEY_API_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          choco pack packages/chocolatey/git-graft.nuspec --outputdirectory nupkg
+          if ($LASTEXITCODE -ne 0) { throw 'choco pack failed' }
+          choco push "nupkg/git-graft.$env:VERSION.nupkg" --source https://push.chocolatey.org/ --api-key $env:CHOCOLATEY_API_KEY
+          if ($LASTEXITCODE -ne 0) { throw 'choco push failed' }
+
+  winget:
+    name: Open winget-pkgs pull request
+    needs: [meta, release, render-packages]
+    if: needs.meta.outputs.publish == 'true' && needs.meta.outputs.prerelease == 'false' && needs.meta.outputs.winget == 'true'
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - name: Download the rendered manifests
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: package-manifests
+          path: packages
+      - name: Submit with wingetcreate
+        shell: pwsh
+        env:
+          # wingetcreate reads its GitHub token from this variable, so it never appears on the command line.
+          WINGET_CREATE_GITHUB_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Microsoft publishes wingetcreate only as a rolling download, so it cannot be hash-pinned here.
+          Invoke-WebRequest -Uri https://aka.ms/wingetcreate/latest -OutFile wingetcreate.exe
+          .\wingetcreate.exe submit packages/winget
+          if ($LASTEXITCODE -ne 0) { throw 'wingetcreate submit failed' }
+
+  aur:
+    name: Update AUR package
+    needs: [meta, release, render-packages]
+    if: needs.meta.outputs.publish == 'true' && needs.meta.outputs.prerelease == 'false' && needs.meta.outputs.aur == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      VERSION: ${{ needs.meta.outputs.version }}
+    steps:
+      - name: Download the rendered manifests
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: package-manifests
+          path: packages
+      - name: Push PKGBUILD and .SRCINFO
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          key="$HOME/.ssh/aur_ed25519"
+          (umask 077; printf '%s\n' "$AUR_SSH_KEY" > "$key")
+          ssh-keyscan -t ed25519 aur.archlinux.org > "$HOME/.ssh/aur_known_hosts" 2> /dev/null
+          seen="$(ssh-keygen -lf "$HOME/.ssh/aur_known_hosts" | awk '{ print $2 }')"
+          if [[ "$seen" != "$AUR_HOST_FINGERPRINT" ]]; then
+            echo "::error::aur.archlinux.org host key $seen does not match the pinned fingerprint"
+            exit 1
+          fi
+          export GIT_SSH_COMMAND="ssh -i $key -o IdentitiesOnly=yes -o UserKnownHostsFile=$HOME/.ssh/aur_known_hosts -o StrictHostKeyChecking=yes"
+          git clone "ssh://aur@aur.archlinux.org/${AUR_PACKAGE}.git" aur
+          cp packages/aur/PKGBUILD packages/aur/.SRCINFO aur/
+          cd aur
+          if [[ -z "$(git status --porcelain)" ]]; then
+            echo "AUR package is already up to date."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add PKGBUILD .SRCINFO
+          git commit -m "Update to ${VERSION}"
+          git push origin HEAD:master

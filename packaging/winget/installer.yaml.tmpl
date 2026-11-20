@@ -1,0 +1,26 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.10.0.schema.json
+PackageIdentifier: {{PACKAGE_ID}}
+PackageVersion: {{VERSION}}
+InstallerType: zip
+NestedInstallerType: portable
+Commands:
+  - git-graft
+Dependencies:
+  PackageDependencies:
+    - PackageIdentifier: Git.Git
+ReleaseDate: {{RELEASE_DATE}}
+Installers:
+  - Architecture: x64
+    InstallerUrl: {{RELEASE_URL}}/git-graft-{{VERSION}}-x86_64-pc-windows-msvc.zip
+    InstallerSha256: {{SHA256_UPPER:x86_64-pc-windows-msvc}}
+    NestedInstallerFiles:
+      - RelativeFilePath: git-graft-{{VERSION}}-x86_64-pc-windows-msvc\git-graft.exe
+        PortableCommandAlias: git-graft
+  - Architecture: arm64
+    InstallerUrl: {{RELEASE_URL}}/git-graft-{{VERSION}}-aarch64-pc-windows-msvc.zip
+    InstallerSha256: {{SHA256_UPPER:aarch64-pc-windows-msvc}}
+    NestedInstallerFiles:
+      - RelativeFilePath: git-graft-{{VERSION}}-aarch64-pc-windows-msvc\git-graft.exe
+        PortableCommandAlias: git-graft
+ManifestType: installer
+ManifestVersion: 1.10.0

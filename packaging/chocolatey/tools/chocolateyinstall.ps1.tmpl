@@ -1,0 +1,26 @@
+$ErrorActionPreference = 'Stop'
+
+$toolsDir = Split-Path -Parent $MyInvocation.MyCommand.Definition
+
+# Pick the archive for the real OS architecture (the shell may be emulated on ARM64).
+$architecture = $env:PROCESSOR_ARCHITEW6432
+if (-not $architecture) { $architecture = $env:PROCESSOR_ARCHITECTURE }
+
+if ($architecture -eq 'ARM64') {
+  $url = '{{RELEASE_URL}}/git-graft-{{VERSION}}-aarch64-pc-windows-msvc.zip'
+  $checksum = '{{SHA256:aarch64-pc-windows-msvc}}'
+} else {
+  $url = '{{RELEASE_URL}}/git-graft-{{VERSION}}-x86_64-pc-windows-msvc.zip'
+  $checksum = '{{SHA256:x86_64-pc-windows-msvc}}'
+}
+
+$packageArgs = @{
+  packageName   = $env:ChocolateyPackageName
+  unzipLocation = $toolsDir
+  url           = $url
+  checksum      = $checksum
+  checksumType  = 'sha256'
+}
+
+# Chocolatey verifies the checksum before extracting and shims git-graft.exe automatically.
+Install-ChocolateyZipPackage @packageArgs

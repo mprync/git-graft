@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.1.10.0.schema.json
+PackageIdentifier: {{PACKAGE_ID}}
+PackageVersion: {{VERSION}}
+PackageLocale: en-US
+Publisher: {{OWNER}}
+PublisherUrl: https://github.com/{{OWNER}}
+PublisherSupportUrl: {{HOMEPAGE}}/issues
+PackageName: git-graft
+PackageUrl: {{HOMEPAGE}}
+License: MIT
+LicenseUrl: {{HOMEPAGE}}/blob/main/LICENSE
+ShortDescription: Copy-on-write Git workspaces for people and coding agents
+Description: git-graft gives each task a standalone local Git repository, so you can fix a bug in your main checkout while an agent works on the same branch name in a separate workspace. Run it as `git graft`. Requires Git 2.46 or newer.
+Moniker: git-graft
+Tags:
+  - git
+  - workspace
+  - mcp
+  - reflink
+  - cli
+ReleaseNotesUrl: {{HOMEPAGE}}/releases/tag/v{{VERSION}}
+ManifestType: defaultLocale
+ManifestVersion: 1.10.0

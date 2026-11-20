@@ -1,0 +1,18 @@
+pkgbase = git-graft-bin
+	pkgdesc = Copy-on-write Git workspaces for people and coding agents (prebuilt binary)
+	pkgver = {{VERSION}}
+	pkgrel = 1
+	url = {{HOMEPAGE}}
+	arch = x86_64
+	arch = aarch64
+	license = MIT
+	depends = git
+	options = !strip
+	provides = git-graft
+	conflicts = git-graft
+	source_x86_64 = git-graft-{{VERSION}}-x86_64.tar.gz::{{RELEASE_URL}}/git-graft-{{VERSION}}-x86_64-unknown-linux-musl.tar.gz
+	sha256sums_x86_64 = {{SHA256:x86_64-unknown-linux-musl}}
+	source_aarch64 = git-graft-{{VERSION}}-aarch64.tar.gz::{{RELEASE_URL}}/git-graft-{{VERSION}}-aarch64-unknown-linux-musl.tar.gz
+	sha256sums_aarch64 = {{SHA256:aarch64-unknown-linux-musl}}
+
+pkgname = git-graft-bin
