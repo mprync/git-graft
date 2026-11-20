@@ -43,6 +43,21 @@ impl Stat {
 
     /// Write every 32-bit stat field except the mode at offset 24, which the
     /// tree already determined.
+    /// Git's stat fields for an open file.
+    #[cfg(unix)]
+    pub(super) fn from_metadata(metadata: &fs::Metadata) -> Self {
+        use std::os::unix::fs::MetadataExt;
+        Self {
+            ctime: (metadata.ctime() as u32, metadata.ctime_nsec() as u32),
+            mtime: (metadata.mtime() as u32, metadata.mtime_nsec() as u32),
+            dev: metadata.dev() as u32,
+            ino: metadata.ino() as u32,
+            uid: metadata.uid(),
+            gid: metadata.gid(),
+            size: metadata.len() as u32,
+        }
+    }
+
     fn write(&self, field: &mut [u8]) {
         let values = [
             (0, self.ctime.0),
@@ -121,28 +136,28 @@ fn varint(bytes: &[u8], at: &mut usize) -> Result<usize> {
     Ok(value)
 }
 
-fn patch(bytes: &mut [u8], installed: &HashMap<Vec<u8>, Installed>) -> Result<usize> {
+/// The location and flags of one index entry.
+struct Slot {
+    start: usize,
+    flags: u16,
+    extended: u16,
+    path: Vec<u8>,
+}
+
+/// Parse a version 2, 3 or 4 index. Returns its entries and where the entries
+/// end; the checksum covers everything before the last `width` bytes.
+fn walk(bytes: &[u8], width: usize) -> Result<(Vec<Slot>, usize)> {
     ensure!(
-        bytes.len() >= HEADER && &bytes[..4] == b"DIRC",
+        bytes.len() >= HEADER + width && &bytes[..4] == b"DIRC",
         "unsupported Git index"
     );
     let version = be32(bytes, 4)?;
     ensure!((2..=4).contains(&version), "unsupported Git index version");
     let count = be32(bytes, 8)? as usize;
-    // Every installed entry names the same object format.
-    let width = installed
-        .values()
-        .next()
-        .map(|entry| entry.blob.len() / 2)
-        .context("no installed entries")?;
-    ensure!(matches!(width, 20 | 32), "unsupported object ID width");
-    ensure!(bytes.len() >= HEADER + width, "truncated Git index");
     let body = bytes.len() - width;
-    let trailer_was_zero = bytes[body..].iter().all(|&b| b == 0);
-
+    let mut slots = Vec::with_capacity(count.min(body / (STAT + width)));
     let mut at = HEADER;
     let mut path = Vec::new();
-    let mut updated = 0;
     for _ in 0..count {
         let start = at;
         let flags_at = start + STAT + width;
@@ -178,13 +193,44 @@ fn patch(bytes: &mut [u8], installed: &HashMap<Vec<u8>, Installed>) -> Result<us
             at = start + (length + 8) / 8 * 8;
             ensure!(at <= body, "truncated Git index");
         }
-        let Some(entry) = installed.get(&path) else {
+        slots.push(Slot {
+            start,
+            flags,
+            extended,
+            path: path.clone(),
+        });
+    }
+    Ok((slots, at))
+}
+
+fn digest(bytes: &[u8], width: usize) -> Vec<u8> {
+    match width {
+        20 => sha1::Sha1::digest(bytes).to_vec(),
+        _ => sha2::Sha256::digest(bytes).to_vec(),
+    }
+}
+
+fn patch(bytes: &mut [u8], installed: &HashMap<Vec<u8>, Installed>) -> Result<usize> {
+    // Every installed entry names the same object format.
+    let width = installed
+        .values()
+        .next()
+        .map(|entry| entry.blob.len() / 2)
+        .context("no installed entries")?;
+    ensure!(matches!(width, 20 | 32), "unsupported object ID width");
+    let (slots, _) = walk(bytes, width)?;
+    let body = bytes.len() - width;
+    let trailer_was_zero = bytes[body..].iter().all(|&b| b == 0);
+    let mut updated = 0;
+    for slot in slots {
+        let Some(entry) = installed.get(&slot.path) else {
             continue;
         };
+        let start = slot.start;
         let mode = be32(bytes, start + 24)?;
         let oid = &bytes[start + STAT..start + STAT + width];
-        if flags & STAGE != 0
-            || extended & SKIP_WORKTREE != 0
+        if slot.flags & STAGE != 0
+            || slot.extended & SKIP_WORKTREE != 0
             || mode != entry.mode
             || hex(oid) != entry.blob
         {
@@ -194,13 +240,108 @@ fn patch(bytes: &mut [u8], installed: &HashMap<Vec<u8>, Installed>) -> Result<us
         updated += 1;
     }
     if updated > 0 && !trailer_was_zero {
-        let digest = match width {
-            20 => sha1::Sha1::digest(&bytes[..body]).to_vec(),
-            _ => sha2::Sha256::digest(&bytes[..body]).to_vec(),
-        };
-        bytes[body..].copy_from_slice(&digest);
+        let sum = digest(&bytes[..body], width);
+        bytes[body..].copy_from_slice(&sum);
     }
     Ok(updated)
+}
+
+/// Stat data from the primary's own index, trusted exactly as `git status`
+/// trusts it: an unchanged, non-racy stat means the file still holds the
+/// staged blob. Anything unusual leaves a file to be hashed instead.
+pub(super) struct Trusted {
+    entries: HashMap<Vec<u8>, ([u8; STAT], String)>,
+    /// Blob sizes. A checkout conversion (CRLF, `ident`, LFS and similar)
+    /// changes the size, so a file whose size differs from its blob's was not
+    /// written as raw bytes, even when Git's stat test calls it clean.
+    sizes: HashMap<String, u64>,
+    /// The index file's modification time; entries at or after it are racy.
+    written: (i64, i64),
+}
+
+const ASSUME_VALID: u16 = 0x8000;
+const INTENT_TO_ADD: u16 = 0x2000;
+
+impl Trusted {
+    /// Read `index`, or `None` when it is absent, split, unverifiable or
+    /// changed while being read.
+    #[cfg(unix)]
+    pub(super) fn read(index: &Path, width: usize, sizes: HashMap<String, u64>) -> Option<Self> {
+        use std::{io::Read, os::unix::fs::MetadataExt};
+        let mut file = fs::File::open(index).ok()?;
+        let before = file.metadata().ok()?;
+        if !before.is_file() || before.len() > 256 << 20 {
+            return None;
+        }
+        let mut bytes = Vec::with_capacity(before.len() as usize);
+        file.read_to_end(&mut bytes).ok()?;
+        let after = file.metadata().ok()?;
+        if (
+            before.len(),
+            before.mtime(),
+            before.mtime_nsec(),
+            before.ctime_nsec(),
+        ) != (
+            after.len(),
+            after.mtime(),
+            after.mtime_nsec(),
+            after.ctime_nsec(),
+        ) {
+            return None;
+        }
+        let (slots, end) = walk(&bytes, width).ok()?;
+        let body = bytes.len() - width;
+        let trailer = &bytes[body..];
+        if trailer.iter().any(|&b| b != 0) && digest(&bytes[..body], width) != trailer {
+            return None;
+        }
+        // A split index keeps most entries in a shared file; trust none of them.
+        let mut at = end;
+        while at + 8 <= body {
+            if &bytes[at..at + 4] == b"link" {
+                return None;
+            }
+            at += 8 + be32(&bytes, at + 4).ok()? as usize;
+        }
+        let mut entries = HashMap::with_capacity(slots.len());
+        for slot in slots {
+            if slot.flags & (STAGE | ASSUME_VALID) != 0
+                || slot.extended & (SKIP_WORKTREE | INTENT_TO_ADD) != 0
+            {
+                continue;
+            }
+            let stat: [u8; STAT] = bytes[slot.start..slot.start + STAT].try_into().ok()?;
+            let oid = hex(&bytes[slot.start + STAT..slot.start + STAT + width]);
+            entries.insert(slot.path, (stat, oid));
+        }
+        Some(Self {
+            entries,
+            sizes,
+            written: (after.mtime(), after.mtime_nsec()),
+        })
+    }
+
+    /// Whether the donor file at `name`, with stat data `stat` of a file
+    /// `size` bytes long, still holds the staged `blob` in Git mode `mode` by
+    /// Git's own stat test.
+    pub(super) fn holds(&self, name: &[u8], blob: &str, mode: u32, stat: &Stat, size: u64) -> bool {
+        let Some((recorded, oid)) = self.entries.get(name) else {
+            return false;
+        };
+        let field =
+            |at: usize| u32::from_be_bytes(recorded[at..at + 4].try_into().unwrap_or([0; 4]));
+        let mut current = [0; STAT];
+        stat.write(&mut current);
+        let mtime = (i64::from(field(8)), i64::from(field(12)));
+        oid == blob
+            && field(24) == mode
+            && self.sizes.get(blob) == Some(&size)
+            && size <= u64::from(u32::MAX)
+            // Every stat field except the mode, which Git owns, must match.
+            && recorded[..24] == current[..24]
+            && recorded[28..] == current[28..]
+            && mtime < self.written
+    }
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -335,6 +476,62 @@ mod tests {
             git(&target, &["status", "--porcelain"]),
             " M deep/nested/dir/b.txt\n"
         );
+    }
+
+    /// The primary's index vouches for a file only as `git status` would, and
+    /// only when the file is as large as its blob.
+    #[test]
+    fn trusted_index_stats_follow_git_and_reject_edits_and_conversions() {
+        let root = tempfile::tempdir().unwrap();
+        let repo = root.path().join("repo");
+        git(root.path(), &["init", "-q", "repo"]);
+        fs::write(repo.join("a.txt"), "alpha\n").unwrap();
+        fs::write(repo.join("b.txt"), "bravo\n").unwrap();
+        git(&repo, &["add", "."]);
+        let blob = |name: &str| {
+            git(&repo, &["ls-files", "--stage", name])
+                .split(' ')
+                .nth(1)
+                .unwrap()
+                .to_owned()
+        };
+        let (a, b) = (blob("a.txt"), blob("b.txt"));
+        let sizes: HashMap<_, _> = [(a.clone(), 6), (b.clone(), 6)].into();
+        let index = repo.join(".git/index");
+        let trusted = Trusted::read(&index, 20, sizes.clone()).unwrap();
+        let check = |trusted: &Trusted, name: &str, oid: &str| {
+            let path = repo.join(name);
+            let metadata = fs::symlink_metadata(&path).unwrap();
+            trusted.holds(
+                name.as_bytes(),
+                oid,
+                0o100644,
+                &Stat::from_metadata(&metadata),
+                metadata.len(),
+            )
+        };
+        assert!(check(&trusted, "a.txt", &a));
+        assert!(!check(&trusted, "a.txt", &b), "a different blob");
+        // A same-size edit that restores the old modification time.
+        let before = fs::metadata(repo.join("b.txt"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        fs::write(repo.join("b.txt"), "BRAVO\n").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(repo.join("b.txt"))
+            .unwrap()
+            .set_modified(before)
+            .unwrap();
+        assert!(!check(&trusted, "b.txt", &b));
+        // A stat-clean file whose size differs from its blob was converted.
+        let converted = Trusted::read(&index, 20, [(a.clone(), 7)].into()).unwrap();
+        assert!(!check(&converted, "a.txt", &a));
+        // Assume-unchanged entries are never trusted.
+        git(&repo, &["update-index", "--assume-unchanged", "a.txt"]);
+        let assumed = Trusted::read(&index, 20, sizes).unwrap();
+        assert!(!check(&assumed, "a.txt", &a));
     }
 
     #[test]

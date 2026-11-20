@@ -255,37 +255,117 @@ impl Root {
         } else {
             self.subdirectory(path)?
         };
-        let fd = fresh.into_raw_fd();
-        let stream = unsafe { libc::fdopendir(fd) };
-        if stream.is_null() {
-            let error = io::Error::last_os_error();
-            unsafe { libc::close(fd) };
-            return Err(error);
-        }
-        let mut names = Vec::new();
-        let result = loop {
-            #[cfg(target_os = "macos")]
-            let errno = unsafe { libc::__error() };
-            #[cfg(target_os = "linux")]
-            let errno = unsafe { libc::__errno_location() };
-            unsafe { *errno = 0 };
-            let entry = unsafe { libc::readdir(stream) };
-            if entry.is_null() {
-                break if unsafe { *errno } == 0 {
-                    Ok(names)
-                } else {
-                    Err(io::Error::last_os_error())
-                };
-            }
-            let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
-            if name != b"." && name != b".." {
-                names.push(OsString::from_vec(name.to_vec()));
-            }
-        };
-        unsafe { libc::closedir(stream) };
-        result
+        list(fresh)
     }
 
+    /// Clone the donor directory at `path` to the same relative path under
+    /// this root with one APFS call. The destination must not exist; symlinks
+    /// are cloned as links and the clone is owned by the caller.
+    #[cfg(target_os = "macos")]
+    pub(super) fn clone_directory(&self, path: &Path, donor: &Self) -> io::Result<()> {
+        const CLONE_NOFOLLOW: u32 = 0x0001;
+        const CLONE_NOOWNERCOPY: u32 = 0x0002;
+        donor.with_parent(path, |source, name| {
+            let name = CString::new(name.as_bytes())?;
+            let info = stat_at(source, &name)?;
+            if info.st_mode & libc::S_IFMT != libc::S_IFDIR || info.st_dev as u64 != donor.device {
+                return Err(invalid("expected a donor directory"));
+            }
+            self.with_parent(path, |parent, _| {
+                if unsafe {
+                    libc::clonefileat(
+                        source.as_raw_fd(),
+                        name.as_ptr(),
+                        parent.as_raw_fd(),
+                        name.as_ptr(),
+                        CLONE_NOFOLLOW | CLONE_NOOWNERCOPY,
+                    )
+                } != 0
+                {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(())
+            })
+        })
+    }
+
+    /// `lstat` a symbolic link on this root's device.
+    #[cfg(target_os = "macos")]
+    pub(super) fn link_stat(&self, path: &Path) -> io::Result<libc::stat> {
+        self.with_parent(path, |parent, name| {
+            let info = stat_at(parent, &CString::new(name.as_bytes())?)?;
+            if info.st_mode & libc::S_IFMT != libc::S_IFLNK || info.st_dev as u64 != self.device {
+                return Err(invalid("expected a symbolic link"));
+            }
+            Ok(info)
+        })
+    }
+
+    /// Remove a subtree this process created, through pinned descriptors
+    /// that never follow symlinks.
+    #[cfg(target_os = "macos")]
+    pub(super) fn discard_tree(&self, path: &Path) -> io::Result<()> {
+        self.with_parent(path, |parent, name| {
+            remove_tree_at(parent, &CString::new(name.as_bytes())?)
+        })
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn remove_tree_at(parent: &File, name: &CStr) -> io::Result<()> {
+    let info = stat_at(parent, name)?;
+    if info.st_mode & libc::S_IFMT != libc::S_IFDIR {
+        return unlink_at(parent, name);
+    }
+    let name_os = OsStr::from_bytes(name.to_bytes());
+    let directory = open_at(parent, name_os, libc::O_RDONLY | libc::O_DIRECTORY)?;
+    for child in list(open_at(
+        parent,
+        name_os,
+        libc::O_RDONLY | libc::O_DIRECTORY,
+    )?)? {
+        remove_tree_at(&directory, &CString::new(child.into_vec())?)?;
+    }
+    if unsafe { libc::unlinkat(parent.as_raw_fd(), name.as_ptr(), libc::AT_REMOVEDIR) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// List a directory's entries, excluding `.` and `..`. Consumes the descriptor.
+fn list(fresh: File) -> io::Result<Vec<OsString>> {
+    let fd = fresh.into_raw_fd();
+    let stream = unsafe { libc::fdopendir(fd) };
+    if stream.is_null() {
+        let error = io::Error::last_os_error();
+        unsafe { libc::close(fd) };
+        return Err(error);
+    }
+    let mut names = Vec::new();
+    let result = loop {
+        #[cfg(target_os = "macos")]
+        let errno = unsafe { libc::__error() };
+        #[cfg(target_os = "linux")]
+        let errno = unsafe { libc::__errno_location() };
+        unsafe { *errno = 0 };
+        let entry = unsafe { libc::readdir(stream) };
+        if entry.is_null() {
+            break if unsafe { *errno } == 0 {
+                Ok(names)
+            } else {
+                Err(io::Error::last_os_error())
+            };
+        }
+        let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) }.to_bytes();
+        if name != b"." && name != b".." {
+            names.push(OsString::from_vec(name.to_vec()));
+        }
+    };
+    unsafe { libc::closedir(stream) };
+    result
+}
+
+impl Root {
     /// Classify a tree entry relative to a pinned directory without opening
     /// special files or following symlinks.
     pub(crate) fn entry_is_directory(&self, path: &Path) -> io::Result<bool> {

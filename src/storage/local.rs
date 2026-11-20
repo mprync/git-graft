@@ -77,6 +77,39 @@ fn materialize<F: FnOnce() -> Result<()>>(
     metadata: CheckoutMetadata<'_>,
     ready: F,
 ) -> Result<Value> {
+    // Blob sizes only depend on object IDs, so the primary can report them
+    // while the workspace index is prepared.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    return std::thread::scope(|scope| {
+        let sizes = metadata.index.map(|manifest| {
+            let command = git_command(primary);
+            scope.spawn(move || direct::blob_sizes(command, &manifest.entries))
+        });
+        materialize_with(
+            workspace, state, oid, sparse, primary, metadata, ready, sizes,
+        )
+    });
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    materialize_with(workspace, state, oid, sparse, primary, metadata, ready, ())
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+type Sizes<'s> =
+    Option<std::thread::ScopedJoinHandle<'s, Option<std::collections::HashMap<String, u64>>>>;
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+type Sizes<'s> = ();
+
+#[allow(clippy::too_many_arguments)]
+fn materialize_with<F: FnOnce() -> Result<()>>(
+    workspace: &Path,
+    state: &Path,
+    oid: &str,
+    sparse: &[String],
+    primary: &Path,
+    metadata: CheckoutMetadata<'_>,
+    ready: F,
+    sizes: Sizes<'_>,
+) -> Result<Value> {
     let proof_objects = metadata.objects;
     let oid = checkout_identity_with_objects(workspace, oid, proof_objects)?;
     validate_sparse(workspace, &oid, sparse)?;
@@ -98,7 +131,7 @@ fn materialize<F: FnOnce() -> Result<()>>(
     };
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
-    let planned = direct::plan(&checkout, &oid, sparse, files, state, primary)?;
+    let planned = direct::plan(&checkout, &oid, sparse, files, state, primary, sizes)?;
     crate::trace::mark("checkout: plan donors");
     let receipt = match planned {
         Ok(plan) => direct::install(
@@ -117,7 +150,7 @@ fn materialize<F: FnOnce() -> Result<()>>(
     };
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let receipt = {
-        let _ = (state, primary);
+        let _ = (state, primary, sizes);
         ready()?;
         checkout.native(&oid, sparse, files, "native clone unavailable")?
     };
@@ -300,12 +333,18 @@ pub(super) mod direct {
     mod early;
     #[cfg(target_os = "macos")]
     pub(in crate::storage) use early::EarlyDonors;
+    #[cfg(target_os = "macos")]
+    mod tree;
 
     pub(super) struct Plan {
         donor: native::Root,
         destination: native::Root,
         candidates: Vec<bool>,
         mode: u32,
+        /// Symbolic links may be installed as links.
+        links: bool,
+        /// The primary's index stat data, trusted as `git status` trusts it.
+        trusted: Option<index_stat::Trusted>,
     }
 
     pub(super) fn plan(
@@ -315,6 +354,7 @@ pub(super) mod direct {
         files: &[Entry],
         state: &Path,
         primary: &Path,
+        sizes: super::Sizes<'_>,
     ) -> Result<std::result::Result<Plan, &'static str>> {
         if !sparse.is_empty() {
             return Ok(Err("sparse checkout"));
@@ -346,8 +386,12 @@ pub(super) mod direct {
 
         // These read-only queries use independent Git processes. Join all
         // workers before using their results to select donor files.
-        let (tracked, policy, conversions) = std::thread::scope(|scope| -> Result<_> {
+        let (tracked, policy, conversions, sizes) = std::thread::scope(|scope| -> Result<_> {
             let config = scope.spawn(|| raw_file_policy(checkout.worktree, gitlinks));
+            let sizes = match sizes {
+                Some(early) => early,
+                None => scope.spawn(|| blob_sizes(checkout.proof_command(), files)),
+            };
             // Git also applies info/attributes and user and system rules when
             // the selected tree has no .gitattributes of its own.
             let attributes = scope.spawn(|| {
@@ -364,7 +408,12 @@ pub(super) mod direct {
             let conversions = attributes
                 .join()
                 .map_err(|_| anyhow::anyhow!("checkout attribute worker failed"))?;
-            Ok((tracked, policy, conversions))
+            Ok((
+                tracked,
+                policy,
+                conversions,
+                crate::workspace::joined(sizes),
+            ))
         })?;
         let endings = match policy {
             Ok(value) => value,
@@ -410,7 +459,57 @@ pub(super) mod direct {
             destination,
             candidates,
             mode,
+            links: endings.links,
+            trusted: sizes.and_then(|sizes| {
+                index_stat::Trusted::read(
+                    &primary.join(".git/index"),
+                    files[0].blob.len() / 2,
+                    sizes,
+                )
+            }),
         }))
+    }
+
+    /// Each regular file blob's size, or `None` if Git cannot report them all.
+    pub(super) fn blob_sizes(
+        mut command: Command,
+        files: &[Entry],
+    ) -> Option<HashMap<String, u64>> {
+        let mut input = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for entry in files.iter().filter(|entry| entry.regular()) {
+            if seen.insert(entry.blob.as_str()) {
+                input.extend_from_slice(entry.blob.as_bytes());
+                input.push(b'\n');
+            }
+        }
+        let mut stdin = tempfile::tempfile().ok()?;
+        std::io::Write::write_all(&mut stdin, &input).ok()?;
+        std::io::Seek::rewind(&mut stdin).ok()?;
+        command
+            .env("GIT_NO_REPLACE_OBJECTS", "1")
+            .args([
+                "cat-file",
+                "--batch-check=%(objectname) %(objecttype) %(objectsize)",
+                "--buffer",
+            ])
+            .stdin(Stdio::from(stdin));
+        let output = crate::git::bounded_stdout(&mut command, 64 << 20).ok()?;
+        let mut sizes = HashMap::with_capacity(seen.len());
+        for line in output
+            .split(|&b| b == b'\n')
+            .filter(|line| !line.is_empty())
+        {
+            let line = std::str::from_utf8(line).ok()?;
+            let mut fields = line.split(' ');
+            let (Some(oid), Some("blob"), Some(size), None) =
+                (fields.next(), fields.next(), fields.next(), fields.next())
+            else {
+                return None;
+            };
+            sizes.insert(oid.to_owned(), size.parse().ok()?);
+        }
+        (sizes.len() == seen.len()).then_some(sizes)
     }
 
     // Decline aliases before either Git or clonefile creates their names.
@@ -498,6 +597,8 @@ pub(super) mod direct {
     struct LineEndings {
         raw_by_default: bool,
         text_uses_lf: bool,
+        /// Whether Git checks symbolic links out as links (`core.symlinks`).
+        links: bool,
     }
 
     fn raw_file_policy(
@@ -505,9 +606,9 @@ pub(super) mod direct {
         gitlinks: bool,
     ) -> Result<Result<LineEndings, &'static str>> {
         let settings = if gitlinks {
-            r"^(core\.(autocrlf|eol|sparsecheckout)|submodule\.recurse)$"
+            r"^(core\.(autocrlf|eol|sparsecheckout|symlinks)|submodule\.recurse)$"
         } else {
-            r"^core\.(autocrlf|eol|sparsecheckout)$"
+            r"^core\.(autocrlf|eol|sparsecheckout|symlinks)$"
         };
         let config = git_command(worktree)
             .args([
@@ -525,6 +626,8 @@ pub(super) mod direct {
         let mut eol_crlf = false;
         let mut sparse = false;
         let mut recurse = false;
+        // Git creates symbolic links unless core.symlinks is false.
+        let mut links = true;
         for field in config.stdout.split(|&b| b == 0).filter(|f| !f.is_empty()) {
             let mut parts = field.splitn(2, |&b| b == b'\n');
             let key = parts.next().unwrap_or_default();
@@ -537,6 +640,7 @@ pub(super) mod direct {
                 b"core.eol" => eol_crlf = value.eq_ignore_ascii_case(b"crlf"),
                 b"core.sparsecheckout" if boolean => sparse = value == b"true",
                 b"submodule.recurse" if boolean => recurse = value == b"true",
+                b"core.symlinks" if boolean => links = value == b"true",
                 _ => return Ok(Err("Git checkout configuration")),
             }
         }
@@ -566,6 +670,7 @@ pub(super) mod direct {
             raw_by_default: autocrlf != b"true",
             text_uses_lf: autocrlf.eq_ignore_ascii_case(b"input")
                 || (autocrlf == b"false" && !eol_crlf),
+            links,
         }))
     }
 
@@ -624,17 +729,48 @@ pub(super) mod direct {
             Ok(())
         };
         let mut ready = Some(ready);
+        // Whole clean directories first; the per-file workers skip their entries.
+        #[cfg(target_os = "macos")]
+        let directories = tree::clone_directories(
+            files,
+            &plan.candidates,
+            &plan.donor,
+            &plan.destination,
+            tree::Policy {
+                trusted: plan.trusted.as_ref(),
+                links: plan.links,
+                mode: plan.mode,
+                sha256,
+                reuse_ancestors,
+            },
+            early.map(|early| early.batch(0, files.len())),
+        )?;
+        #[cfg(target_os = "macos")]
+        let covered = directories.covered.as_slice();
+        #[cfg(target_os = "linux")]
+        let covered = vec![false; files.len()];
+        #[cfg(target_os = "linux")]
+        let covered = covered.as_slice();
+        crate::trace::mark(&format!(
+            "checkout: clone directories ({} of {} entries)",
+            covered.iter().filter(|covered| **covered).count(),
+            files.len()
+        ));
         let batches = std::thread::scope(|scope| -> Result<Vec<_>> {
             let mut tasks = Vec::new();
             let mut flags = plan.candidates.as_slice();
+            let mut skipped = covered;
             for chunk in source_chunks(files) {
                 #[cfg(target_os = "macos")]
                 let hints = early.map(|early| early.batch(files.len() - flags.len(), chunk.len()));
                 let (eligible, remaining) = flags.split_at(chunk.len());
                 flags = remaining;
+                let (skip, remaining) = skipped.split_at(chunk.len());
+                skipped = remaining;
                 let donor = plan.donor.checkout_worker(reuse_ancestors)?;
                 let destination = plan.destination.checkout_worker(reuse_ancestors)?;
                 let mode = plan.mode;
+                let trusted = plan.trusted.as_ref();
                 #[cfg(target_os = "linux")]
                 let scratch = tempfile::tempdir_in(checkout.scratch.path())?;
                 tasks.push(scope.spawn(move || {
@@ -643,10 +779,12 @@ pub(super) mod direct {
                     clone_batch(
                         chunk,
                         eligible,
+                        skip,
                         &donor,
                         &destination,
                         mode,
                         sha256,
+                        trusted,
                         #[cfg(target_os = "macos")]
                         hints,
                         #[cfg(target_os = "linux")]
@@ -656,7 +794,11 @@ pub(super) mod direct {
             }
             if overlap_links {
                 ready.take().expect("history readiness is checked once")()?;
-                let links = files.iter().filter(|entry| entry.mode == 0o120000);
+                let links = files
+                    .iter()
+                    .zip(covered)
+                    .filter(|(entry, covered)| entry.mode == 0o120000 && !**covered)
+                    .map(|(entry, _)| entry);
                 // Git treats EEXIST as a checkout failure if a clone worker
                 // creates a missing directory between Git's lookup and mkdir.
                 for link in links.clone() {
@@ -674,6 +816,12 @@ pub(super) mod direct {
         })?;
         let mut missing = Vec::new();
         let mut installed = HashMap::new();
+        #[cfg(target_os = "macos")]
+        let batches = batches.into_iter().chain(std::iter::once((
+            directories.counts,
+            directories.missing,
+            directories.installed,
+        )));
         for (cloned, paths, stats) in batches {
             receipt.cloned.merge(cloned);
             missing.extend(paths);
@@ -728,13 +876,17 @@ pub(super) mod direct {
     /// Cloned bytes, entries Git must check out, and cloned entries' stat data.
     type Batch<'a> = (Counts, Vec<&'a Entry>, Vec<(&'a Entry, index_stat::Stat)>);
 
+    /// Clone `files` one by one. Entries flagged in `skip` were already installed.
+    #[allow(clippy::too_many_arguments)]
     fn clone_batch<'a>(
         files: &'a [Entry],
         candidates: &[bool],
+        skip: &[bool],
         donor: &native::Root,
         destination: &native::Root,
         mode: u32,
         sha256: bool,
+        trusted: Option<&index_stat::Trusted>,
         #[cfg(target_os = "macos")] hints: Option<&[std::sync::OnceLock<early::Verified>]>,
         #[cfg(target_os = "linux")] scratch: &native::Root,
     ) -> Result<Batch<'a>> {
@@ -744,12 +896,15 @@ pub(super) mod direct {
         let mut buffer = [0; 64 * 1024];
         #[cfg(target_os = "macos")]
         let mut hints = hints.map(|batch| batch.iter());
-        for (entry, &eligible) in files.iter().zip(candidates) {
+        for ((entry, &eligible), &done) in files.iter().zip(candidates).zip(skip) {
             #[cfg(target_os = "macos")]
             let hint = hints
                 .as_mut()
                 .and_then(Iterator::next)
                 .and_then(std::sync::OnceLock::get);
+            if done {
+                continue;
+            }
             if !eligible {
                 missing.push(entry);
                 continue;
@@ -776,8 +931,21 @@ pub(super) mod direct {
             // A tracked index entry can still name a staged change, an
             // assume-unchanged file or a checkout produced with old filters.
             // Hash the source bytes independently, including same-size edits.
+            // Git's own stat test, unchanged across the clone below, also
+            // proves the bytes.
+            let trusted = !verified
+                && trusted.is_some_and(|trusted| {
+                    trusted.holds(
+                        &entry.name,
+                        &entry.blob,
+                        entry.mode,
+                        &index_stat::Stat::from_metadata(&metadata),
+                        metadata.len(),
+                    )
+                });
             if !same_mode
                 || (!verified
+                    && !trusted
                     && !verified_blob(&mut file, &metadata, &mut buffer, &entry.blob, sha256))
             {
                 missing.push(entry);
@@ -839,8 +1007,14 @@ pub(super) mod direct {
             && matches_blob(file, metadata.len(), buffer, oid, sha256).unwrap_or(false)
     }
 
+    /// Whether a symbolic link's target bytes are exactly the Git blob `oid`.
+    fn link_matches(target: &[u8], oid: &str, sha256: bool) -> bool {
+        let mut buffer = [0; 4096];
+        matches_blob(target, target.len() as u64, &mut buffer, oid, sha256).unwrap_or(false)
+    }
+
     fn matches_blob(
-        file: &mut File,
+        file: impl Read,
         size: u64,
         buffer: &mut [u8],
         oid: &str,
