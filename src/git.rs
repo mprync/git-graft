@@ -238,6 +238,17 @@ pub fn symbolic_ref(dir: &Path, reference: &str) -> Result<Option<String>> {
                 .into(),
         )),
         Some(1) => Ok(None),
+        // Git for Windows reports a missing ref as fatal where other builds
+        // exit 1. Treat it as missing only once Git confirms it is absent.
+        Some(128)
+            if out.stderr.starts_with(b"fatal: No such ref")
+                && raw(dir, &["rev-parse", "--verify", "--quiet", reference])?
+                    .status
+                    .code()
+                    == Some(1) =>
+        {
+            Ok(None)
+        }
         _ => bail!(
             "read symbolic ref {reference}: {}",
             String::from_utf8_lossy(&out.stderr).trim_end()
