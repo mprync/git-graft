@@ -1679,7 +1679,7 @@ mod tests {
                 assert_eq!(result["private_files"], 5, "{result}");
                 assert_eq!(result["cloned_files"], result["primary_reused_files"]);
             }
-            fs::write(workspace.join("script"), b"workspace edit").unwrap();
+            fs::write(workspace.join("script"), b"graft edit").unwrap();
             assert_eq!(fs::read(repo.join("script")).unwrap(), b"#!/bin/sh\n");
             assert_eq!(command(&workspace, &["status", "--porcelain"]), "M script");
             assert_eq!(fs::read(donor).unwrap(), b"unexpected");
@@ -2100,7 +2100,7 @@ mod tests {
                     );
                 }
             }
-            fs::write(workspace.join("sub/large"), b"workspace edit").unwrap();
+            fs::write(workspace.join("sub/large"), b"graft edit").unwrap();
         }
         assert_eq!(fs::read(repo.join("sub/large")).unwrap(), large);
         assert_eq!(fs::read(repo.join("sub/small-0")).unwrap(), b"private\n");

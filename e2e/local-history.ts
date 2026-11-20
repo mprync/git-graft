@@ -301,7 +301,7 @@ exec "$GRAFT_TEST_GIT" "$@"
       } finally {
         renameSync(held, loose);
       }
-      assert.equal(failure.code, 'add_incomplete');
+      assert.equal(failure.code, 'spawn_incomplete');
       const {path, lease} = objectResult(failure.details);
       assert(typeof path === 'string' && typeof lease === 'string');
       assert(!existsSync(join(path, '.git', 'index')));

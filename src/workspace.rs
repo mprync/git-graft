@@ -284,7 +284,7 @@ fn spawn(p: &Project, origin: &Path, mut args: Spawn) -> Result<Value> {
     })();
     if let Err(error) = build {
         return Err(api::fault(
-            "add_incomplete",
+            "spawn_incomplete",
             format!("Creating the graft stopped: {error:#}"),
             json!({"name":r.name,"lease":r.lease,"path":r.path,"recovery":"Inspect the reserved path. Run remove with --discard to archive the partial graft."}),
         ));
@@ -297,7 +297,7 @@ fn clean(path: &Path, allow_ignored: bool) -> Result<()> {
     let changes = git::changes(path)?;
     ensure!(
         changes.iter().all(|c| allow_ignored && c.status == "!!"),
-        "workspace has local changes or ignored files; its files and index have been retained"
+        "graft has local changes or ignored files; its files and index have been retained"
     );
     Ok(())
 }
@@ -378,10 +378,7 @@ fn land_workspace(p: &Project, opts: &api::Land) -> Result<Value> {
         );
         return retire(p, &r.name, &r.lease, Status::Landed);
     }
-    ensure!(
-        r.status == Status::Active,
-        "workspace creation is incomplete"
-    );
+    ensure!(r.status == Status::Active, "graft creation is incomplete");
     registry::preflight_retire(p, &r)?;
     if let Some(plan) = &r.plan {
         ensure!(plan.target == opts.into, "retry merge into {}", plan.target);
@@ -392,7 +389,7 @@ fn land_workspace(p: &Project, opts: &api::Land) -> Result<Value> {
     if !opts.discard_ignored {
         ensure!(
             !git::changes(&r.path)?.iter().any(|c| c.status == "!!"),
-            "workspace has ignored files; use --discard-ignored to retain them in its archive"
+            "graft has ignored files, such as build output; rerun with --discard-ignored to keep them in its archive"
         );
     }
     let plan = if let Some(plan) = &r.plan {
@@ -411,7 +408,7 @@ fn land_workspace(p: &Project, opts: &api::Land) -> Result<Value> {
         clean(&r.path, opts.discard_ignored)?;
         ensure!(
             git::oid(&r.path, "HEAD")? == plan.tip,
-            "workspace HEAD changed during merge"
+            "graft HEAD changed during merge"
         );
         land::apply(p, &plan)
     };
@@ -429,7 +426,7 @@ fn land_workspace(p: &Project, opts: &api::Land) -> Result<Value> {
     clean(&r.path, opts.discard_ignored)?;
     ensure!(
         git::oid(&r.path, "HEAD")? == plan.tip,
-        "workspace advanced; retirement remains pending"
+        "graft advanced; archiving remains pending"
     );
     retire(p, &r.name, &r.lease, Status::Landed)
 }
@@ -439,7 +436,7 @@ fn drop_workspace(p: &Project, opts: &api::DropWorkspace) -> Result<Value> {
     if let Ok(r) = registry::load_retired(p, &opts.name, &opts.lease) {
         ensure!(
             r.status == Status::Dropped || opts.discard,
-            "workspace was retired by merge"
+            "graft was archived by merge"
         );
         return Ok(receipt(&r));
     }
@@ -471,18 +468,18 @@ fn drop_workspace(p: &Project, opts: &api::DropWorkspace) -> Result<Value> {
         if !opts.discard {
             ensure!(
                 r.status == Status::Active,
-                "partial workspace requires --discard to archive"
+                "partial graft requires --discard to archive"
             );
             clean(&r.path, false)?;
             if let Some(base) = &r.base {
                 ensure!(
                     git::oid(&r.path, "HEAD")? == *base,
-                    "merge the workspace commits or explicitly archive with --discard"
+                    "merge the graft's commits or archive it explicitly with --discard"
                 );
             } else {
                 ensure!(
                     unborn(&r.path)?,
-                    "merge the workspace commits or explicitly archive with --discard"
+                    "merge the graft's commits or archive it explicitly with --discard"
                 );
             }
         }
@@ -593,7 +590,7 @@ pub fn run(repo: &Path, command: Command) -> Result<Value> {
                 let source = registry::authenticate(p, name, lease)?;
                 ensure!(
                     source.status == Status::Active && source.plan.is_none(),
-                    "workspace has a pending operation"
+                    "graft has a pending operation"
                 );
                 let _workspace_lock = registry::workspace_lock(p, name)?;
                 registry::verify(p, &source)?;
@@ -614,7 +611,7 @@ pub fn run(repo: &Path, command: Command) -> Result<Value> {
                     parent.id == location.id
                         && parent.status == Status::Active
                         && dunce::canonicalize(repo)?.starts_with(&parent.path),
-                    "the invoking workspace moved or is no longer active"
+                    "the invoking graft moved or is no longer active"
                 );
                 registry::verify(p, &parent)?;
                 parent.path
@@ -629,10 +626,7 @@ pub fn run(repo: &Path, command: Command) -> Result<Value> {
         Command::Restore(a) => return Ok(with_lease(&registry::restore(p, &a.name, &a.lease)?)),
         Command::UndoLand(a) => {
             let r = registry::load_retired(p, &a.name, &a.lease)?;
-            let plan = r
-                .plan
-                .as_ref()
-                .context("workspace was not retired by merge")?;
+            let plan = r.plan.as_ref().context("graft was not archived by merge")?;
             let mut value = land::undo(p, plan, &a.lease)?;
             value["name"] = json!(r.name);
             return Ok(value);
@@ -679,7 +673,7 @@ pub fn run(repo: &Path, command: Command) -> Result<Value> {
     let mut r = registry::authenticate(p, name, lease)?;
     ensure!(
         r.status == Status::Active && r.plan.is_none(),
-        "workspace has a pending operation"
+        "graft has a pending operation"
     );
     let _workspace_lock = registry::workspace_lock(p, name)?;
     registry::verify(p, &r)?;

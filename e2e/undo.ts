@@ -325,7 +325,7 @@ export const cases: Scenario[] = [
     run(ctx) {
       const dropped = ctx.spawn('dropped');
       ctx.cli(['remove', 'dropped', '--lease', dropped.lease]);
-      assert.match(String(ctx.fail(undo('dropped', dropped.lease)).message), /not retired by merge/i);
+      assert.match(String(ctx.fail(undo('dropped', dropped.lease)).message), /not archived by merge/i);
       const unchanged = ctx.spawn('unchanged');
       const old = ctx.git(['rev-parse', 'HEAD']);
       assert.equal(land(ctx, 'unchanged', unchanged), old);

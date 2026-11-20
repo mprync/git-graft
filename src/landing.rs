@@ -371,7 +371,7 @@ fn merged_tree(
     }
     Err(fault(
         "merge_conflict",
-        format!("workspace conflicts with {}", options.into),
+        format!("graft conflicts with {}", options.into),
         details,
     ))
 }
@@ -394,7 +394,7 @@ pub(crate) fn prepare_with_import(
         let message = options
             .commit
             .as_deref()
-            .context("workspace has uncommitted changes. Commit them first or pass --commit")?;
+            .context("graft has uncommitted changes. Commit them first or pass --commit")?;
         if message.trim().is_empty() {
             bail!("--commit requires a nonempty commit message");
         }
@@ -408,7 +408,7 @@ pub(crate) fn prepare_with_import(
         }
         git::check_idle(workspace)?;
         if dirty(workspace)? {
-            bail!("workspace still has uncommitted changes after commit");
+            bail!("graft still has uncommitted changes after commit");
         }
     }
     let tip = git::text(
@@ -804,7 +804,9 @@ pub(crate) fn require_no_pending_checkout(repo: &Path, plan: &Plan) -> Result<()
     if let Some(update) = checkout::Update::load(&common_dir(repo)?)?
         && update.is_for(plan)
     {
-        return Err(update.recovery_required("resume the checkout update before pruning the graft"));
+        return Err(
+            update.recovery_required("resume the checkout update before archiving the graft")
+        );
     }
     Ok(())
 }
