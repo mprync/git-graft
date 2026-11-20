@@ -145,7 +145,7 @@ Checksums prove the file matches the release; build provenance proves which work
 gh attestation verify git-graft-0.1.0-aarch64-apple-darwin.tar.gz --repo mprync/git-graft
 ```
 
-The release workflow attests every asset, including `SHA256SUMS` and the install scripts.
+The release workflow attests every asset, including `SHA256SUMS` and the install scripts. When the GitHub CLI is installed and signed in, `install.sh` and `install.ps1` run this check themselves and refuse to install an archive that fails it.
 
 ## Upgrade
 
