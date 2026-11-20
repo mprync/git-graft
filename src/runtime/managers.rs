@@ -12,11 +12,7 @@ use std::process::{Command, Output, Stdio};
 /// Resolve against the host PATH before Runtime prepends local script directories.
 pub(super) fn command(manager: &str) -> Result<Command> {
     let search = std::env::var_os("PATH").context("PATH is unavailable")?;
-    let executable = if cfg!(windows) {
-        format!("{manager}.exe")
-    } else {
-        manager.to_owned()
-    };
+    let executable = super::executable(manager);
     let binary = std::env::split_paths(&search)
         .filter(|dir| dir.is_absolute())
         .find_map(|dir| {
@@ -624,20 +620,15 @@ fn endpoint(path: &Path, directory: bool) -> Result<bool> {
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
         Err(error) => return Err(error).with_context(|| format!("inspect {}", path.display())),
     };
+    let (expected_type, kind) = if directory {
+        (metadata.is_dir(), "directory")
+    } else {
+        (metadata.is_file(), "regular file")
+    };
     ensure!(
-        !is_reparse_point(&metadata)
-            && if directory {
-                metadata.is_dir()
-            } else {
-                metadata.is_file()
-            },
-        "dependency write location {} must be a private {} without symlinks or reparse points",
+        !is_reparse_point(&metadata) && expected_type,
+        "dependency write location {} must be a private {kind} without symlinks or reparse points",
         path.display(),
-        if directory {
-            "directory"
-        } else {
-            "regular file"
-        },
     );
     if !directory {
         ensure!(

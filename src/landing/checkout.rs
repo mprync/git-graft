@@ -91,9 +91,10 @@ impl Update {
     }
 
     pub(super) fn matches(&self, plan: &Plan) -> Result<()> {
-        if !self.is_for(plan) {
-            return Err(self.recovery_required("another checked-out landing is still pending"));
-        }
+        ensure!(
+            self.is_for(plan),
+            self.recovery_required("another checked-out landing is still pending")
+        );
         Ok(())
     }
 
@@ -385,11 +386,9 @@ impl Update {
 }
 
 pub(super) fn index_bytes(path: &Path) -> Result<Option<Vec<u8>>> {
-    if registry::exists(path)? {
-        Ok(Some(registry::regular(path)?))
-    } else {
-        Ok(None)
-    }
+    registry::exists(path)?
+        .then(|| registry::regular(path))
+        .transpose()
 }
 
 pub(super) struct IndexLock {

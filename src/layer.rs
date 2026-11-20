@@ -25,9 +25,43 @@ pub(crate) use registered::{
 mod shared;
 pub use shared::{check_attached_for_add, inherit_shared, seed_shared};
 
+/// Root lockfiles recognised for Node package managers.
+const LOCKS: &[&str] = &[
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "pnpm-lock.yaml",
+    "yarn.lock",
+    "bun.lock",
+    "bun.lockb",
+];
+
+/// Git status arguments whose output is empty only for clean tracked source and index.
+const TRACKED_STATUS: &[&str] = &[
+    "--no-optional-locks",
+    "-c",
+    "core.fsmonitor=false",
+    "status",
+    "--porcelain=v1",
+    "--untracked-files=no",
+    "--ignore-submodules=none",
+];
+
 fn field(hasher: &mut blake3::Hasher, bytes: &[u8]) {
     hasher.update(&(bytes.len() as u64).to_le_bytes());
     hasher.update(bytes);
+}
+
+/// Fingerprint the permission bits a layer can represent on this platform.
+fn permission_field(hash: &mut blake3::Hasher, metadata: &fs::Metadata) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        field(hash, &(metadata.permissions().mode() & 0o777).to_le_bytes());
+    }
+    #[cfg(windows)]
+    field(hash, &[u8::from(metadata.permissions().readonly())]);
+    #[cfg(not(any(unix, windows)))]
+    let _ = (hash, metadata);
 }
 
 fn compatibility(checkout: &Path, key: &str) -> Result<String> {
@@ -39,20 +73,7 @@ fn compatibility(checkout: &Path, key: &str) -> Result<String> {
     if root != checkout {
         bail!("layer actions require the checkout root");
     }
-    if !git::bytes(
-        checkout,
-        &[
-            "--no-optional-locks",
-            "-c",
-            "core.fsmonitor=false",
-            "status",
-            "--porcelain=v1",
-            "--untracked-files=no",
-            "--ignore-submodules=none",
-        ],
-    )?
-    .is_empty()
-    {
+    if !git::bytes(checkout, TRACKED_STATUS)?.is_empty() {
         bail!("tracked source and index must be clean");
     }
     // Git's status deliberately hides changes to assume-unchanged and sparse
@@ -105,14 +126,7 @@ fn compatibility(checkout: &Path, key: &str) -> Result<String> {
         }
     }
     let mut locks = Vec::new();
-    for name in [
-        "package-lock.json",
-        "npm-shrinkwrap.json",
-        "pnpm-lock.yaml",
-        "yarn.lock",
-        "bun.lock",
-        "bun.lockb",
-    ] {
+    for &name in LOCKS {
         if entry_exists(&checkout.join(name))? {
             locks.push(name);
         }
@@ -236,19 +250,7 @@ fn inspect(root: &Path, forbidden: Option<&[u8]>, check: CheckMetadata) -> Resul
     let root = root.canonicalize()?;
     check(&root, &fs::symlink_metadata(&root)?)?;
     let mut hash = blake3::Hasher::new();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        field(
-            &mut hash,
-            &(fs::metadata(&root)?.permissions().mode() & 0o777).to_le_bytes(),
-        );
-    }
-    #[cfg(windows)]
-    field(
-        &mut hash,
-        &[u8::from(fs::metadata(&root)?.permissions().readonly())],
-    );
+    permission_field(&mut hash, &fs::metadata(&root)?);
     inspect_dir(&root, &root, forbidden, check, &mut hash)?;
     Ok(hash.finalize().to_hex().to_string())
 }
@@ -276,13 +278,7 @@ fn inspect_dir(
         );
         if meta.is_dir() {
             field(hash, b"dir");
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                field(hash, &(meta.permissions().mode() & 0o777).to_le_bytes());
-            }
-            #[cfg(windows)]
-            field(hash, &[u8::from(meta.permissions().readonly())]);
+            permission_field(hash, &meta);
             inspect_dir(root, &path, forbidden, check, hash)?;
         } else if meta.file_type().is_symlink() {
             field(hash, b"symlink");
@@ -296,13 +292,7 @@ fn inspect_dir(
             );
         } else if meta.is_file() {
             field(hash, b"file");
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                field(hash, &(meta.permissions().mode() & 0o777).to_le_bytes());
-            }
-            #[cfg(windows)]
-            field(hash, &[u8::from(meta.permissions().readonly())]);
+            permission_field(hash, &meta);
             field(hash, &meta.len().to_le_bytes());
             let mut file = fs::File::open(&path)?;
             let mut buffer = [0u8; 65536];
@@ -339,6 +329,21 @@ fn valid_digest(value: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
+/// Read a regular file of at most 1 KiB that passes `check`, without following links.
+fn small_file(path: &Path, invalid: &'static str, check: CheckMetadata) -> Result<Vec<u8>> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.is_file() || registry::is_reparse_point(&metadata) || metadata.len() > 1024 {
+        bail!(invalid);
+    }
+    check(path, &metadata)?;
+    let mut bytes = Vec::new();
+    File::open(path)?.take(1025).read_to_end(&mut bytes)?;
+    if bytes.len() > 1024 {
+        bail!(invalid);
+    }
+    Ok(bytes)
+}
+
 // A layer is deletable only when its complete visible inventory and bytes match
 // our narrowly defined provenance record. Unknown files must be retained.
 fn layer_provenance(layer: &Path, digest: &str) -> Result<Value> {
@@ -360,17 +365,11 @@ fn layer_provenance_for(layer: &Path, digest: &str, tree_name: &str) -> Result<V
     if names != expected {
         bail!("unexpected files in layer directory");
     }
-    let path = layer.join("provenance.json");
-    let metadata = fs::symlink_metadata(&path)?;
-    if !metadata.is_file() || registry::is_reparse_point(&metadata) || metadata.len() > 1024 {
-        bail!("invalid layer provenance file");
-    }
-    check_cache_metadata(&path, &metadata)?;
-    let mut bytes = Vec::new();
-    File::open(path)?.take(1025).read_to_end(&mut bytes)?;
-    if bytes.len() > 1024 {
-        bail!("invalid layer provenance file");
-    }
+    let bytes = small_file(
+        &layer.join("provenance.json"),
+        "invalid layer provenance file",
+        check_cache_metadata,
+    )?;
     let value: Value = serde_json::from_slice(&bytes)?;
     let object = value.as_object().context("invalid layer provenance")?;
     let contents = value["contents"]
@@ -419,15 +418,10 @@ fn verify_layer_contents(layer: &Path, digest: &str) -> Result<Value> {
 
 /// Verify the generation against its original digest, including after quarantine.
 pub(crate) fn verify_layer(layer: &Path, digest: &str) -> Result<Value> {
-    #[cfg(windows)]
-    {
-        let _ = (layer, digest);
+    if cfg!(windows) {
         bail!("Windows layer metadata cannot be verified for deletion");
     }
-    #[cfg(not(windows))]
-    {
-        verify_layer_contents(layer, digest)
-    }
+    verify_layer_contents(layer, digest)
 }
 
 #[derive(Default)]
@@ -455,12 +449,15 @@ fn clone_unsupported(error: &io::Error) -> bool {
     }
     #[cfg(unix)]
     if let Some(code) = error.raw_os_error() {
-        return code == libc::EXDEV
-            || code == libc::ENOTTY
-            || code == libc::EOPNOTSUPP
-            || code == libc::ENOTSUP
-            || code == libc::ENOSYS
-            || code == libc::EINVAL;
+        return [
+            libc::EXDEV,
+            libc::ENOTTY,
+            libc::EOPNOTSUPP,
+            libc::ENOTSUP,
+            libc::ENOSYS,
+            libc::EINVAL,
+        ]
+        .contains(&code);
     }
     #[cfg(windows)]
     if let Some(code) = error.raw_os_error() {
@@ -561,40 +558,9 @@ fn clone_tree(
 }
 
 // Publication must not replace an entry created after the collision check.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+// `std::fs::rename` would replace an existing file on Windows.
 fn publish(source: &Path, destination: &Path) -> Result<()> {
-    use std::ffi::CString;
-    use std::os::unix::ffi::OsStrExt;
-    let source = CString::new(source.as_os_str().as_bytes())?;
-    let destination = CString::new(destination.as_os_str().as_bytes())?;
-    #[cfg(target_os = "linux")]
-    let result = unsafe {
-        libc::renameat2(
-            libc::AT_FDCWD,
-            source.as_ptr(),
-            libc::AT_FDCWD,
-            destination.as_ptr(),
-            libc::RENAME_NOREPLACE,
-        )
-    };
-    #[cfg(target_os = "macos")]
-    let result =
-        unsafe { libc::renamex_np(source.as_ptr(), destination.as_ptr(), libc::RENAME_EXCL) };
-    if result != 0 {
-        return Err(io::Error::last_os_error()).context("publish without replacement");
-    }
-    Ok(())
-}
-
-#[cfg(windows)]
-fn publish(source: &Path, destination: &Path) -> Result<()> {
-    // Windows MoveFile (used by std::fs::rename) does not replace a directory.
-    fs::rename(source, destination).context("publish without replacement")
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-fn publish(_source: &Path, _destination: &Path) -> Result<()> {
-    bail!("atomic no-replace publication is unsupported on this platform")
+    crate::recovery::rename_exclusive(source, destination).context("publish without replacement")
 }
 
 fn source_contents(checkout: &Path) -> Result<String> {
@@ -618,21 +584,29 @@ fn stage_tree(
     fs::create_dir(&tree)?;
     let mut transfer = Transfer::default();
     clone_tree(source, &tree, force_copy, check, &mut transfer)?;
-    // An empty install has no regular file to exercise the native backend.
-    if !force_copy && transfer.cloned_files == 0 {
-        let mut source = tempfile::NamedTempFile::new_in(source_probe_dir)?;
-        source.write_all(b"git-graft layer probe")?;
-        let probe = tempfile::tempdir_in(staging)?;
-        transfer_file(
-            source.path(),
-            &probe.path().join("clone"),
-            0,
-            false,
-            &mut Transfer::default(),
-            crate::storage::clone_file,
-        )?;
+    if !force_copy {
+        probe_if_empty(source_probe_dir, staging, &transfer)?;
     }
     Ok(transfer)
+}
+
+/// An empty install has no regular file to exercise the native backend, so
+/// prove that a probe clones from `source_dir` into `stage_dir` instead.
+fn probe_if_empty(source_dir: &Path, stage_dir: &Path, transfer: &Transfer) -> Result<()> {
+    if transfer.cloned_files > 0 {
+        return Ok(());
+    }
+    let mut source = tempfile::NamedTempFile::new_in(source_dir)?;
+    source.write_all(b"git-graft layer probe")?;
+    let probe = tempfile::tempdir_in(stage_dir)?;
+    transfer_file(
+        source.path(),
+        &probe.path().join("clone"),
+        0,
+        false,
+        &mut Transfer::default(),
+        crate::storage::clone_file,
+    )
 }
 
 fn save_layer(
@@ -793,6 +767,41 @@ mod tests {
         Ok(out)
     }
 
+    fn mkfifo(path: &Path) -> Result<()> {
+        use std::os::unix::ffi::OsStrExt;
+        let name = std::ffi::CString::new(path.as_os_str().as_bytes())?;
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    fn set_xattr(path: &std::ffi::CStr, name: &std::ffi::CStr, value: &[u8]) {
+        let result = unsafe {
+            libc::setxattr(
+                path.as_ptr(),
+                name.as_ptr(),
+                value.as_ptr().cast(),
+                value.len(),
+                0,
+                0,
+            )
+        };
+        assert_eq!(result, 0);
+    }
+
+    #[cfg(target_os = "macos")]
+    fn xattr_len(path: &std::ffi::CStr, name: &std::ffi::CStr) -> isize {
+        unsafe { libc::getxattr(path.as_ptr(), name.as_ptr(), std::ptr::null_mut(), 0, 0, 0) }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn remove_xattr(path: &std::ffi::CStr, name: &std::ffi::CStr) {
+        assert_eq!(
+            unsafe { libc::removexattr(path.as_ptr(), name.as_ptr(), 0) },
+            0
+        );
+    }
+
     #[test]
     fn installed_layer_reuses_cow_and_rejects_unsafe_inputs() -> Result<()> {
         if Command::new("npm").arg("--version").output().is_err() {
@@ -888,12 +897,7 @@ mod tests {
         assert!(run(&a, &state, "save", "node-toolchain", true).is_err());
         fs::remove_file(embedded)?;
         let fifo = a.join("node_modules/special");
-        {
-            use std::ffi::CString;
-            use std::os::unix::ffi::OsStrExt;
-            let name = CString::new(fifo.as_os_str().as_bytes())?;
-            assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
-        }
+        mkfifo(&fifo)?;
         assert!(run(&a, &state, "save", "node-toolchain", true).is_err());
         assert!(fifo.exists());
         fs::remove_file(fifo)?;
@@ -927,35 +931,14 @@ mod tests {
         fs::remove_file(extra)?;
         #[cfg(target_os = "macos")]
         {
-            use std::ffi::CString;
             use std::os::unix::ffi::OsStrExt;
-            let path = CString::new(cached.as_os_str().as_bytes())?;
+            let path = std::ffi::CString::new(cached.as_os_str().as_bytes())?;
             let name = c"com.git-graft.private";
-            assert_eq!(
-                unsafe {
-                    libc::setxattr(
-                        path.as_ptr(),
-                        name.as_ptr(),
-                        b"secret".as_ptr().cast(),
-                        6,
-                        0,
-                        0,
-                    )
-                },
-                0
-            );
+            set_xattr(&path, name, b"secret");
             assert!(verify_layer(generation, digest).is_err());
             assert!(run(&a, &state, "forget", "node-toolchain", false).is_err());
-            assert_eq!(
-                unsafe {
-                    libc::getxattr(path.as_ptr(), name.as_ptr(), std::ptr::null_mut(), 0, 0, 0)
-                },
-                6
-            );
-            assert_eq!(
-                unsafe { libc::removexattr(path.as_ptr(), name.as_ptr(), 0) },
-                0
-            );
+            assert_eq!(xattr_len(&path, name), 6);
+            remove_xattr(&path, name);
         }
         fs::write(&cached, "tampered")?;
         assert!(run(&b, &state, "restore", "node-toolchain", true).is_err());
@@ -977,12 +960,7 @@ mod tests {
         fs::write(b.join("package.json"), "{}")?;
         assert!(run(&b, &state, "forget", "node-toolchain", false).is_err());
         let cached_special = cached.parent().unwrap().join("special");
-        {
-            use std::ffi::CString;
-            use std::os::unix::ffi::OsStrExt;
-            let name = CString::new(cached_special.as_os_str().as_bytes())?;
-            assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
-        }
+        mkfifo(&cached_special)?;
         assert!(run(&a, &state, "forget", "node-toolchain", false).is_err());
         assert!(cached_special.exists());
         assert!(cached.exists());
@@ -1007,118 +985,48 @@ mod tests {
         let file = source.join("file");
         fs::write(&file, "data")?;
         let path = CString::new(file.as_os_str().as_bytes())?;
+        let clone = || {
+            clone_tree(
+                &source,
+                &destination,
+                false,
+                check_metadata,
+                &mut Transfer::default(),
+            )
+        };
+        let assert_rejected = || {
+            assert!(inspect(&source, None, check_metadata).is_err());
+            assert!(clone().is_err());
+            assert!(!destination.join("file").exists());
+        };
         let name = c"com.git-graft.test";
-        assert_eq!(
-            unsafe {
-                libc::setxattr(
-                    path.as_ptr(),
-                    name.as_ptr(),
-                    b"private".as_ptr().cast(),
-                    7,
-                    0,
-                    0,
-                )
-            },
-            0
-        );
-        assert!(inspect(&source, None, check_metadata).is_err());
-        assert!(
-            clone_tree(
-                &source,
-                &destination,
-                false,
-                check_metadata,
-                &mut Transfer::default()
-            )
-            .is_err()
-        );
-        assert!(!destination.join("file").exists());
-        assert_eq!(
-            unsafe { libc::removexattr(path.as_ptr(), name.as_ptr(), 0) },
-            0
-        );
+        set_xattr(&path, name, b"private");
+        assert_rejected();
+        remove_xattr(&path, name);
         let fork = c"com.apple.ResourceFork";
-        assert_eq!(
-            unsafe {
-                libc::setxattr(
-                    path.as_ptr(),
-                    fork.as_ptr(),
-                    b"private fork".as_ptr().cast(),
-                    12,
-                    0,
-                    0,
-                )
-            },
-            0
-        );
-        assert!(inspect(&source, None, check_metadata).is_err());
-        assert!(
-            clone_tree(
-                &source,
-                &destination,
-                false,
-                check_metadata,
-                &mut Transfer::default()
-            )
-            .is_err()
-        );
-        assert!(!destination.join("file").exists());
-        assert_eq!(
-            unsafe { libc::removexattr(path.as_ptr(), fork.as_ptr(), 0) },
-            0
-        );
+        set_xattr(&path, fork, b"private fork");
+        assert_rejected();
+        remove_xattr(&path, fork);
         let user = command(root.path(), "id", &["-un"])?;
         let user = std::str::from_utf8(&user.stdout)?.trim();
         let acl = format!("{user} allow read");
         command(root.path(), "chmod", &["+a", &acl, file.to_str().unwrap()])?;
-        assert!(inspect(&source, None, check_metadata).is_err());
-        assert!(
-            clone_tree(
-                &source,
-                &destination,
-                false,
-                check_metadata,
-                &mut Transfer::default()
-            )
-            .is_err()
-        );
-        assert!(!destination.join("file").exists());
+        assert_rejected();
         command(root.path(), "chmod", &["-N", file.to_str().unwrap()])?;
         fs::set_permissions(&file, fs::Permissions::from_mode(0o1755))?;
         if fs::metadata(&file)?.permissions().mode() & 0o7000 != 0 {
             assert!(inspect(&source, None, check_metadata).is_err());
         }
         fs::set_permissions(&file, fs::Permissions::from_mode(0o755))?;
-        clone_tree(
-            &source,
-            &destination,
-            false,
-            check_metadata,
-            &mut Transfer::default(),
-        )?;
+        clone()?;
         assert_eq!(
             inspect(&source, None, check_metadata)?,
             inspect(&destination, None, check_metadata)?
         );
         let cloned = CString::new(destination.join("file").as_os_str().as_bytes())?;
-        assert_eq!(
-            unsafe {
-                libc::setxattr(
-                    cloned.as_ptr(),
-                    name.as_ptr(),
-                    b"private".as_ptr().cast(),
-                    7,
-                    0,
-                    0,
-                )
-            },
-            0
-        );
+        set_xattr(&cloned, name, b"private");
         assert!(inspect(&destination, None, check_metadata).is_err());
-        assert_eq!(
-            unsafe { libc::getxattr(path.as_ptr(), name.as_ptr(), std::ptr::null_mut(), 0, 0, 0) },
-            -1
-        );
+        assert_eq!(xattr_len(&path, name), -1);
         Ok(())
     }
 
@@ -1146,21 +1054,12 @@ mod tests {
             io::ErrorKind::Unsupported,
             "unsupported"
         )));
-        assert!(clone_unsupported(&io::Error::from_raw_os_error(
-            libc::EXDEV
-        )));
-        assert!(clone_unsupported(&io::Error::from_raw_os_error(
-            libc::EOPNOTSUPP
-        )));
-        assert!(clone_unsupported(&io::Error::from_raw_os_error(
-            libc::ENOTTY
-        )));
-        assert!(!clone_unsupported(&io::Error::from_raw_os_error(
-            libc::EACCES
-        )));
-        assert!(!clone_unsupported(&io::Error::from_raw_os_error(
-            libc::ENOSPC
-        )));
+        for code in [libc::EXDEV, libc::EOPNOTSUPP, libc::ENOTTY] {
+            assert!(clone_unsupported(&io::Error::from_raw_os_error(code)));
+        }
+        for code in [libc::EACCES, libc::ENOSPC] {
+            assert!(!clone_unsupported(&io::Error::from_raw_os_error(code)));
+        }
     }
 
     #[test]

@@ -31,6 +31,11 @@ enum Kind {
     History,
 }
 
+/// A purge report entry for a path left in place.
+fn failure(path: &Path, error: &anyhow::Error) -> Value {
+    json!({"path": path, "reason": api::error_json(error)})
+}
+
 pub(crate) fn purge_caches(p: &Project, apply: bool) -> Result<Value> {
     // A legacy workspace may still use these shared caches. Treat its registry
     // as opaque and retain the caches if there are records or ownership is unclear.
@@ -63,8 +68,8 @@ pub(crate) fn purge_caches(p: &Project, apply: bool) -> Result<Value> {
         Ok(None) => (),
         Err(error) => {
             let path = p.state.join(HISTORY_CACHE_DIR);
-            directories.push(path.clone());
-            blocked.push(json!({"path":path,"reason":api::error_json(&error)}));
+            blocked.push(failure(&path, &error));
+            directories.push(path);
         }
     }
     match layer::registered_install_root(p) {
@@ -72,8 +77,8 @@ pub(crate) fn purge_caches(p: &Project, apply: bool) -> Result<Value> {
         Ok(None) => (),
         Err(error) => {
             let path = p.state.join(layer::REGISTERED_INSTALL_DIR);
-            directories.push(path.clone());
-            blocked.push(json!({"path":path,"reason":api::error_json(&error)}));
+            blocked.push(failure(&path, &error));
+            directories.push(path);
         }
     }
     for (kind, directory) in groups {
@@ -96,7 +101,7 @@ pub(crate) fn purge_caches(p: &Project, apply: bool) -> Result<Value> {
         let container = match inspect_container() {
             Ok(identity) => identity,
             Err(error) => {
-                blocked.push(json!({"path":directory,"reason":api::error_json(&error)}));
+                blocked.push(failure(&directory, &error));
                 continue;
             }
         };
@@ -112,7 +117,7 @@ pub(crate) fn purge_caches(p: &Project, apply: bool) -> Result<Value> {
         {
             Ok(entries) => entries,
             Err(error) => {
-                blocked.push(json!({"path":directory,"reason":api::error_json(&error.into())}));
+                blocked.push(failure(&directory, &error.into()));
                 continue;
             }
         };
@@ -133,7 +138,7 @@ pub(crate) fn purge_caches(p: &Project, apply: bool) -> Result<Value> {
                 .is_some_and(|name| name.starts_with(cache::QUARANTINE_PREFIX))
             {
                 let reason = anyhow::anyhow!("earlier cache quarantine retained for inspection");
-                retained.push(json!({"path":path,"reason":api::error_json(&reason)}));
+                retained.push(failure(&path, &reason));
                 continue;
             }
             let verify = |candidate: &Path| -> Result<Verified> {
@@ -183,7 +188,7 @@ pub(crate) fn purge_caches(p: &Project, apply: bool) -> Result<Value> {
             let (identity, verified) = match result {
                 Ok(value) => value,
                 Err(error) => {
-                    blocked.push(json!({"path":path,"reason":api::error_json(&error)}));
+                    blocked.push(failure(&path, &error));
                     continue;
                 }
             };
@@ -197,7 +202,7 @@ pub(crate) fn purge_caches(p: &Project, apply: bool) -> Result<Value> {
                 }) {
                     Ok(()) => removed.push(path.clone()),
                     Err(PurgeFailure::Unmoved(error)) => {
-                        blocked.push(json!({"path":path,"reason":api::error_json(&error)}));
+                        blocked.push(failure(&path, &error));
                         continue;
                     }
                     Err(PurgeFailure::Retained { path: moved, error }) => {

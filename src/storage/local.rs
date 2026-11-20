@@ -131,13 +131,15 @@ fn materialize_with<F: FnOnce() -> Result<()>>(
     };
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
-    let planned = direct::plan(&checkout, &oid, sparse, files, state, primary, sizes)?;
-    crate::trace::mark("checkout: plan donors");
-    let receipt = match planned {
-        Ok(plan) => direct::install(&checkout, &oid, files, plan, ready)?,
-        Err(reason) => {
-            ready()?;
-            checkout.native(&oid, sparse, files, reason)?
+    let receipt = {
+        let planned = direct::plan(&checkout, &oid, sparse, files, state, primary, sizes)?;
+        crate::trace::mark("checkout: plan donors");
+        match planned {
+            Ok(plan) => direct::install(&checkout, &oid, files, plan, ready)?,
+            Err(reason) => {
+                ready()?;
+                checkout.native(&oid, sparse, files, reason)?
+            }
         }
     };
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]

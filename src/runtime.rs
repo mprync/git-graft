@@ -23,11 +23,9 @@ impl Runtime {
     /// A workspace keeps its build outputs across moves, archival and restoration.
     pub(crate) fn new(workspace: &Path, state: &Path, port: u16, id: &str) -> Result<Self> {
         let id = uuid::Uuid::parse_str(id)?.to_string();
-        let parent = state.join("workspaces").join("runtime");
-        let private = parent.join(id);
         Ok(Self {
             workspace: workspace.canonicalize()?,
-            private,
+            private: state.join("workspaces").join("runtime").join(id),
             cache: state.join("cache"),
             port,
         })
@@ -147,16 +145,21 @@ fn capture(mut reader: impl Read) -> io::Result<(String, bool)> {
     Ok((String::from_utf8_lossy(&retained).into_owned(), truncated))
 }
 
+/// The file name of a native executable on this platform.
+fn executable(name: &str) -> String {
+    if cfg!(windows) {
+        format!("{name}.exe")
+    } else {
+        name.to_owned()
+    }
+}
+
 fn on_path(name: &str) -> bool {
     let Some(path) = std::env::var_os("PATH") else {
         return false;
     };
-    let executable = if cfg!(windows) {
-        format!("{name}.exe")
-    } else {
-        name.to_owned()
-    };
-    std::env::split_paths(&path).any(|dir| dir.join(&executable).is_file())
+    let file = executable(name);
+    std::env::split_paths(&path).any(|dir| dir.join(&file).is_file())
 }
 
 /// Construct npm without relying on Windows batch-file command parsing.
@@ -276,28 +279,20 @@ impl Runtime {
             bail!("package names must be nonempty and cannot begin with '-'");
         }
         managers::validate(self, manager)?;
-        let adding = !packages.is_empty();
-        let mut args: Vec<String> = match (manager, adding) {
-            ("npm", false) => vec!["ci".into()],
-            ("npm", true) => vec!["install".into()],
-            ("pnpm", false) => vec![
-                "install".into(),
-                "--frozen-lockfile".into(),
-                "--package-import-method=clone-or-copy".into(),
-            ],
-            ("pnpm", true) => vec!["add".into(), "--package-import-method=clone-or-copy".into()],
-            ("bun", false) => vec![
-                "install".into(),
-                "--frozen-lockfile".into(),
-                "--backend=copyfile".into(),
-            ],
-            ("bun", true) => vec!["add".into(), "--backend=copyfile".into()],
-            ("uv", false) => vec!["sync".into(), "--locked".into()],
-            ("uv", true) => vec!["add".into()],
-            ("cargo", false) => vec!["fetch".into(), "--locked".into()],
-            ("cargo", true) => vec!["add".into()],
+        let pnpm_import = "--package-import-method=clone-or-copy";
+        let subcommand: &[&str] = match (manager, !packages.is_empty()) {
+            ("npm", false) => &["ci"],
+            ("npm", true) => &["install"],
+            ("pnpm", false) => &["install", "--frozen-lockfile", pnpm_import],
+            ("pnpm", true) => &["add", pnpm_import],
+            ("bun", false) => &["install", "--frozen-lockfile", "--backend=copyfile"],
+            ("bun", true) => &["add", "--backend=copyfile"],
+            ("uv", false) => &["sync", "--locked"],
+            ("cargo", false) => &["fetch", "--locked"],
+            ("uv" | "cargo", true) => &["add"],
             _ => bail!("unsupported package manager: {manager}"),
         };
+        let mut args: Vec<String> = subcommand.iter().map(|arg| arg.to_string()).collect();
         if offline {
             args.push("--offline".into());
         }
@@ -358,15 +353,13 @@ mod tests {
             .env("GIT_GRAFT_LEASE", "secret");
         runtime.configure(&mut cmd)?;
         let envs: std::collections::HashMap<_, _> = cmd.get_envs().collect();
-        assert_eq!(envs.get(std::ffi::OsStr::new("GIT_DIR")), Some(&None));
-        assert_eq!(envs.get(std::ffi::OsStr::new("GIT_WORK_TREE")), Some(&None));
+        let env = |name: &str| envs.get(std::ffi::OsStr::new(name)).copied();
+        for removed in ["GIT_DIR", "GIT_WORK_TREE", "GIT_GRAFT_LEASE"] {
+            assert_eq!(env(removed), Some(None), "{removed}");
+        }
         assert_eq!(
-            envs.get(std::ffi::OsStr::new("GIT_GRAFT_LEASE")),
-            Some(&None)
-        );
-        assert_eq!(
-            envs.get(std::ffi::OsStr::new("UV_LINK_MODE")),
-            Some(&Some(std::ffi::OsStr::new("copy")))
+            env("UV_LINK_MODE"),
+            Some(Some(std::ffi::OsStr::new("copy")))
         );
         Ok(())
     }

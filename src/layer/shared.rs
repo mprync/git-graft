@@ -4,8 +4,9 @@
 
 use super::registered::{INSTALL_PATH_NOT_IGNORED, require_ignored};
 use super::{
-    Transfer, check_metadata, entry_exists, exact_digest, field, layer_provenance, restore_layer,
-    safe_link, save_layer, source_contents, valid_digest, verify_layer_contents,
+    LOCKS, TRACKED_STATUS, Transfer, check_metadata, entry_exists, exact_digest, field,
+    layer_provenance, restore_layer, safe_link, save_layer, small_file, source_contents,
+    valid_digest, verify_layer_contents,
 };
 use crate::{api::Fault, git, registry, storage};
 use anyhow::{Context, Result, ensure};
@@ -13,8 +14,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
-    fs::{self, File},
-    io::{Read, Seek, Write},
+    fs,
+    io::{Seek, Write},
     path::{Path, PathBuf},
     process::Stdio,
 };
@@ -24,14 +25,6 @@ mod npm;
 
 const MARKER: &str = "shared-layer.json";
 const MANIFEST: &str = "package.json";
-const LOCKS: &[&str] = &[
-    "package-lock.json",
-    "npm-shrinkwrap.json",
-    "pnpm-lock.yaml",
-    "yarn.lock",
-    "bun.lock",
-    "bun.lockb",
-];
 // Pin project configuration and common toolchain selectors. The caller attests
 // to other installation inputs, including environment and user/global config.
 const CONFIGS: &[&str] = &[
@@ -63,11 +56,7 @@ struct Active {
 
 impl Active {
     fn existing(path: &Path) -> Result<Option<Self>> {
-        if entry_exists(path)? {
-            Self::read(path).map(Some)
-        } else {
-            Ok(None)
-        }
+        entry_exists(path)?.then(|| Self::read(path)).transpose()
     }
 
     fn read(path: &Path) -> Result<Self> {
@@ -112,15 +101,7 @@ impl Active {
 }
 
 fn small_regular_file(path: &Path) -> Result<Vec<u8>> {
-    let metadata = fs::symlink_metadata(path)?;
-    ensure!(
-        metadata.is_file() && !registry::is_reparse_point(&metadata) && metadata.len() <= 1024,
-        "invalid shared layer state file"
-    );
-    let mut bytes = Vec::new();
-    File::open(path)?.take(1025).read_to_end(&mut bytes)?;
-    ensure!(bytes.len() <= 1024, "invalid shared layer state file");
-    Ok(bytes)
+    small_file(path, "invalid shared layer state file", |_, _| Ok(()))
 }
 
 fn private_state(state: &Path) -> Result<()> {
@@ -258,19 +239,7 @@ impl Inputs {
         }
         ensure!(blobs.len() == names.len(), "install inputs must be tracked");
         ensure!(
-            git::bytes(
-                checkout,
-                &[
-                    "--no-optional-locks",
-                    "-c",
-                    "core.fsmonitor=false",
-                    "status",
-                    "--porcelain=v1",
-                    "--untracked-files=no",
-                    "--ignore-submodules=none",
-                ]
-            )?
-            .is_empty(),
+            git::bytes(checkout, TRACKED_STATUS)?.is_empty(),
             "shared layers require clean tracked source and index"
         );
 
@@ -569,6 +538,7 @@ fn exclusive_regular_file(path: &Path, metadata: &fs::Metadata) -> Result<()> {
 mod tests {
     use super::*;
     use crate::registry::Project;
+    use std::fs::File;
     use std::os::unix::fs::{MetadataExt, symlink};
     use tempfile::{TempDir, tempdir};
 
@@ -596,6 +566,21 @@ mod tests {
         git::bytes(&repo, &["commit", "-qm", "fixture"])?;
         let (project, lock) = Project::open(&repo)?;
         Ok((root, project, lock))
+    }
+
+    /// Seed the primary's shared layer, or return None without native copy-on-write.
+    fn seed_unless_cow_unavailable(project: &Project) -> Result<Option<Value>> {
+        match seed_shared(&project.repo, &project.state, KEY) {
+            Ok(receipt) => Ok(Some(receipt)),
+            Err(error)
+                if error
+                    .downcast_ref::<Fault>()
+                    .is_some_and(|e| e.code == "cow_unavailable") =>
+            {
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     fn clone_checkout(repo: &Path, state: &Path, checkout: &Path) -> Result<()> {
@@ -695,18 +680,10 @@ mod tests {
         assert_eq!(fs::read(installed.join("payload"))?, b"installed");
         fs::remove_dir_all(&installed)?;
 
-        let registered = match seed_shared(repo, state, KEY) {
-            Ok(receipt) => receipt,
-            Err(error)
-                if error
-                    .downcast_ref::<Fault>()
-                    .is_some_and(|e| e.code == "cow_unavailable") =>
-            {
-                assert!(inherit_shared(&workspace, state, repo)?.is_none());
-                assert!(!installed.exists());
-                return Ok(());
-            }
-            Err(error) => return Err(error),
+        let Some(registered) = seed_unless_cow_unavailable(&project)? else {
+            assert!(inherit_shared(&workspace, state, repo)?.is_none());
+            assert!(!installed.exists());
+            return Ok(());
         };
         assert_eq!(
             inherit_shared(&workspace, state, &workspace)?.unwrap()["reason"],
@@ -762,18 +739,10 @@ mod tests {
         fs::write(primary_modules.join("payload"), b"installed")?;
         symlink("payload", primary_modules.join("local-link"))?;
 
-        let first = match seed_shared(repo, state, KEY) {
-            Ok(receipt) => receipt,
-            Err(error)
-                if error
-                    .downcast_ref::<Fault>()
-                    .is_some_and(|e| e.code == "cow_unavailable") =>
-            {
-                assert!(!entry_exists(&state.join(MARKER))?);
-                assert_eq!(fs::read_dir(state.join("layers"))?.count(), 1);
-                return Ok(());
-            }
-            Err(error) => return Err(error),
+        let Some(first) = seed_unless_cow_unavailable(&project)? else {
+            assert!(!entry_exists(&state.join(MARKER))?);
+            assert_eq!(fs::read_dir(state.join("layers"))?.count(), 1);
+            return Ok(());
         };
         assert_eq!(first["status"], "registered");
         assert_eq!(first["copied_bytes"], 0);

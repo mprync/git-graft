@@ -56,28 +56,15 @@ fn branch_ref(repo: &Path, branch: &str) -> Result<String> {
 fn branch_tip(repo: &Path, reference: &str) -> Result<String> {
     // Matching the actual ref name avoids bypassing worktree occupancy on
     // case-insensitive filesystems where a differently cased name may resolve.
-    let refs = git::text(
-        repo,
-        &[
-            "for-each-ref",
-            "--format=%(refname)%00%(objectname)%00%(symref)",
-            reference,
-        ],
-    )?;
-    for row in refs.lines() {
-        if let Some((name, values)) = row.split_once('\0')
-            && name == reference
-        {
-            let (oid, symbolic) = values
-                .split_once('\0')
-                .context("missing destination ref fields")?;
-            if !symbolic.is_empty() {
-                bail!("destination must be a direct local branch: {reference}");
-            }
-            return Ok(checked_oid(oid)?.to_owned());
-        }
-    }
-    bail!("destination local branch does not exist: {reference}");
+    let Some((oid, symbolic)) = recovery::listed_ref(repo, reference)? else {
+        bail!("destination local branch does not exist: {reference}");
+    };
+    ensure!(
+        symbolic.is_empty(),
+        "destination must be a direct local branch: {reference}"
+    );
+    checked_oid(&oid)?;
+    Ok(oid)
 }
 
 fn is_ancestor(repo: &Path, older: &str, newer: &str) -> Result<bool> {
@@ -441,11 +428,8 @@ pub(crate) fn prepare_with_import(
         tip.clone()
     } else {
         let tree = merged_tree(repo, objects, state, &old, &tip, options)?;
-        let message = if options.squash {
-            format!("Squash graft workspace {} into {target}", options.name)
-        } else {
-            format!("Merge graft workspace {} into {target}", options.name)
-        };
+        let verb = if options.squash { "Squash" } else { "Merge" };
+        let message = format!("{verb} graft workspace {} into {target}", options.name);
         let mut args = vec!["--no-replace-objects", "commit-tree", &tree, "-p", &old];
         if !options.squash {
             args.extend(["-p", &tip]);
@@ -457,8 +441,7 @@ pub(crate) fn prepare_with_import(
         if !output.status.success() {
             return Err(git_failure("create landing commit", &output));
         }
-        let oid = String::from_utf8(output.stdout)?;
-        oid.trim_end().to_owned()
+        String::from_utf8(output.stdout)?.trim_end().to_owned()
     };
     checked_oid(&new)?;
     Ok(Plan {

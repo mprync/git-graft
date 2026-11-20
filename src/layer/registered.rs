@@ -42,20 +42,7 @@ fn check_ignore(command: &mut Command, directory: &str) -> Result<bool> {
 }
 
 fn copy_ignore_file(source: &Path, target: &Path) -> Result<()> {
-    let mut options = fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt;
-        use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
-        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
-    }
-    let mut file = options.open(source)?;
+    let mut file = crate::cache::open_no_follow(source)?;
     let metadata = file.metadata()?;
     ensure!(
         metadata.is_file() && !crate::registry::is_reparse_point(&metadata),
@@ -84,13 +71,7 @@ pub(super) fn install_path_ignored(checkout: &Path, directory: &str) -> Result<b
     // rules about descendants. Older versions can match descendant globs on
     // a trailing slash. Use this checkout's Git configuration and excludes,
     // with only the per-directory rules needed to examine the empty path.
-    let mut builder = tempfile::Builder::new();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        builder.permissions(fs::Permissions::from_mode(0o700));
-    }
-    let preview = builder.prefix("graft-ignore-").tempdir()?;
+    let preview = crate::cache::private_stage(&std::env::temp_dir(), "graft-ignore-")?;
     let mut ancestors = path.ancestors().skip(1).collect::<Vec<_>>();
     ancestors.reverse();
     for relative in ancestors {
@@ -201,7 +182,11 @@ pub(crate) use native::{
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod native {
     use super::*;
-    use crate::{api::Fault, cache, registry};
+    use crate::{
+        api::Fault,
+        cache::{self, private_stage},
+        registry,
+    };
     use anyhow::{Context, bail, ensure};
     use serde::{Deserialize, Serialize};
     #[cfg(target_os = "linux")]
@@ -214,7 +199,7 @@ mod native {
             fd::{AsRawFd, FromRawFd, IntoRawFd},
             unix::{
                 ffi::{OsStrExt, OsStringExt},
-                fs::{MetadataExt, PermissionsExt, symlink},
+                fs::{MetadataExt, symlink},
             },
         },
         path::Component,
@@ -223,7 +208,7 @@ mod native {
 
     use super::super::{
         Transfer, check_cache_metadata, clone_unsupported, entry_exists, field, inspect,
-        layer_provenance_for, transfer_file, valid_digest,
+        layer_provenance_for, probe_if_empty, transfer_file, valid_digest,
     };
 
     const TREE: &str = "tree";
@@ -429,13 +414,6 @@ mod native {
             Err(e) => return Err(e).context("publish private install store"),
         }
         registered_install_root(p)?.context("missing private install store")
-    }
-
-    fn private_stage(root: &Path, prefix: &str) -> Result<tempfile::TempDir> {
-        Ok(tempfile::Builder::new()
-            .prefix(prefix)
-            .permissions(fs::Permissions::from_mode(0o700))
-            .tempdir_in(root)?)
     }
 
     #[derive(PartialEq, Eq)]
@@ -938,22 +916,6 @@ mod native {
         )?)?)
     }
 
-    fn probe_if_empty(root: &Path, transfer: &Transfer) -> Result<()> {
-        if transfer.cloned_files == 0 {
-            let source = tempfile::NamedTempFile::new_in(root)?;
-            let stage = tempfile::tempdir_in(root)?;
-            transfer_file(
-                source.path(),
-                &stage.path().join("probe"),
-                0,
-                false,
-                &mut Transfer::default(),
-                crate::storage::clone_file,
-            )?;
-        }
-        Ok(())
-    }
-
     /// Captures a generation under the caller's project and checkout locks.
     pub(crate) fn seed_registered(
         p: &Project,
@@ -989,7 +951,7 @@ mod native {
         );
         let mut transfer = Transfer::default();
         let installed = snapshot(&source, &src, Some(&tree), &mut transfer)?;
-        probe_if_empty(&root, &transfer)?;
+        probe_if_empty(&root, &root, &transfer)?;
         let contents = verify_tree(&tree, Some(git::path_str(checkout)?.as_bytes()))?;
         if checkout != p.repo {
             verify_tree(&tree, Some(git::path_str(&p.repo)?.as_bytes()))?;
@@ -1137,19 +1099,18 @@ mod native {
                 return Ok(status(spec, "unavailable", "cow_unavailable"));
             }
             let first = stage.path().join("install");
-            let tree = first.join(&destination.deeper);
             // Joining an empty path can add a trailing slash to the staged name.
             let tree = if destination.deeper.as_os_str().is_empty() {
                 first.clone()
             } else {
-                tree
+                first.join(&destination.deeper)
             };
             fs::create_dir_all(&tree)?;
             let mut transfer = Transfer::default();
             let cached_path = generation.join(TREE);
             let source = Dir::absolute(&root)?.path(&Path::new(&before.digest).join(TREE))?;
             let stamp = snapshot(&source, &cached_path, Some(&tree), &mut transfer)?;
-            probe_if_empty(&root, &transfer)?;
+            probe_if_empty(&root, &root, &transfer)?;
             ensure!(
                 stamp == binding.stamp && verify_tree(&tree, None)? == binding.contents,
                 "install copy failed integrity verification"

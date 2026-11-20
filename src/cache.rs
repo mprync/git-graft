@@ -99,7 +99,8 @@ fn private_directory(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn private_stage(parent: &Path, prefix: &str) -> Result<tempfile::TempDir> {
+/// Create a temporary directory that only the current user can enter.
+pub(crate) fn private_stage(parent: &Path, prefix: &str) -> Result<tempfile::TempDir> {
     let mut builder = tempfile::Builder::new();
     builder.prefix(prefix);
     #[cfg(unix)]
@@ -116,7 +117,9 @@ fn owner_record(project: &Project, package: &str) -> PathBuf {
         .join(format!("package-cache-{package}-v1.json"))
 }
 
-pub(crate) fn read_private_file(path: &Path, limit: u64) -> Result<Vec<u8>> {
+/// Open an entry for reading without following a final symlink or reparse point,
+/// and without blocking on a FIFO. Callers must check the opened file's type.
+pub(crate) fn open_no_follow(path: &Path) -> std::io::Result<fs::File> {
     let mut options = fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -130,7 +133,11 @@ pub(crate) fn read_private_file(path: &Path, limit: u64) -> Result<Vec<u8>> {
         use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
         options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
     }
-    let file = options.open(path)?;
+    options.open(path)
+}
+
+pub(crate) fn read_private_file(path: &Path, limit: u64) -> Result<Vec<u8>> {
+    let file = open_no_follow(path)?;
     let metadata = file.metadata()?;
     ensure!(
         metadata.is_file() && !is_reparse_point(&metadata) && metadata.len() <= limit,

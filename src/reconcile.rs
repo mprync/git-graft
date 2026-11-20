@@ -59,13 +59,6 @@ fn git(
     String::from_utf8(output.stdout).context("git output is not UTF-8")
 }
 
-fn oid(s: &str) -> Result<()> {
-    if !(s.len() == 40 || s.len() == 64) || !s.bytes().all(|c| c.is_ascii_hexdigit()) {
-        bail!("expected a full object ID");
-    }
-    Ok(())
-}
-
 fn read_json(repo: &Path, objects: Option<&Path>, commit: &str, path: &str) -> Result<Value> {
     let entry = git(repo, objects, &["ls-tree", commit, "--", path], None, None)?;
     if !entry.starts_with("100644 blob ") || !entry.trim_end().ends_with(&format!("\t{path}")) {
@@ -127,16 +120,21 @@ fn without_deps(v: &Value) -> Result<Value> {
 }
 
 fn merge_additions(base: &Value, ours: &Value, theirs: &Value) -> Result<Value> {
-    if [base, ours, theirs].iter().any(|v| {
-        v.get("workspaces").is_some()
-            || v.get("peerDependencies").is_some()
-            || v.get("bundleDependencies").is_some()
-            || v.get("bundledDependencies").is_some()
-            || v.get("overrides").is_some()
-    }) {
+    let unsupported = [
+        "workspaces",
+        "peerDependencies",
+        "bundleDependencies",
+        "bundledDependencies",
+        "overrides",
+    ];
+    if [base, ours, theirs]
+        .iter()
+        .any(|v| unsupported.iter().any(|key| v.get(key).is_some()))
+    {
         bail!("workspaces, peers, bundled dependencies and overrides are unsupported");
     }
-    if without_deps(base)? != without_deps(ours)? || without_deps(base)? != without_deps(theirs)? {
+    let common = without_deps(base)?;
+    if common != without_deps(ours)? || common != without_deps(theirs)? {
         bail!("non-dependency manifest changes are unsupported");
     }
     let base_deps = deps(base)?;
@@ -234,17 +232,18 @@ fn merge_lock(
         validate_lock(lock, manifest)?;
     }
     let mut result = object(base)?.clone();
-    let mut result_packages = object(base.get("packages").context("missing packages")?)?.clone();
+    let base_packages = object(base.get("packages").context("missing packages")?)?;
+    let mut result_packages = base_packages.clone();
     let root = merge_additions(
         &result_packages[""],
         &ours["packages"][""],
         &theirs["packages"][""],
     )?;
+    let mut base_meta = result.clone();
+    base_meta.remove("packages");
     for side in [ours, theirs] {
         let mut meta = object(side)?.clone();
         meta.remove("packages");
-        let mut base_meta = object(base)?.clone();
-        base_meta.remove("packages");
         if meta != base_meta {
             bail!("lockfile metadata changed");
         }
@@ -252,7 +251,7 @@ fn merge_lock(
         for (path, entry) in &result_packages {
             if !path.is_empty()
                 && packages.get(path) != Some(entry)
-                && object(&base["packages"])?.contains_key(path)
+                && base_packages.contains_key(path)
             {
                 bail!("existing lock resolution changed: {path}");
             }
@@ -289,7 +288,7 @@ pub fn resolve(
     paths: &[String],
 ) -> Result<String> {
     for id in [ours, theirs, conflict_tree] {
-        oid(id)?;
+        crate::git::checked_oid(id)?;
     }
     let unique: BTreeSet<_> = paths.iter().map(String::as_str).collect();
     if unique.is_empty()
@@ -310,14 +309,14 @@ pub fn resolve(
     if bases.len() != 1 {
         bail!("exactly one merge base is required");
     }
-    let manifests: Vec<Value> = [bases[0], ours, theirs]
-        .iter()
-        .map(|c| read_json(repo, objects, c, "package.json"))
-        .collect::<Result<_>>()?;
-    let locks: Vec<Value> = [bases[0], ours, theirs]
-        .iter()
-        .map(|c| read_json(repo, objects, c, "package-lock.json"))
-        .collect::<Result<_>>()?;
+    let read_all = |path| -> Result<Vec<Value>> {
+        [bases[0], ours, theirs]
+            .iter()
+            .map(|commit| read_json(repo, objects, commit, path))
+            .collect()
+    };
+    let manifests = read_all("package.json")?;
+    let locks = read_all("package-lock.json")?;
     let manifest = merge_additions(&manifests[0], &manifests[1], &manifests[2])?;
     let lock = merge_lock(
         &locks[0],

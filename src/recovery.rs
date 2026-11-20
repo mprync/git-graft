@@ -97,6 +97,17 @@ pub(crate) fn direct_ref(dir: &Path, reference: &str) -> Result<Option<String>> 
     }
     let oid = String::from_utf8(output.stdout)?.trim_end().to_owned();
     git::checked_oid(&oid).with_context(|| format!("invalid object ID for {reference}"))?;
+    let (listed_oid, symbolic) = listed_ref(dir, reference)?
+        .with_context(|| format!("Git did not list the exact ref {reference}"))?;
+    ensure!(symbolic.is_empty(), "{reference} is symbolic");
+    ensure!(listed_oid == oid, "{reference} changed during lookup");
+    Ok(Some(oid))
+}
+
+/// The object ID and symbolic target that Git lists for exactly `reference`.
+/// Matching the exact name avoids a differently cased ref on case-insensitive
+/// filesystems standing in for the requested one.
+pub(crate) fn listed_ref(dir: &Path, reference: &str) -> Result<Option<(String, String)>> {
     let refs = git::text(
         dir,
         &[
@@ -109,13 +120,11 @@ pub(crate) fn direct_ref(dir: &Path, reference: &str) -> Result<Option<String>> 
         if let Some((name, fields)) = row.split_once('\0')
             && name == reference
         {
-            let (listed_oid, symbolic) = fields.split_once('\0').context("missing ref fields")?;
-            ensure!(symbolic.is_empty(), "{reference} is symbolic");
-            ensure!(listed_oid == oid, "{reference} changed during lookup");
-            return Ok(Some(oid));
+            let (oid, symbolic) = fields.split_once('\0').context("missing ref fields")?;
+            return Ok(Some((oid.to_owned(), symbolic.to_owned())));
         }
     }
-    bail!("Git did not list the exact ref {reference}")
+    Ok(None)
 }
 
 pub(crate) fn alternate_objects(command: &mut Command, objects: &Path) -> Result<()> {

@@ -230,6 +230,10 @@ impl ServerHandler for Server {
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
         let name = request.name.as_ref();
+        let refuse = |message: String| -> Result<CallToolResponse, ErrorData> {
+            let error = anyhow::anyhow!(message);
+            Ok(CallToolResult::structured_error(api::error_json(&error)).into())
+        };
         if !self.allow_exec
             && matches!(
                 name,
@@ -241,23 +245,15 @@ impl ServerHandler for Server {
                     | "workspace_unregister_manager"
             )
         {
-            let error = anyhow::anyhow!("Tool {name} requires the host to start with --allow-exec");
-            return Ok(CallToolResult::structured_error(api::error_json(&error)).into());
+            return refuse(format!(
+                "Tool {name} requires the host to start with --allow-exec"
+            ));
         }
         let args = request.arguments.unwrap_or_default();
         let op = match name {
-            "workspace_doctor" => {
-                parse::<Empty>(args)?;
-                Command::Doctor
-            }
-            "workspace_list" => {
-                parse::<Empty>(args)?;
-                Command::List
-            }
-            "workspace_list_managers" => {
-                parse::<Empty>(args)?;
-                Command::ListManagers
-            }
+            "workspace_doctor" => parse::<Empty>(args).map(|_| Command::Doctor)?,
+            "workspace_list" => parse::<Empty>(args).map(|_| Command::List)?,
+            "workspace_list_managers" => parse::<Empty>(args).map(|_| Command::ListManagers)?,
             "workspace_register_manager" => Command::RegisterManager(parse(args)?),
             "workspace_unregister_manager" => Command::UnregisterManager(parse(args)?),
             "workspace_spawn" => {
@@ -277,10 +273,10 @@ impl ServerHandler for Server {
             "workspace_land_and_wipe" => {
                 let land: Land = parse(args)?;
                 if land.reconcile && !self.allow_exec {
-                    let error = anyhow::anyhow!(
+                    return refuse(
                         "Lockfile reconciliation requires the host to start with --allow-exec"
+                            .into(),
                     );
-                    return Ok(CallToolResult::structured_error(api::error_json(&error)).into());
                 }
                 Command::Land(land)
             }
