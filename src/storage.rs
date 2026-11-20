@@ -1689,17 +1689,32 @@ mod tests {
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
-    fn local_shares_explicit_lf_and_defers_auto_crlf_to_git() {
+    fn local_shares_auto_crlf_checkouts_proven_by_size() {
         let (temp, repo, _) = fixture();
+        // Each committed blob and the bytes Git checks out for it.
+        let samples: &[(&str, &[u8], &[u8])] = &[
+            ("explicit", b"explicit\n", b"explicit\n"),
+            ("binary", b"\0binary\n", b"\0binary\n"),
+            ("mixed", b"mixed\r\nend\n", b"mixed\r\nend\n"),
+            ("lone-cr", b"lone\rcr\n", b"lone\rcr\n"),
+            ("no-lf", b"no line feed", b"no line feed"),
+            ("dos-eof", b"dos\n\x1a", b"dos\r\n\x1a"),
+            ("control", b"\x01\x02ctl\n", b"\x01\x02ctl\n"),
+        ];
         fs::write(repo.join(".gitattributes"), b"explicit eol=lf\n").unwrap();
-        fs::write(repo.join("explicit"), b"explicit\n").unwrap();
-        fs::write(repo.join("binary"), b"\0binary\n").unwrap();
-        fs::write(repo.join("mixed"), b"mixed\r\nend\n").unwrap();
+        for (name, bytes, _) in samples {
+            fs::write(repo.join(name), bytes).unwrap();
+        }
         fs::write(
             repo.join("long"),
             [vec![b'a'; 65535], b"\nend\n".to_vec()].concat(),
         )
         .unwrap();
+        // Enough files for a whole-directory clone on macOS.
+        fs::create_dir(repo.join("docs")).unwrap();
+        for index in 0..10 {
+            fs::write(repo.join(format!("docs/{index}.txt")), format!("{index}\n")).unwrap();
+        }
         command(&repo, &["add", "."]);
         command(&repo, &["commit", "-qm", "checkout conversions"]);
         let oid = command(&repo, &["rev-parse", "HEAD"]);
@@ -1712,15 +1727,14 @@ mod tests {
         command(&donor, &["read-tree", "-u", "-m", &oid]);
         let result =
             materialize_local(&workspace, &temp.path().join("state"), &oid, &[], &donor).unwrap();
-        for name in [
-            ".gitattributes",
-            "explicit",
-            "binary",
-            "mixed",
-            "long",
-            "sub/file",
-            "script",
-        ] {
+        let names: Vec<String> = command(&repo, &["ls-files"])
+            .lines()
+            .filter(|name| *name != "link")
+            .map(str::to_owned)
+            .collect();
+        assert_eq!(names.len(), 21);
+        // The donor is Git's own checkout under the same settings.
+        for name in &names {
             assert_eq!(
                 fs::read(workspace.join(name)).unwrap(),
                 fs::read(donor.join(name)).unwrap(),
@@ -1731,11 +1745,75 @@ mod tests {
             fs::read(workspace.join("sub/file")).unwrap(),
             b"committed\r\n"
         );
-        assert_eq!(fs::read(workspace.join("explicit")).unwrap(), b"explicit\n");
+        assert_eq!(fs::read(workspace.join("docs/3.txt")).unwrap(), b"3\r\n");
+        for (name, _, checkout) in samples {
+            assert_eq!(fs::read(workspace.join(name)).unwrap(), *checkout, "{name}");
+        }
         assert_eq!(command(&workspace, &["status", "--porcelain"]), "");
-        let shared = u64::from(probe(&donor, &workspace).unwrap());
-        assert_eq!(result["primary_reused_files"], shared, "{result}");
-        assert_eq!(result["private_files"], 7 - shared, "{result}");
+        if probe(&donor, &workspace).unwrap() {
+            assert_eq!(result["primary_reused_files"], 21, "{result}");
+            assert_eq!(result["private_files"], 0, "{result}");
+        }
+    }
+
+    /// A file rewritten with LF endings and staged again is clean to Git
+    /// under autocrlf=true, and its bytes hash to the blob, but Git's
+    /// checkout writes CRLF.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn local_does_not_reuse_clean_lf_files_git_would_expand() {
+        let (temp, repo, _) = fixture();
+        fs::create_dir(repo.join("docs")).unwrap();
+        for index in 0..10 {
+            fs::write(repo.join(format!("docs/{index}.txt")), format!("{index}\n")).unwrap();
+        }
+        command(&repo, &["add", "."]);
+        command(&repo, &["commit", "-qm", "documents"]);
+        let oid = command(&repo, &["rev-parse", "HEAD"]);
+        let donor = temp.path().join("donor");
+        let workspace = temp.path().join("local");
+        for path in [&donor, &workspace] {
+            independent(&repo, path);
+            command(path, &["config", "core.autocrlf", "true"]);
+        }
+        command(&donor, &["read-tree", "-u", "-m", &oid]);
+        let past = std::time::SystemTime::now() - std::time::Duration::from_secs(60);
+        for (name, bytes) in [("sub/file", "committed\n"), ("docs/3.txt", "3\n")] {
+            let path = donor.join(name);
+            fs::write(&path, bytes).unwrap();
+            // Not racily clean: Git's stat data, recorded below, is trusted.
+            fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(past)
+                .unwrap();
+        }
+        // Cleaning gives the same blobs, so Git records the LF files' stat data.
+        command(&donor, &["add", "sub/file", "docs/3.txt"]);
+        assert_eq!(command(&donor, &["status", "--porcelain"]), "");
+        assert_eq!(fs::read(donor.join("sub/file")).unwrap(), b"committed\n");
+        let result =
+            materialize_local(&workspace, &temp.path().join("state"), &oid, &[], &donor).unwrap();
+        assert_eq!(
+            fs::read(workspace.join("sub/file")).unwrap(),
+            b"committed\r\n"
+        );
+        assert_eq!(fs::read(workspace.join("docs/3.txt")).unwrap(), b"3\r\n");
+        for index in 0..10 {
+            let name = format!("docs/{index}.txt");
+            let expected = format!("{index}\r\n");
+            assert_eq!(
+                fs::read(workspace.join(&name)).unwrap(),
+                expected.as_bytes()
+            );
+        }
+        assert_eq!(command(&workspace, &["status", "--porcelain"]), "");
+        if probe(&donor, &workspace).unwrap() {
+            // script and nine documents; Git writes sub/file and docs/3.txt.
+            assert_eq!(result["primary_reused_files"], 10, "{result}");
+            assert_eq!(result["private_files"], 2, "{result}");
+        }
     }
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -1756,7 +1834,8 @@ mod tests {
             ("InPuT", "crlf", 4),
             ("false", "native", 4),
             ("false", "CRLF", 2),
-            ("true", "lf", 0),
+            // Only .gitattributes and mixed have no line-ending attribute.
+            ("true", "lf", 2),
         ] {
             let donor = temp.path().join(format!("donor-{autocrlf}-{eol}"));
             let workspace = temp.path().join(format!("workspace-{autocrlf}-{eol}"));

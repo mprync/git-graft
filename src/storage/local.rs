@@ -335,6 +335,10 @@ pub(super) mod direct {
         donor: native::Root,
         destination: native::Root,
         candidates: Vec<bool>,
+        /// Entries Git checks out with every LF expanded to CRLF. These are
+        /// proven only by the primary's stat data at the expanded size; their
+        /// raw hash can never match what Git writes.
+        crlf: Vec<bool>,
         mode: u32,
         /// Symbolic links may be installed as links.
         #[cfg(target_os = "macos")]
@@ -438,13 +442,46 @@ pub(super) mod direct {
         let Ok(conversions) = conversions else {
             return Ok(Err("cannot inspect checkout attributes"));
         };
-        for (eligible, conversion) in candidates.iter_mut().zip(conversions) {
+        // Paths without line-ending attributes that core.autocrlf=true may expand.
+        let mut automatic = Vec::new();
+        for (index, (eligible, conversion)) in candidates.iter_mut().zip(conversions).enumerate() {
             *eligible &= match conversion {
-                Conversion::Raw => endings.raw_by_default,
+                Conversion::Raw if endings.auto_crlf => {
+                    if *eligible {
+                        automatic.push(index);
+                    }
+                    true
+                }
+                Conversion::Raw => true,
                 Conversion::Text => endings.text_uses_lf,
                 Conversion::Lf => true,
                 Conversion::Eol | Conversion::Git => false,
             };
+        }
+        let mut trusted = sizes.and_then(|sizes| {
+            index_stat::Trusted::read(&primary.join(".git/index"), files[0].blob.len() / 2, sizes)
+        });
+        let mut crlf = vec![false; files.len()];
+        if !automatic.is_empty() {
+            let blobs = automatic.iter().map(|&index| files[index].blob.as_str());
+            let written = auto_crlf_checkouts(|| checkout.proof_command(), blobs);
+            crate::trace::mark("checkout: classify automatic line endings");
+            let mut expanded = HashMap::new();
+            for index in automatic {
+                let blob = &files[index].blob;
+                match written.as_ref().and_then(|written| written.get(blob)) {
+                    Some(Written::Raw) => {}
+                    // Without the primary's stat data nothing can prove CRLF bytes.
+                    Some(&Written::Crlf(size)) if trusted.is_some() => {
+                        crlf[index] = true;
+                        expanded.insert(blob.clone(), size);
+                    }
+                    _ => candidates[index] = false,
+                }
+            }
+            if let Some(trusted) = trusted.as_mut() {
+                trusted.expand(expanded);
+            }
         }
         if !candidates.contains(&true) {
             return Ok(Err("path-dependent checkout conversion"));
@@ -454,17 +491,193 @@ pub(super) mod direct {
             donor,
             destination,
             candidates,
+            crlf,
             mode,
             #[cfg(target_os = "macos")]
             links: endings.links,
-            trusted: sizes.and_then(|sizes| {
-                index_stat::Trusted::read(
-                    &primary.join(".git/index"),
-                    files[0].blob.len() / 2,
-                    sizes,
-                )
-            }),
+            trusted,
         }))
+    }
+
+    /// What Git writes at checkout for a blob on a path with no `text`, `eol`
+    /// or `crlf` attribute under `core.autocrlf=true` (convert.c's
+    /// `CRLF_AUTO_CRLF` action).
+    ///
+    /// Git expands the blob only when `will_convert_lf_to_crlf` holds: it has
+    /// at least one LF, no CR at all (neither a lone CR nor CRLF), and is not
+    /// binary by `convert_is_binary`. The expansion inserts one CR before
+    /// every LF, so the checkout is the blob's size plus its LF count.
+    /// Otherwise Git writes the blob's bytes unchanged.
+    ///
+    /// # Why a stat-clean file of the expected size holds exactly these bytes
+    ///
+    /// [`index_stat::Trusted::holds`] accepts a donor file F only when Git's
+    /// own stat test on a non-racy index entry vouches that cleaning F gives
+    /// the staged blob B. Git's line-ending clean (`crlf_to_git`, the same
+    /// premise the raw path relies on: no filter, `ident` or encoding) never
+    /// adds or changes bytes; it only removes CRs that immediately precede an
+    /// LF. So F is B with `size(F) - size(B)` CRs inserted, each directly
+    /// before a distinct LF of B (a second CR before the same LF would remain
+    /// after cleaning, but B has no CR when Git expands it).
+    ///
+    /// - When Git expands B, the expected size is `size(B) + LFs(B)`: a CR
+    ///   was inserted before every LF and nowhere else, which is exactly
+    ///   Git's expanded output.
+    /// - When Git writes B unchanged, the expected size is `size(B)`: no CR
+    ///   was removed, so F == B.
+    ///
+    /// A file Git calls clean but with LF endings (rewritten after checkout)
+    /// is as large as B, not the expansion, and goes to Git. The raw hash of
+    /// an expanded path can never prove Git's bytes, so those paths are never
+    /// hashed.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Written {
+        Raw,
+        /// Expanded to CRLF; the checkout's size in bytes.
+        Crlf(u64),
+    }
+
+    /// Git's `gather_stats` over one blob, as a histogram of byte values.
+    struct TextStats {
+        counts: [u64; 256],
+        size: u64,
+        last: Option<u8>,
+    }
+
+    impl TextStats {
+        fn new() -> Self {
+            Self {
+                counts: [0; 256],
+                size: 0,
+                last: None,
+            }
+        }
+
+        fn update(&mut self, bytes: &[u8]) {
+            for &byte in bytes {
+                self.counts[usize::from(byte)] += 1;
+            }
+            self.size += bytes.len() as u64;
+            if let Some(&byte) = bytes.last() {
+                self.last = Some(byte);
+            }
+        }
+
+        /// `will_convert_lf_to_crlf` for `CRLF_AUTO_CRLF` (convert.c, Git 2.46).
+        fn written(&self) -> Written {
+            let lf = self.counts[usize::from(b'\n')];
+            // Any CR, lone or in CRLF, leaves the blob untouched, and a NUL is binary.
+            if lf == 0 || self.counts[usize::from(b'\r')] > 0 || self.counts[0] > 0 {
+                return Written::Raw;
+            }
+            // DEL and control bytes other than BS, HT, ESC and FF are
+            // non-printable; CR and LF count as neither.
+            let mut nonprintable = self.counts[127]
+                + (0..32u8)
+                    .filter(|byte| {
+                        !matches!(byte, b'\x08' | b'\t' | b'\x1b' | b'\x0c' | b'\n' | b'\r')
+                    })
+                    .map(|byte| self.counts[usize::from(byte)])
+                    .sum::<u64>();
+            let printable = self.size - lf - nonprintable;
+            // A trailing Ctrl-Z (DOS end of file) does not count.
+            if self.last == Some(0x1a) {
+                nonprintable -= 1;
+            }
+            if (printable >> 7) < nonprintable {
+                Written::Raw
+            } else {
+                Written::Crlf(self.size + lf)
+            }
+        }
+    }
+
+    /// What Git writes for each of `blobs` under `core.autocrlf=true` on a
+    /// path without line-ending attributes, or `None` if Git cannot supply
+    /// them all. Blobs too large for Git's 32-bit counters are left out.
+    /// Reading blob contents is costly, so large sets use several processes.
+    fn auto_crlf_checkouts<'b>(
+        command: impl Fn() -> Command + Sync,
+        blobs: impl Iterator<Item = &'b str>,
+    ) -> Option<HashMap<String, Written>> {
+        let mut seen = std::collections::HashSet::new();
+        let blobs: Vec<&str> = blobs.filter(|blob| seen.insert(*blob)).collect();
+        let workers = if blobs.len() >= 1024 { 4 } else { 1 };
+        let shards = std::thread::scope(|scope| {
+            let handles: Vec<_> = blobs
+                .chunks(blobs.len().div_ceil(workers).max(1))
+                .map(|shard| scope.spawn(|| shard_checkouts(command(), shard)))
+                .collect();
+            handles
+                .into_iter()
+                .map(crate::workspace::joined)
+                .collect::<Option<Vec<_>>>()
+        })?;
+        Some(shards.into_iter().flatten().collect())
+    }
+
+    /// Stream `blobs` from `git cat-file --batch`, whose headers give raw
+    /// sizes (unlike `--filters`, which reports the unconverted size).
+    fn shard_checkouts(mut command: Command, blobs: &[&str]) -> Option<Vec<(String, Written)>> {
+        use std::io::BufRead;
+        let mut stdin = tempfile::tempfile().ok()?;
+        for blob in blobs {
+            std::io::Write::write_all(&mut stdin, blob.as_bytes()).ok()?;
+            std::io::Write::write_all(&mut stdin, b"\n").ok()?;
+        }
+        std::io::Seek::rewind(&mut stdin).ok()?;
+        let mut child = command
+            .env("GIT_NO_REPLACE_OBJECTS", "1")
+            .args(["cat-file", "--batch", "--buffer"])
+            .stdin(Stdio::from(stdin))
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .ok()?;
+        let read = (|| {
+            let mut out = io::BufReader::with_capacity(256 * 1024, child.stdout.take()?);
+            let mut written = Vec::with_capacity(blobs.len());
+            let mut header = Vec::new();
+            for blob in blobs {
+                header.clear();
+                out.read_until(b'\n', &mut header).ok()?;
+                let line = std::str::from_utf8(header.strip_suffix(b"\n")?).ok()?;
+                let mut fields = line.split(' ');
+                let (Some(oid), Some("blob"), Some(size), None) =
+                    (fields.next(), fields.next(), fields.next(), fields.next())
+                else {
+                    return None;
+                };
+                let size: u64 = size.parse().ok()?;
+                if oid != *blob {
+                    return None;
+                }
+                let mut stats = TextStats::new();
+                let mut remaining = size;
+                while remaining > 0 {
+                    let available = out.fill_buf().ok()?;
+                    if available.is_empty() {
+                        return None;
+                    }
+                    let length = available.len().min(remaining as usize);
+                    stats.update(&available[..length]);
+                    out.consume(length);
+                    remaining -= length as u64;
+                }
+                let mut end = [0];
+                io::Read::read_exact(&mut out, &mut end).ok()?;
+                if end != *b"\n" {
+                    return None;
+                }
+                if size <= u64::from(u32::MAX) {
+                    written.push(((*blob).to_owned(), stats.written()));
+                }
+            }
+            let mut rest = [0];
+            (io::Read::read(&mut out, &mut rest).ok()? == 0).then_some(written)
+        })();
+        let status = child.wait().ok()?;
+        read.filter(|_| status.success())
     }
 
     /// Each regular file blob's size, or `None` if Git cannot report them all.
@@ -614,7 +827,9 @@ pub(super) mod direct {
     }
 
     struct LineEndings {
-        raw_by_default: bool,
+        /// `core.autocrlf=true`: Git may expand LF to CRLF on paths without
+        /// line-ending attributes, depending on each blob's contents.
+        auto_crlf: bool,
         text_uses_lf: bool,
         /// Whether Git checks symbolic links out as links (`core.symlinks`).
         /// Only macOS installs links by directory clone.
@@ -688,7 +903,7 @@ pub(super) mod direct {
         // Both direct-clone platforms use LF natively. Git's input mode also
         // suppresses checkout expansion when core.eol requests CRLF.
         Ok(Ok(LineEndings {
-            raw_by_default: autocrlf != b"true",
+            auto_crlf: autocrlf == b"true",
             text_uses_lf: autocrlf.eq_ignore_ascii_case(b"input")
                 || (autocrlf == b"false" && !eol_crlf),
             links,
@@ -758,6 +973,7 @@ pub(super) mod direct {
             &plan.destination,
             tree::Policy {
                 trusted: plan.trusted.as_ref(),
+                crlf: &plan.crlf,
                 links: plan.links,
                 mode: plan.mode,
                 sha256,
@@ -778,10 +994,13 @@ pub(super) mod direct {
         let batches = std::thread::scope(|scope| -> Result<Vec<_>> {
             let mut tasks = Vec::new();
             let mut flags = plan.candidates.as_slice();
+            let mut expanded = plan.crlf.as_slice();
             let mut skipped = covered;
             for chunk in source_chunks(files) {
                 let (eligible, remaining) = flags.split_at(chunk.len());
                 flags = remaining;
+                let (crlf, remaining) = expanded.split_at(chunk.len());
+                expanded = remaining;
                 let (skip, remaining) = skipped.split_at(chunk.len());
                 skipped = remaining;
                 let donor = plan.donor.checkout_worker(reuse_ancestors)?;
@@ -796,6 +1015,7 @@ pub(super) mod direct {
                     clone_batch(
                         chunk,
                         eligible,
+                        crlf,
                         skip,
                         &donor,
                         &destination,
@@ -891,11 +1111,13 @@ pub(super) mod direct {
     /// Cloned bytes, entries Git must check out, and cloned entries' stat data.
     type Batch<'a> = (Counts, Vec<&'a Entry>, Vec<(&'a Entry, index_stat::Stat)>);
 
-    /// Clone `files` one by one. Entries flagged in `skip` were already installed.
+    /// Clone `files` one by one. Entries flagged in `skip` were already
+    /// installed; entries flagged in `crlf` are proven only by stat data.
     #[allow(clippy::too_many_arguments)]
     fn clone_batch<'a>(
         files: &'a [Entry],
         candidates: &[bool],
+        crlf: &[bool],
         skip: &[bool],
         donor: &native::Root,
         destination: &native::Root,
@@ -908,7 +1130,8 @@ pub(super) mod direct {
         let mut missing = Vec::new();
         let mut installed = Vec::new();
         let mut buffer = [0; 64 * 1024];
-        for ((entry, &eligible), &done) in files.iter().zip(candidates).zip(skip) {
+        for (((entry, &eligible), &crlf), &done) in files.iter().zip(candidates).zip(crlf).zip(skip)
+        {
             if done {
                 continue;
             }
@@ -930,7 +1153,8 @@ pub(super) mod direct {
             // A tracked index entry can still name a staged change, an
             // assume-unchanged file or a checkout produced with old filters.
             // Git's own stat test, unchanged across the clone below, proves
-            // the bytes; otherwise hash them, catching same-size edits.
+            // the bytes; otherwise hash them, catching same-size edits. A
+            // blob's hash cannot prove the CRLF bytes Git expands it to.
             let trusted = native::plain(&file, &metadata).unwrap_or(false)
                 && trusted.is_some_and(|trusted| {
                     trusted.holds(
@@ -939,11 +1163,13 @@ pub(super) mod direct {
                         entry.mode,
                         &index_stat::Stat::from_metadata(&metadata),
                         metadata.len(),
+                        crlf,
                     )
                 });
             if !same_mode
                 || (!trusted
-                    && !verified_blob(&mut file, &metadata, &mut buffer, &entry.blob, sha256))
+                    && (crlf
+                        || !verified_blob(&mut file, &metadata, &mut buffer, &entry.blob, sha256)))
             {
                 missing.push(entry);
                 continue;
@@ -1051,6 +1277,106 @@ pub(super) mod direct {
             hash_matches(sha2::Sha256::new(), file, size, buffer, oid)
         } else {
             hash_matches(sha1::Sha1::new(), file, size, buffer, oid)
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn git(repo: &Path) -> Command {
+            let mut command = Command::new("git");
+            command
+                .arg("-C")
+                .arg(repo)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_NOSYSTEM", "1");
+            command
+        }
+
+        fn run(repo: &Path, args: &[&str]) -> String {
+            let output = git(repo).args(args).output().unwrap();
+            assert!(
+                output.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8(output.stdout).unwrap().trim().to_owned()
+        }
+
+        /// Predicted checkout sizes match what Git itself writes under
+        /// core.autocrlf=true, across every rule in convert.c's heuristics.
+        #[test]
+        fn auto_crlf_predictions_match_git_checkouts() {
+            let text = |prefix: &[u8], count: usize, suffix: &[u8]| {
+                [prefix, &vec![b'a'; count], suffix].concat()
+            };
+            let mut long = Vec::new();
+            for line in 0..40_000 {
+                long.extend_from_slice(format!("line {line}\n").as_bytes());
+            }
+            let samples: Vec<(&str, Vec<u8>)> = vec![
+                ("empty", b"".to_vec()),
+                ("no-lf", b"no line feed".to_vec()),
+                ("one-lf", b"one\n".to_vec()),
+                ("lines", b"two\nlines\n".to_vec()),
+                ("crlf", b"crlf\r\nend\n".to_vec()),
+                ("only-crlf", b"crlf\r\n".to_vec()),
+                ("lone-cr", b"lone\rcr\n".to_vec()),
+                ("trailing-cr", b"trailing\n\r".to_vec()),
+                ("nul", b"\0nul\n".to_vec()),
+                ("dos-eof", b"dos\n\x1a".to_vec()),
+                ("control", b"\x01ctl\n".to_vec()),
+                ("printable-controls", b"\t\x08\x1b\x0c\n".to_vec()),
+                ("utf8", "caf\u{e9}\n".as_bytes().to_vec()),
+                ("threshold-text", text(b"", 128, b"\x01\n")),
+                ("threshold-binary", text(b"", 127, b"\x01\n")),
+                ("delete-binary", text(b"", 127, b"\x7f\n")),
+                ("eof-text", text(b"", 128, b"\x01\n\x1a")),
+                ("eof-binary", b"a\n\x1a\x1a".to_vec()),
+                ("long", long),
+            ];
+            let temp = tempfile::tempdir().unwrap();
+            let repo = temp.path().join("repo");
+            fs::create_dir(&repo).unwrap();
+            run(&repo, &["init", "-q"]);
+            run(&repo, &["config", "core.autocrlf", "false"]);
+            for (name, bytes) in &samples {
+                fs::write(repo.join(name), bytes).unwrap();
+            }
+            run(&repo, &["add", "."]);
+            let checkout = temp.path().join("checkout");
+            fs::create_dir(&checkout).unwrap();
+            let work_tree = format!("--work-tree={}", checkout.display());
+            run(
+                &repo,
+                &[
+                    "-c",
+                    "core.autocrlf=true",
+                    &work_tree,
+                    "checkout-index",
+                    "-a",
+                ],
+            );
+            let blobs: Vec<String> = samples
+                .iter()
+                .map(|(name, _)| run(&repo, &["rev-parse", &format!(":{name}")]))
+                .collect();
+            let written =
+                auto_crlf_checkouts(|| git(&repo), blobs.iter().map(String::as_str)).unwrap();
+            for ((name, bytes), blob) in samples.iter().zip(&blobs) {
+                let actual = fs::read(checkout.join(name)).unwrap();
+                let expected = if actual == *bytes {
+                    Written::Raw
+                } else {
+                    Written::Crlf(actual.len() as u64)
+                };
+                assert_eq!(written[blob], expected, "{name}");
+            }
+            // A missing object fails the whole set.
+            assert!(
+                auto_crlf_checkouts(|| git(&repo), ["0".repeat(40).as_str()].into_iter()).is_none()
+            );
         }
     }
 }

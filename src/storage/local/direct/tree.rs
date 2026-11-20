@@ -9,7 +9,9 @@
 //! and its files take the per-file path. Every cloned entry is then verified
 //! before its stat data is recorded: a regular file by Git's own stat test on
 //! an unchanged donor or by hashing its bytes, a link by hashing its target.
-//! An entry that fails verification is removed and left for Git to check out.
+//! A file Git expands to CRLF is proven only by the stat test at its expanded
+//! size, never by hashing. An entry that fails verification is removed and
+//! left for Git to check out.
 use super::{link_matches, verified_blob};
 use crate::storage::{
     Counts, Entry,
@@ -50,6 +52,8 @@ pub(super) struct Cloned<'a> {
 pub(super) struct Policy<'t> {
     /// Stat data from the primary's index, trusted as `git status` trusts it.
     pub(super) trusted: Option<&'t index_stat::Trusted>,
+    /// Per entry, whether Git expands its LFs to CRLF at checkout.
+    pub(super) crlf: &'t [bool],
     /// Git checks symbolic links out as links.
     pub(super) links: bool,
     /// Permission bits Git gives a new non-executable file.
@@ -277,6 +281,7 @@ pub(super) fn clone_directories<'a>(
                         let checked = Checked {
                             entry: &files[index],
                             before: item.before[at].as_ref(),
+                            crlf: policy.crlf[index],
                         };
                         let outcome = verify(&checked, &donor, &destination, policy, &mut buffer)?;
                         Ok((clone, index, outcome))
@@ -430,6 +435,8 @@ fn clone_one(
 struct Checked<'a> {
     entry: &'a Entry,
     before: Option<&'a libc::stat>,
+    /// Git expands the entry's LFs to CRLF, so only stat data can prove it.
+    crlf: bool,
 }
 
 enum Outcome {
@@ -466,12 +473,15 @@ fn verify(
     };
     // Git writes a file with no flags or user extended attributes. A donor
     // whose stat Git itself trusts, unchanged across the clone, needs no
-    // hashing.
+    // hashing. A blob's hash cannot prove the CRLF bytes Git expands it to.
+    let crlf = checked.crlf;
     let verified = native::plain(&file, &metadata).unwrap_or(false)
         && (checked.before.is_some_and(|before| {
-            trusted_donor(donor, file_path, before, entry, policy.trusted)
-                || donor_unchanged(donor, file_path, before, entry, buffer, policy.sha256)
-        }) || verified_blob(&mut file, &metadata, buffer, &entry.blob, policy.sha256));
+            trusted_donor(donor, file_path, before, entry, policy.trusted, crlf)
+                || (!crlf
+                    && donor_unchanged(donor, file_path, before, entry, buffer, policy.sha256))
+        }) || (!crlf
+            && verified_blob(&mut file, &metadata, buffer, &entry.blob, policy.sha256)));
     if !verified {
         destination.discard(file_path)?;
         return Ok(Outcome::Missing);
@@ -490,13 +500,14 @@ fn verify(
 }
 
 /// Whether the donor kept the stat it had before the clone and Git's index
-/// vouches for that stat holding the staged blob.
+/// vouches for that stat holding the bytes Git checks out for the staged blob.
 fn trusted_donor(
     donor: &Root,
     path: &Path,
     before: &libc::stat,
     entry: &Entry,
     trusted: Option<&index_stat::Trusted>,
+    crlf: bool,
 ) -> bool {
     let Some(trusted) = trusted else {
         return false;
@@ -508,6 +519,7 @@ fn trusted_donor(
         entry.mode,
         &stat,
         before.st_size as u64,
+        crlf,
     ) && donor
         .regular_stat(path)
         .is_ok_and(|now| index_stat::Stat::from_libc(&now) == stat && now.st_mode == before.st_mode)
@@ -632,8 +644,10 @@ mod tests {
         let candidates = vec![true; rows.len()];
         let donor = Root::open(&donor_path)?;
         let destination = Root::open(&destination_path)?;
+        let crlf = vec![false; rows.len()];
         let policy = Policy {
             trusted: None,
+            crlf: &crlf,
             links: true,
             mode: 0o755,
             sha256: false,

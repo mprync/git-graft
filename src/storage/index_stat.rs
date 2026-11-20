@@ -258,6 +258,9 @@ pub(super) struct Trusted {
     /// changes the size, so a file whose size differs from its blob's was not
     /// written as raw bytes, even when Git's stat test calls it clean.
     sizes: HashMap<String, u64>,
+    /// Checkout sizes of blobs Git expands from LF to CRLF under
+    /// `core.autocrlf=true`, for the paths [`Self::holds`] is told to expand.
+    expanded: HashMap<String, u64>,
     /// The index file's modification time; entries at or after it are racy.
     written: (i64, i64),
 }
@@ -320,16 +323,41 @@ impl Trusted {
         Some(Self {
             entries,
             sizes,
+            expanded: HashMap::new(),
             written: (after.mtime(), after.mtime_nsec()),
         })
     }
 
+    /// Record the CRLF checkout sizes of blobs Git expands at checkout. See
+    /// `direct::Written` in `local.rs` for why a stat-clean file of exactly
+    /// that size holds Git's expanded bytes.
+    #[cfg(unix)]
+    pub(super) fn expand(&mut self, sizes: HashMap<String, u64>) {
+        self.expanded = sizes;
+    }
+
     /// Whether the donor file at `name`, with stat data `stat` of a file
-    /// `size` bytes long, still holds the staged `blob` in Git mode `mode` by
-    /// Git's own stat test.
-    pub(super) fn holds(&self, name: &[u8], blob: &str, mode: u32, stat: &Stat, size: u64) -> bool {
+    /// `size` bytes long, still holds the bytes Git checks out for the staged
+    /// `blob` in Git mode `mode`, by Git's own stat test. `crlf` says Git
+    /// expands this path's LFs to CRLF, so the file must have the expanded
+    /// size recorded by [`Self::expand`]; otherwise it must be as large as the
+    /// blob.
+    pub(super) fn holds(
+        &self,
+        name: &[u8],
+        blob: &str,
+        mode: u32,
+        stat: &Stat,
+        size: u64,
+        crlf: bool,
+    ) -> bool {
         let Some((recorded, oid)) = self.entries.get(name) else {
             return false;
+        };
+        let expected = if crlf {
+            self.expanded.get(blob)
+        } else {
+            self.sizes.get(blob)
         };
         let field =
             |at: usize| u32::from_be_bytes(recorded[at..at + 4].try_into().unwrap_or([0; 4]));
@@ -338,7 +366,7 @@ impl Trusted {
         let mtime = (i64::from(field(8)), i64::from(field(12)));
         oid == blob
             && field(24) == mode
-            && self.sizes.get(blob) == Some(&size)
+            && expected == Some(&size)
             && size <= u64::from(u32::MAX)
             // Every stat field except the mode, which Git owns, must match.
             && recorded[..24] == current[..24]
@@ -551,7 +579,7 @@ mod tests {
         let sizes: HashMap<_, _> = [(a.clone(), 6), (b.clone(), 6)].into();
         let index = repo.join(".git/index");
         let trusted = Trusted::read(&index, 20, sizes.clone()).unwrap();
-        let check = |trusted: &Trusted, name: &str, oid: &str| {
+        let check_as = |trusted: &Trusted, name: &str, oid: &str, crlf: bool| {
             let path = repo.join(name);
             let metadata = fs::symlink_metadata(&path).unwrap();
             trusted.holds(
@@ -560,9 +588,22 @@ mod tests {
                 0o100644,
                 &Stat::from_metadata(&metadata),
                 metadata.len(),
+                crlf,
             )
         };
+        let check = |trusted: &Trusted, name: &str, oid: &str| check_as(trusted, name, oid, false);
         assert!(check(&trusted, "a.txt", &a));
+        // A path Git expands to CRLF must have the expanded size instead.
+        assert!(!check_as(&trusted, "a.txt", &a, true), "no expanded size");
+        let mut expanded = Trusted::read(&index, 20, sizes.clone()).unwrap();
+        expanded.expand([(a.clone(), 6)].into());
+        assert!(check_as(&expanded, "a.txt", &a, true));
+        expanded.expand([(a.clone(), 7)].into());
+        assert!(
+            !check_as(&expanded, "a.txt", &a, true),
+            "LF file, CRLF size"
+        );
+        assert!(check(&expanded, "a.txt", &a), "raw paths keep blob sizes");
         assert!(!check(&trusted, "a.txt", &b), "a different blob");
         // A same-size edit that restores the old modification time.
         let before = fs::metadata(repo.join("b.txt"))
