@@ -293,6 +293,12 @@ pub(crate) fn prepare(
         Ok(plan) => plan,
         Err(error) => {
             if stage {
+                // The scratch must match its checkpoint, so keep the `.keep`
+                // files but close them: Windows cannot move a directory while a
+                // file inside it is open.
+                for lock in imported.iter_mut().chain(result_locks.iter_mut()).flatten() {
+                    lock.close();
+                }
                 scratch::purge(p, &root, &store)
                     .context("retain unverified private landing scratch")?;
             }

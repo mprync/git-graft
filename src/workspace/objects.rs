@@ -629,7 +629,8 @@ fn pin_matches(primary: &Path, pin: &str, oid: &str) -> Result<bool> {
 
 pub(super) struct PackLock {
     path: PathBuf,
-    file: File,
+    /// The open `.keep` file, or `None` once [`PackLock::close`] gave it up.
+    file: Option<File>,
     marker: Vec<u8>,
 }
 
@@ -648,12 +649,26 @@ impl PackLock {
                 && marker.ends_with(b"\n"),
             "Git pack lock is not owned by this fetch"
         );
-        Ok(Self { path, file, marker })
+        Ok(Self {
+            path,
+            file: Some(file),
+            marker,
+        })
+    }
+
+    /// Close the `.keep` file but leave it in place, for a caller about to
+    /// discard the whole store. Windows cannot move a directory while a file
+    /// inside it is open. A closed lock no longer removes its file on drop.
+    pub(super) fn close(&mut self) {
+        self.file = None;
     }
 
     fn matches(&self, path: &Path) -> Result<bool> {
+        let Some(held) = &self.file else {
+            return Ok(false);
+        };
         let file = open_regular(path)?;
-        if !same_file(&self.file, &file)? {
+        if !same_file(held, &file)? {
             return Ok(false);
         }
         let mut marker = Vec::new();
