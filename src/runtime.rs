@@ -24,7 +24,7 @@ impl Runtime {
     pub(crate) fn new(workspace: &Path, state: &Path, port: u16, id: &str) -> Result<Self> {
         let id = uuid::Uuid::parse_str(id)?.to_string();
         Ok(Self {
-            workspace: workspace.canonicalize()?,
+            workspace: dunce::canonicalize(workspace)?,
             private: state.join("workspaces").join("runtime").join(id),
             cache: state.join("cache"),
             port,

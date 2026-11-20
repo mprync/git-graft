@@ -200,9 +200,8 @@ fn safe_link(root: &Path, link: &Path) -> Result<std::path::PathBuf> {
             _ => bail!("escaping symlink in node_modules: {}", link.display()),
         }
     }
-    let resolved = link
-        .canonicalize()
-        .context("broken or cyclic package symlink")?;
+    // Compare like with like: `root` is also free of Windows' `\\?\` prefix.
+    let resolved = dunce::canonicalize(link).context("broken or cyclic package symlink")?;
     if !resolved.starts_with(root) {
         bail!("symlink leaves node_modules: {}", link.display());
     }
@@ -247,7 +246,7 @@ type CheckMetadata = fn(&Path, &fs::Metadata) -> Result<()>;
 // Inspect and fingerprint every entry before publication and again before use.
 // No symlink is followed while walking or copying the installed tree.
 fn inspect(root: &Path, forbidden: Option<&[u8]>, check: CheckMetadata) -> Result<String> {
-    let root = root.canonicalize()?;
+    let root = dunce::canonicalize(root)?;
     check(&root, &fs::symlink_metadata(&root)?)?;
     let mut hash = blake3::Hasher::new();
     permission_field(&mut hash, &fs::metadata(&root)?);

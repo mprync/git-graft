@@ -498,7 +498,7 @@ pub fn check_attached_for_add(checkout: &Path) -> Result<()> {
         "the attached node_modules is missing; restore the install before adding a package"
     );
     registry::check_owned_tree(&root)?;
-    let root = root.canonicalize()?;
+    let root = dunce::canonicalize(root)?;
     let mut pending = vec![root.clone()];
     while let Some(directory) = pending.pop() {
         for entry in fs::read_dir(directory)? {

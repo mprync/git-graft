@@ -340,7 +340,7 @@ pub fn resolve(
             Err(e) => return Err(e.into()),
         }
     }
-    let cache = cache.canonicalize()?;
+    let cache = dunce::canonicalize(cache)?;
     let manifest_bytes = serde_json::to_vec_pretty(&manifest)?;
     std::fs::write(temp.path().join("package.json"), &manifest_bytes)?;
     std::fs::write(
