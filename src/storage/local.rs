@@ -145,7 +145,13 @@ fn materialize_with<F: FnOnce() -> Result<()>>(
     let receipt = {
         let _ = (state, primary, sizes);
         ready()?;
-        checkout.native(&oid, sparse, files, "native clone unavailable")?
+        // Report the same reason as the cloning platforms for a sparse request.
+        let reason = if sparse.is_empty() {
+            "native clone unavailable"
+        } else {
+            "sparse checkout"
+        };
+        checkout.native(&oid, sparse, files, reason)?
     };
     checkout.publish()?;
     Ok(receipt)

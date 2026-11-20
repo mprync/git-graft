@@ -412,11 +412,14 @@ mod tests {
         workspace.prepare_private_directory()?;
         let result = workspace.execute(&["pnpm".into(), "store".into(), "path".into()])?;
         assert_eq!(result["success"], true, "{result}");
+        // pnpm may print a long or short (8.3) form of the temp root on
+        // Windows, so match the unique temp directory and the managed suffix.
+        let stdout = result["stdout"].as_str().unwrap();
+        let managed = Path::new("state").join("cache").join("pnpm");
+        let unique = root.path().file_name().unwrap().to_str().unwrap();
         assert!(
-            result["stdout"]
-                .as_str()
-                .unwrap()
-                .contains(state.join("cache/pnpm").to_str().unwrap())
+            stdout.contains(managed.to_str().unwrap()) && stdout.contains(unique),
+            "{stdout}"
         );
         Ok(())
     }
