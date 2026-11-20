@@ -24,7 +24,7 @@ function commit(ctx: Context, root: string, message: string): string {
   return ctx.git(['rev-parse', 'HEAD'], root).trim();
 }
 function landArgs(workspace: Workspace, name: string, ...extra: string[]): string[] {
-  return ['land', name, '--lease', workspace.lease, ...extra];
+  return ['merge', name, '--lease', workspace.lease, ...extra];
 }
 function field(value: unknown): Record<string, unknown> {
   assert.ok(value && typeof value === 'object' && !Array.isArray(value));
@@ -206,7 +206,7 @@ export const cases: Scenario[] = [
       assert.equal(ctx.git(['rev-parse', 'HEAD']), result.commit);
       assert.equal(ctx.cli(['status', name]).id, replacement.result.id);
       assert.equal(read(replacement.path, 'local.txt'), 'replacement data\n');
-      ctx.cli(['prune', name, '--lease', replacement.lease, '--discard']);
+      ctx.cli(['remove', name, '--lease', replacement.lease, '--discard']);
       ctx.git(['gc', '--prune=now']);
       ctx.git(['fsck', '--full']);
       const restored = ctx.cli(['restore', name, '--lease', workspace.lease]);
@@ -567,7 +567,7 @@ export const cases: Scenario[] = [
       write(ctx.repo, hook, '#!/bin/sh\nset -eu\nprintf "%s\\n" "edit during land" > "$GRAFT_E2E_PENDING_PATH/feature.txt"\n');
       chmodSync(join(ctx.repo, hook), 0o700);
       ctx.env.GRAFT_E2E_PENDING_PATH = process.platform === 'win32' ? workspace.path.replaceAll('\\', '/') : workspace.path;
-      const land = owned('land');
+      const land = owned('merge');
       try {
         assert.match(String(ctx.fail(land).message), /local changes/);
       } finally {
@@ -582,18 +582,18 @@ export const cases: Scenario[] = [
       write(workspace.path, 'feature.txt', 'edit after failure\n');
 
       assert.match(String(ctx.fail(land).message), /local changes/);
-      const drop = owned('prune');
-      assert.match(String(ctx.fail(drop).message), /landing is pending/);
+      const drop = owned('remove');
+      assert.match(String(ctx.fail(drop).message), /merge is pending/);
       assert.equal(read(workspace.path, 'feature.txt'), 'edit after failure\n');
       const retired = ctx.cli([...drop, '--discard']);
-      assert.equal(retired.action, 'land');
+      assert.equal(retired.action, 'merge');
       assert.equal(retired.commit, tip);
       assert.equal(retired.recovery_lease, workspace.lease);
       assert(!existsSync(workspace.path));
       assert.deepEqual(ctx.cli([...drop, '--discard']), retired);
 
       ctx.cli(owned('restore'));
-      const undone = ctx.cli([...owned('land'), '--undo']);
+      const undone = ctx.cli([...owned('merge'), '--undo']);
       assert.equal(ctx.git(['rev-parse', 'HEAD']), undone.commit);
       assert.equal(ctx.git(['rev-parse', 'HEAD^']), tip);
       assert.equal(ctx.git(['rev-parse', 'HEAD^{tree}']), initialTree);
@@ -645,7 +645,7 @@ export const cases: Scenario[] = [
       };
 
       const owned = ['indexed-land', '--lease', workspace.lease];
-      assert.match(String(ctx.fail(['prune', ...owned]).message), /landing is pending/i);
+      assert.match(String(ctx.fail(['remove', ...owned]).message), /merge is pending/i);
       assert(existsSync(journal.path));
       if (!advanced) {
         assert.match(String(ctx.fail(land).message), /local changes/i);
@@ -654,8 +654,8 @@ export const cases: Scenario[] = [
       assertPrimary();
       assertWorkspace();
 
-      const retired = ctx.cli(['prune', ...owned, '--discard']);
-      assert.equal(retired.action, 'land');
+      const retired = ctx.cli(['remove', ...owned, '--discard']);
+      assert.equal(retired.action, 'merge');
       assert.equal(retired.commit, tip);
       assert.equal(retired.previous, base);
       assert.equal(retired.recovery_lease, workspace.lease);

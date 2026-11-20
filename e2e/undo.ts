@@ -15,14 +15,14 @@ function commit(ctx: Context, path: string, file: string, content: string): stri
 }
 
 function land(ctx: Context, name: string, workspace: Workspace, ...options: string[]): string {
-  const result = ctx.cli(['land', name, '--lease', workspace.lease, ...options]);
+  const result = ctx.cli(['merge', name, '--lease', workspace.lease, ...options]);
   assert.equal(result.recovery_lease, workspace.lease);
   assert(typeof result.commit === 'string');
   return result.commit;
 }
 
 function undo(name: string, lease: string): string[] {
-  return ['land', name, '--undo', '--lease', lease];
+  return ['merge', name, '--undo', '--lease', lease];
 }
 
 function planStore(ctx: Context): string {
@@ -93,7 +93,7 @@ export const cases: Scenario[] = [
       }
       const historyBlob = ctx.git(['rev-parse', `${old}:history.bin`]);
       assert.equal(ids.filter(id => id === historyBlob).length, 1, 'plan store duplicated the large history blob');
-      ctx.cli(['prune','--expired', '--apply']);
+      ctx.cli(['prune', '--apply']);
       ctx.git(['gc', '--prune=now']);
       ctx.git(['fsck', '--full'], store);
       ctx.git(['fsck', '--full']);
@@ -102,7 +102,7 @@ export const cases: Scenario[] = [
       ctx.cli(undo('cache-delta', ws.lease));
       assert.equal(existsSync(join(ctx.repo, 'feature.txt')), false);
       assert.equal(readFileSync(join(ws.path, 'feature.txt'), 'utf8'), 'landed change\n');
-      ctx.cli(['prune', 'cache-base', '--lease', first.lease]);
+      ctx.cli(['remove', 'cache-base', '--lease', first.lease]);
     },
   },
   {
@@ -119,7 +119,7 @@ export const cases: Scenario[] = [
       const privateFile = join(ws.path, 'local.txt');
       writeFileSync(privateFile, 'restored workspace data\n');
 
-      ctx.cli(['prune','--expired', '--apply']);
+      ctx.cli(['prune', '--apply']);
       ctx.git(['gc', '--prune=now']);
       ctx.git(['fsck', '--full']);
       ctx.git(['fsck', '--full'], ws.path);
@@ -324,8 +324,8 @@ export const cases: Scenario[] = [
     name: 'undo authenticates the retired landing and rejects prune and no-op',
     run(ctx) {
       const dropped = ctx.spawn('dropped');
-      ctx.cli(['prune', 'dropped', '--lease', dropped.lease]);
-      assert.match(String(ctx.fail(undo('dropped', dropped.lease)).message), /not retired by landing/i);
+      ctx.cli(['remove', 'dropped', '--lease', dropped.lease]);
+      assert.match(String(ctx.fail(undo('dropped', dropped.lease)).message), /not retired by merge/i);
       const unchanged = ctx.spawn('unchanged');
       const old = ctx.git(['rev-parse', 'HEAD']);
       assert.equal(land(ctx, 'unchanged', unchanged), old);

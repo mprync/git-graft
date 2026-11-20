@@ -297,17 +297,17 @@ exec "$GRAFT_TEST_GIT" "$@"
       renameSync(loose, held);
       let failure;
       try {
-        failure = ctx.fail(['new', 'incomplete', '--base', tip, '--history', 'tip']);
+        failure = ctx.fail(['add', 'incomplete', '--base', tip, '--history', 'tip']);
       } finally {
         renameSync(held, loose);
       }
-      assert.equal(failure.code, 'new_incomplete');
+      assert.equal(failure.code, 'add_incomplete');
       const {path, lease} = objectResult(failure.details);
       assert(typeof path === 'string' && typeof lease === 'string');
       assert(!existsSync(join(path, '.git', 'index')));
       writeFileSync(join(path, 'my-recovery-note'), 'retain this file\n');
       const args = ['incomplete', '--lease', lease];
-      ctx.cli(['prune', ...args, '--discard']);
+      ctx.cli(['remove', ...args, '--discard']);
       assert(!existsSync(path));
       const restored = ctx.cli(['restore', ...args]);
       assert.equal(restored.path, path);
@@ -429,7 +429,7 @@ exec "$GRAFT_TEST_GIT" "$@"
       }
       const tip = commitFile(ctx, work.path, 'selected.txt', 'landed edit\n');
       assert.equal(ctx.git(['rev-parse', 'HEAD^'], work.path), base);
-      ctx.cli(['land', 'tip-branch', '--lease', work.lease, '--into', 'topic']);
+      ctx.cli(['merge', 'tip-branch', '--lease', work.lease, '--into', 'topic']);
       assert.equal(ctx.git(['rev-parse', 'topic']), tip);
       assert.equal(ctx.git(['rev-parse', 'topic~2']), parent);
       assert.equal(ctx.git(['rev-parse', 'main']), unrelated);
@@ -676,7 +676,7 @@ exec "$GRAFT_TEST_GIT" "$@"
       writeFileSync(join(sibling.path, 'untracked.txt'), 'sibling untracked\n');
       const siblingStatus = ctx.git(['status', '--porcelain'], sibling.path);
 
-      const landed = ctx.cli(['land', 'local-feature', '--lease', feature.lease, '--into', 'main']);
+      const landed = ctx.cli(['merge', 'local-feature', '--lease', feature.lease, '--into', 'main']);
       assert.equal(landed.previous, base);
       assert.equal(landed.commit, tip);
       assert.equal(landed.recovery_lease, feature.lease);
@@ -687,7 +687,7 @@ exec "$GRAFT_TEST_GIT" "$@"
       assert.equal(ctx.git(['for-each-ref', '--format=%(refname)']), 'refs/heads/main');
       assert(!objects(ctx, sibling.path).includes(tip), 'landing published the commit into the sibling');
 
-      const undo = ctx.cli(['land', 'local-feature', '--undo', '--lease', feature.lease]);
+      const undo = ctx.cli(['merge', 'local-feature', '--undo', '--lease', feature.lease]);
       assert.equal(ctx.git(['rev-parse', 'main']), undo.commit);
       assert.equal(ctx.git(['rev-parse', 'main^']), tip);
       assert.equal(ctx.git(['rev-parse', 'main^{tree}']), ctx.git(['rev-parse', `${base}^{tree}`]));
@@ -704,7 +704,7 @@ exec "$GRAFT_TEST_GIT" "$@"
       ctx.git(['fsck', '--full'], feature.path);
 
       assert.equal(ctx.git(['status', '--porcelain'], sibling.path), siblingStatus);
-      const dropped = ctx.cli(['prune', 'local-sibling', '--lease', sibling.lease, '--discard']);
+      const dropped = ctx.cli(['remove', 'local-sibling', '--lease', sibling.lease, '--discard']);
       assert.equal(dropped.recovery_lease, sibling.lease);
       assert.equal(existsSync(sibling.path), false);
       ctx.git(['gc', '--prune=now']);

@@ -191,7 +191,7 @@ try {
       const name = `agent-${index}`;
       const target = join(root,name);
       const args = arm === 'native' ? ['worktree','add','-b',`graft/${name}`,target,head]
-        : ['graft','--repo',primary,'--json','new',name,...historyArgs,'--base',head,...dependencyArgs];
+        : ['graft','--repo',primary,'--json','add',name,...historyArgs,'--base',head,...dependencyArgs];
       const start = performance.now();
       const result = useResources ? fixture.command('/usr/bin/time',[...timeArgs,'git',...args],primary)
         : fixture.command('git',args,primary);
@@ -268,7 +268,7 @@ try {
       const beforeAdvance = free();
       const target = join(root,'agent-2');
       const args = arm === 'native' ? ['worktree','add','-b','graft/agent-2',target,advanced]
-        : ['graft','--repo',primary,'--json','new','agent-2',...historyArgs,...dependencyArgs];
+        : ['graft','--repo',primary,'--json','add','agent-2',...historyArgs,...dependencyArgs];
       const start = performance.now();
       const result = useResources ? fixture.command('/usr/bin/time',[...timeArgs,'git',...args],primary)
         : fixture.command('git',args,primary);

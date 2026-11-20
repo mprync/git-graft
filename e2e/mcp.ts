@@ -19,11 +19,11 @@ const protocol = '2025-06-18';
 const requestTimeoutMs = 30_000;
 const maxRequestBytes = 256 * 1024;
 const executionTools = ['graft_exec', 'graft_add_dependency'];
-const defaultTools = ['graft_list', 'graft_new', 'graft_status', 'graft_renew', 'graft_land', 'graft_prune',
+const defaultTools = ['graft_list', 'graft_add', 'graft_status', 'graft_renew', 'graft_merge', 'graft_remove',
   'graft_restore'];
 const spawnOptions = ['base', 'branch', 'detach', 'history', 'lock', 'name', 'no_checkout', 'no_deps', 'orphan',
   'reason', 'request_id', 'sparse'];
-const leaseTools = new Set(['graft_add_dependency', 'graft_prune', 'graft_exec', 'graft_renew', 'graft_land',
+const leaseTools = new Set(['graft_add_dependency', 'graft_remove', 'graft_exec', 'graft_renew', 'graft_merge',
   'graft_restore']);
 
 function isObject(value: unknown): value is JsonObject {
@@ -208,18 +208,18 @@ async function discover(client: McpClient, allowExec: boolean): Promise<Map<stri
     if (executionTools.includes(name)) assert.match(description, /--allow-exec/);
   }
   assert.deepEqual([...catalog.keys()].sort(), expected.sort());
-  const spawnDescription = string(catalog.get('graft_new')?.description, 'spawn description');
+  const spawnDescription = string(catalog.get('graft_add')?.description, 'spawn description');
   assert.match(spawnDescription, /omit history/i);
   assert.match(spawnDescription, /defaults to local/i);
   assert.match(spawnDescription, /isolated.*(?:unrelated|excluded)/i);
-  const spawnSchema = object(catalog.get('graft_new')?.inputSchema, 'spawn schema');
+  const spawnSchema = object(catalog.get('graft_add')?.inputSchema, 'spawn schema');
   assert.deepEqual(spawnSchema.required, ['name']);
   assert.deepEqual(Object.keys(object(spawnSchema.properties, 'spawn properties')).sort(), spawnOptions);
-  const landSchema = object(catalog.get('graft_land')?.inputSchema, 'land schema');
+  const landSchema = object(catalog.get('graft_merge')?.inputSchema, 'land schema');
   assert(Array.isArray(landSchema.required));
   assert.deepEqual([...landSchema.required].sort(), ['lease', 'name']);
   assert('undo' in object(landSchema.properties, 'land properties'));
-  const pruneSchema = object(catalog.get('graft_prune')?.inputSchema, 'prune schema');
+  const pruneSchema = object(catalog.get('graft_remove')?.inputSchema, 'prune schema');
   assert(Array.isArray(pruneSchema.required));
   assert.deepEqual([...pruneSchema.required].sort(), ['lease', 'name']);
   return catalog;
@@ -244,7 +244,7 @@ async function invalidCall(client: McpClient, name: string, args: JsonObject): P
 }
 
 async function spawnWorkspace(client: McpClient, name: string, requestId = randomUUID()) {
-  const result = await call(client, 'graft_new', { name, request_id: requestId });
+  const result = await call(client, 'graft_add', { name, request_id: requestId });
   const path = workspacePath(result);
   const lease = string(result.lease, 'workspace lease');
   assert.equal(lease, requestId);
@@ -255,7 +255,7 @@ async function spawnWorkspace(client: McpClient, name: string, requestId = rando
   return { path, lease, result };
 }
 
-/** Arguments for `deps layer save|restore|forget` on the CLI; layers are CLI-only. */
+/** Arguments for `deps layer save|restore|remove` on the CLI; layers are CLI-only. */
 function layerArgs(action: string, name: string, lease: string, key: string, copy = false): string[] {
   return ['deps', 'layer', action, name, '--lease', lease, '--key', key, ...(copy ? ['--copy'] : [])];
 }
@@ -383,7 +383,7 @@ export const cases: Scenario[] = [
       await withClient(ctx, false, async client => {
         await initialize(client);
         await discover(client, false);
-        const spawned = await call(client, 'graft_new', { name: 'restricted-seed', no_deps: false });
+        const spawned = await call(client, 'graft_add', { name: 'restricted-seed', no_deps: false });
         const storage = object(spawned.storage, 'restricted spawn storage');
         assert(!('registered_dependencies' in storage) ||
           (Array.isArray(storage.registered_dependencies) && storage.registered_dependencies.every(item => object(item, 'receipt').status !== 'attached')));
@@ -412,8 +412,8 @@ export const cases: Scenario[] = [
       ctx.coverCli('mcp');
       const catalog = await discover(client, false);
       assert.equal(object(catalog.get('graft_list')?.annotations, 'list annotations').readOnlyHint, true);
-      assert.equal(object(catalog.get('graft_land')?.annotations, 'land annotations').destructiveHint, true);
-      const spawnSchema = object(catalog.get('graft_new')?.inputSchema, 'spawn schema');
+      assert.equal(object(catalog.get('graft_merge')?.annotations, 'land annotations').destructiveHint, true);
+      const spawnSchema = object(catalog.get('graft_add')?.inputSchema, 'spawn schema');
       assert.deepEqual(spawnSchema.required, ['name']);
       const properties = object(spawnSchema.properties, 'spawn schema properties');
       assert.equal(object(properties.name, 'spawn name schema').type, 'string');
@@ -425,14 +425,14 @@ export const cases: Scenario[] = [
       // one frame, even when it is read in several chunks.
       const oversizedMutation = JSON.stringify({
         jsonrpc: '2.0', id: 9001, method: 'tools/call',
-        params: { name: 'graft_new', arguments: { name: 'oversized' } },
+        params: { name: 'graft_add', arguments: { name: 'oversized' } },
       });
       client.send(oversizedMutation.padEnd(maxRequestBytes + 1));
       assert.deepEqual(result(await client.request('ping', {}, maxRequestBytes)), {});
 
       await invalidCall(client, 'graft_status', { name: 7 });
       await invalidCall(client, 'graft_status', {});
-      await invalidCall(client, 'graft_new', { name: 'unknown-history', history: 'remote' });
+      await invalidCall(client, 'graft_add', { name: 'unknown-history', history: 'remote' });
       await invalidCall(client, 'graft_list', { unexpected: true });
       await invalidCall(client, 'graft_unknown', {});
       assert.equal((await call(client, 'graft_status', { name: 'missing' }, true)).code, 'not_found');
@@ -453,7 +453,7 @@ export const cases: Scenario[] = [
         ['graft_exec', { ...owned, argv: [process.execPath, '-e',
           'require("fs").writeFileSync("execution-marker", "ran")'] }],
         ['graft_add_dependency', { ...owned, manager: 'npm', offline: true, packages: [] }],
-        ['graft_land', { ...owned, into: 'main', reconcile: true }],
+        ['graft_merge', { ...owned, into: 'main', reconcile: true }],
       ];
       for (const [name, args] of denied) {
         const refusal = await call(client, name, args, true);
@@ -487,16 +487,16 @@ export const cases: Scenario[] = [
         await initialize(replay);
         assert.deepEqual(await spawnWorkspace(replay, name, first.lease), first);
         const requestId = first.lease.toUpperCase().replaceAll('-', '');
-        assert.deepEqual(await call(replay, 'graft_new', { name, request_id: requestId }), first.result);
+        assert.deepEqual(await call(replay, 'graft_add', { name, request_id: requestId }), first.result);
       });
-      const differentOptions = await call(client, 'graft_new', {
+      const differentOptions = await call(client, 'graft_add', {
         name, request_id: first.lease, detach: true,
       }, true);
-      assert.match(string(differentOptions.message, 'spawn replay error'), /different new options/);
-      assert.equal((await call(client, 'graft_new', { name, request_id: randomUUID() }, true)).code, 'already_exists');
+      assert.match(string(differentOptions.message, 'spawn replay error'), /different add options/);
+      assert.equal((await call(client, 'graft_add', { name, request_id: randomUUID() }, true)).code, 'already_exists');
       assert.equal(ctx.git(['rev-parse', 'HEAD'], first.path), first.result.base);
       assert.equal(ctx.git(['symbolic-ref', 'HEAD'], first.path), `refs/heads/graft/${name}`);
-      ctx.coverTool('graft_new');
+      ctx.coverTool('graft_add');
 
       const listed = await call(client, 'graft_list');
       assert.deepEqual(listed, ctx.cli(['list']));
@@ -517,15 +517,15 @@ export const cases: Scenario[] = [
 
       const owned = { name, lease: first.lease };
       const wrongLease = { name, lease: randomUUID() };
-      for (const [tool, extra] of [['graft_renew', {}], ['graft_prune', {}], ['graft_land', {}],
-        ['graft_land', { undo: true }], ['graft_restore', {}]] as const) {
+      for (const [tool, extra] of [['graft_renew', {}], ['graft_remove', {}], ['graft_merge', {}],
+        ['graft_merge', { undo: true }], ['graft_restore', {}]] as const) {
         await invalidCall(client, tool, { name, ...extra });
         const error = await call(client, tool, { ...wrongLease, ...extra }, true);
         assert.equal(error.code, 'lease_mismatch');
         assert(!JSON.stringify(error).includes(first.lease));
       }
-      await invalidCall(client, 'graft_land', { ...owned, undo: true, into: 'main' });
-      await invalidCall(client, 'graft_land', { ...owned, undo: true, squash: true });
+      await invalidCall(client, 'graft_merge', { ...owned, undo: true, into: 'main' });
+      await invalidCall(client, 'graft_merge', { ...owned, undo: true, squash: true });
       assert.equal(ctx.git(['rev-parse', 'HEAD']), primaryHead);
       assert.deepEqual(await call(client, 'graft_status', { name }), status);
       const renewal = await call(client, 'graft_renew', owned);
@@ -537,13 +537,13 @@ export const cases: Scenario[] = [
       assert(!JSON.stringify(renewal).includes(first.lease));
       ctx.coverTool('graft_renew');
 
-      const discarded = await call(client, 'graft_prune', owned);
+      const discarded = await call(client, 'graft_remove', owned);
       assert.deepEqual(discarded, { action: 'drop', name, removed: true, recovery_lease: first.lease });
       assert(!existsSync(first.path));
       assertRefMissing(ctx, name);
-      assert.deepEqual(await call(client, 'graft_prune', owned), discarded);
-      assert.deepEqual(ctx.cli(['prune', name, '--lease', first.lease]), discarded);
-      ctx.coverTool('graft_prune');
+      assert.deepEqual(await call(client, 'graft_remove', owned), discarded);
+      assert.deepEqual(ctx.cli(['remove', name, '--lease', first.lease]), discarded);
+      ctx.coverTool('graft_remove');
 
       mkdirSync(first.path);
       writeFileSync(join(first.path, 'keep.txt'), 'foreign data\n');
@@ -557,8 +557,8 @@ export const cases: Scenario[] = [
       assert.deepEqual(ctx.cli(['restore', name, '--lease', first.lease]), reopened);
       ctx.coverTool('graft_restore');
       assert.notEqual(second.lease, first.lease);
-      assert.deepEqual(await call(client, 'graft_prune', owned), discarded);
-      await call(client, 'graft_land', owned, true);
+      assert.deepEqual(await call(client, 'graft_remove', owned), discarded);
+      await call(client, 'graft_merge', owned, true);
       assert.equal((await call(client, 'graft_renew', owned, true)).code, 'lease_mismatch');
       assert.equal(readFileSync(join(second.path, 'tracked.txt'), 'utf8'), 'initial\n');
 
@@ -572,7 +572,7 @@ export const cases: Scenario[] = [
         const saved = object(parseExact(readFileSync(file, 'utf8')), 'fixture record');
         writeJson(file, { ...saved, heartbeat: 0 });
       }
-      const preview = ctx.cli(['prune', '--expired']);
+      const preview = ctx.cli(['prune']);
       assert.equal(preview.applied, false);
       assert(Array.isArray(preview.retained) && preview.retained.length === 2);
       const eligibility = Object.fromEntries(preview.retained.map(value => {
@@ -583,7 +583,7 @@ export const cases: Scenario[] = [
       assert(!JSON.stringify(preview).includes(stale.lease));
       assert(existsSync(stale.path));
 
-      const applied = ctx.cli(['prune', '--expired', '--apply']);
+      const applied = ctx.cli(['prune', '--apply']);
       assert.equal(applied.applied, true);
       assert(Array.isArray(applied.retained));
       const archived = applied.retained.map(value => object(value, 'GC workspace'))
@@ -599,10 +599,10 @@ export const cases: Scenario[] = [
       assert.notEqual(restoredStale.lease, stale.lease);
       assert.equal(readFileSync(join(workspacePath(restoredStale), 'tracked.txt'), 'utf8'), 'initial\n');
       assert.equal(readFileSync(join(dirty.path, 'local.txt'), 'utf8'), 'untracked\n');
-      const parked = await call(client, 'graft_prune', { name: 'dirty', lease: dirty.lease, discard: true });
+      const parked = await call(client, 'graft_remove', { name: 'dirty', lease: dirty.lease, discard: true });
       assert.equal(parked.recovery_lease, dirty.lease);
       for (const [label, published] of [['doctor', ctx.cli(['doctor'])], ['graft_list', await call(client, 'graft_list')],
-        ['prune --expired', ctx.cli(['prune', '--expired'])]] as const) {
+        ['prune --expired', ctx.cli(['prune'])]] as const) {
         assert(!JSON.stringify(published).includes(dirty.lease), label + ' disclosed a retired graft lease');
       }
       assert(!ctx.git(['for-each-ref', '--format=%(refname)']).includes(dirty.lease));
@@ -626,11 +626,11 @@ export const cases: Scenario[] = [
       ctx.git(['commit', '-am', 'Workspace edit'], workspace.path);
       const tip = ctx.git(['rev-parse', 'HEAD'], workspace.path);
 
-      const conflict = await call(client, 'graft_land', owned, true);
+      const conflict = await call(client, 'graft_merge', owned, true);
       assert.equal(conflict.code, 'merge_conflict');
       const details = object(conflict.details, 'merge conflict details');
       assert.deepEqual(details.paths, ['tracked.txt']);
-      assert.deepEqual(conflict, ctx.fail(['land', name, '--lease', workspace.lease]));
+      assert.deepEqual(conflict, ctx.fail(['merge', name, '--lease', workspace.lease]));
       assert.equal(ctx.git(['rev-parse', 'refs/heads/main']), destination);
       assert.equal(ctx.git(['rev-parse', 'HEAD'], workspace.path), tip);
       assert.equal(readFileSync(join(ctx.repo, 'tracked.txt'), 'utf8'), 'destination\n');
@@ -641,7 +641,7 @@ export const cases: Scenario[] = [
       ctx.git(['switch', 'retry-target']);
       const landArgs = { ...owned, into: 'retry-target', squash: true };
       writeFileSync(join(target, 'keep.txt'), 'local work\n');
-      const dirty = await call(client, 'graft_land', landArgs, true);
+      const dirty = await call(client, 'graft_merge', landArgs, true);
       assert.match(string(dirty.message, 'destination refusal'), /local changes/);
       assert.equal(readFileSync(join(target, 'keep.txt'), 'utf8'), 'local work\n');
       assert.equal(ctx.git(['rev-parse', 'HEAD'], target), base);
@@ -650,7 +650,7 @@ export const cases: Scenario[] = [
       ctx.git(['commit', '-m', 'Preserve local work'], target);
       const previous = ctx.git(['rev-parse', 'HEAD'], target);
 
-      const landed = await call(client, 'graft_land', landArgs);
+      const landed = await call(client, 'graft_merge', landArgs);
       const commit = string(landed.commit, 'landed commit');
       assert.deepEqual(landed, {
         action: 'land', name, target: 'retry-target', previous, commit, workspace_tip: tip, removed: true, recovery_lease: workspace.lease,
@@ -663,15 +663,15 @@ export const cases: Scenario[] = [
       assert.equal(ctx.git(['rev-parse', 'refs/heads/main']), destination);
       assert(!existsSync(workspace.path));
       assertRefMissing(ctx, name);
-      assert.deepEqual(await call(client, 'graft_land', landArgs), landed);
-      assert.deepEqual(ctx.cli(['land', name, '--lease', workspace.lease, '--into', 'retry-target', '--squash']), landed);
-      ctx.coverTool('graft_land');
-      const undone = await call(client, 'graft_land', { ...owned, undo: true });
+      assert.deepEqual(await call(client, 'graft_merge', landArgs), landed);
+      assert.deepEqual(ctx.cli(['merge', name, '--lease', workspace.lease, '--into', 'retry-target', '--squash']), landed);
+      ctx.coverTool('graft_merge');
+      const undone = await call(client, 'graft_merge', { ...owned, undo: true });
       assert.equal(undone.target, 'retry-target');
       assert.equal(ctx.git(['rev-parse', 'HEAD^'], target), commit);
       assert.equal(ctx.git(['rev-parse', 'HEAD^{tree}'], target), ctx.git(['rev-parse', previous + '^{tree}']));
-      assert.deepEqual(await call(client, 'graft_land', { ...owned, undo: true }), undone);
-      assert.deepEqual(ctx.cli(['land', name, '--undo', '--lease', workspace.lease]), undone);
+      assert.deepEqual(await call(client, 'graft_merge', { ...owned, undo: true }), undone);
+      assert.deepEqual(ctx.cli(['merge', name, '--undo', '--lease', workspace.lease]), undone);
     }),
   },
   {
@@ -696,7 +696,7 @@ export const cases: Scenario[] = [
       assert.equal(ctx.fail(['lock', name, ...leaseOf(wrong), '--reason', 'wrong lease']).code, 'lease_mismatch');
       assert.equal(ctx.cli(['lock', name, ...leaseOf(owned), '--reason', 'review']).locked, 'review');
       ctx.fail(['move', name, moved, ...leaseOf(owned)]);
-      await call(client, 'graft_prune', { ...owned, discard: true }, true);
+      await call(client, 'graft_remove', { ...owned, discard: true }, true);
       assert.equal(ctx.fail(['unlock', name, ...leaseOf(wrong)]).code, 'lease_mismatch');
       assert.equal(ctx.cli(['unlock', name, ...leaseOf(owned)]).locked, null);
       assert.equal(ctx.fail(['move', name, moved, ...leaseOf(wrong)]).code, 'lease_mismatch');
@@ -730,7 +730,7 @@ export const cases: Scenario[] = [
       assert.equal(ctx.git(['tag', '--list', 'private-tag']), '');
       assert.equal(ctx.git(['rev-parse', 'HEAD']), base);
 
-      const receipt = await call(client, 'graft_land', owned);
+      const receipt = await call(client, 'graft_merge', owned);
       assert.deepEqual(receipt, {
         action: 'land', name, target: 'main', previous: base, commit: tip,
         workspace_tip: tip, removed: true, recovery_lease: workspace.lease,
@@ -744,9 +744,9 @@ export const cases: Scenario[] = [
       assert.equal(recoverable.name, name);
       assert.equal(workspacePath(recoverable), repaired);
       assert(!JSON.stringify(retired).includes(workspace.lease));
-      assert.deepEqual(await call(client, 'graft_land', owned), receipt);
+      assert.deepEqual(await call(client, 'graft_merge', owned), receipt);
 
-      const reversed = await call(client, 'graft_land', { ...owned, undo: true });
+      const reversed = await call(client, 'graft_merge', { ...owned, undo: true });
       assert.equal(ctx.git(['rev-parse', 'HEAD']), reversed.commit);
       assert.equal(ctx.git(['rev-parse', 'HEAD^']), tip);
       assert.equal(ctx.git(['rev-parse', 'HEAD^{tree}']), ctx.git(['rev-parse', `${base}^{tree}`]));
@@ -763,7 +763,7 @@ export const cases: Scenario[] = [
       writeFileSync(join(repaired, 'untracked.txt'), 'untracked\n');
       mkdirSync(join(repaired, 'ignored'));
       writeFileSync(join(repaired, 'ignored', 'output'), 'ignored build output\n');
-      const discarded = await call(client, 'graft_prune', { name, lease, discard: true });
+      const discarded = await call(client, 'graft_remove', { name, lease, discard: true });
       assert.equal(discarded.recovery_lease, lease);
       assert(!existsSync(repaired));
       await call(client, 'graft_restore', owned, true);
@@ -792,17 +792,17 @@ export const cases: Scenario[] = [
       ctx.git(['update-ref', 'refs/heads/unrelated', unrelated]);
       const probe = object(ctx.cli(['doctor']).source_storage, 'source filesystem capability');
       const defaultArgs = { name: 'mcp-default-history', request_id: randomUUID() };
-      const defaultWorkspace = await call(client, 'graft_new', defaultArgs);
+      const defaultWorkspace = await call(client, 'graft_add', defaultArgs);
       const visibility = (workspace: JsonObject) => ctx.command('git', ['cat-file', '-e', unrelated], workspacePath(workspace)).status;
       assert.equal(visibility(defaultWorkspace) === 0, probe.native_clone, 'unconfigured local history visibility');
       ctx.git(['config', '--local', 'graft.history', 'isolated']);
-      assert.deepEqual(await call(client, 'graft_new', defaultArgs), defaultWorkspace, 'retry must preserve original policy');
-      const configured = await call(client, 'graft_new', { name: 'mcp-configured-history' });
+      assert.deepEqual(await call(client, 'graft_add', defaultArgs), defaultWorkspace, 'retry must preserve original policy');
+      const configured = await call(client, 'graft_add', { name: 'mcp-configured-history' });
       assert.notEqual(visibility(configured), 0, 'configured isolated policy must exclude unrelated objects');
-      const override = await call(client, 'graft_new', { name: 'mcp-override-history', history: 'local' });
+      const override = await call(client, 'graft_add', { name: 'mcp-override-history', history: 'local' });
       assert.equal(visibility(override) === 0, probe.native_clone, 'explicit local policy must override project setting');
       ctx.git(['config', '--local', 'graft.history', 'local']);
-      const isolated = await call(client, 'graft_new', { name: 'mcp-isolated-history', history: 'isolated' });
+      const isolated = await call(client, 'graft_add', { name: 'mcp-isolated-history', history: 'isolated' });
       assert.notEqual(visibility(isolated), 0, 'explicit isolated policy must exclude unrelated objects');
     }),
   },
@@ -822,7 +822,7 @@ export const cases: Scenario[] = [
         { detach: 'true' },
         { unexpected: true },
       ]) {
-        await invalidCall(client, 'graft_new', { name: 'bad-mode', ...options });
+        await invalidCall(client, 'graft_add', { name: 'bad-mode', ...options });
       }
       assert.deepEqual(await call(client, 'graft_list'), { workspaces: [], recoverable: [] });
       const base = ctx.git(['rev-parse', 'HEAD']);
@@ -831,14 +831,14 @@ export const cases: Scenario[] = [
         base, no_checkout: true, lock: true, reason: 'manual population',
       };
       ctx.git(['config', '--local', 'graft.history', 'local']);
-      const locked = await call(client, 'graft_new', args);
+      const locked = await call(client, 'graft_add', args);
       if (probe.native_clone) {
         assert.equal(object(object(locked.storage, 'workspace storage').objects, 'workspace history').source, 'local-snapshot');
       }
       ctx.git(['config', '--local', '--unset', 'graft.history']);
       assert.equal(locked.lease, args.request_id);
       assert.equal(locked.locked, 'manual population');
-      assert.deepEqual(await call(client, 'graft_new', args), locked);
+      assert.deepEqual(await call(client, 'graft_add', args), locked);
       const empty = workspacePath(locked);
       assert.equal(ctx.git(['symbolic-ref', '--short', 'HEAD'], empty), 'custom/branch');
       assert.equal(ctx.git(['rev-parse', 'HEAD'], empty), base);
@@ -847,13 +847,13 @@ export const cases: Scenario[] = [
       ctx.git(['restore', '--source=HEAD', '--staged', '--worktree', '--', '.'], empty);
       assert.equal(readFileSync(join(empty, 'tracked.txt'), 'utf8'), 'initial\n');
 
-      const detached = await call(client, 'graft_new', { name: 'mcp-detached', detach: true, history: 'tip' });
+      const detached = await call(client, 'graft_add', { name: 'mcp-detached', detach: true, history: 'tip' });
       const detachedPath = workspacePath(detached);
       assert.equal(ctx.git(['rev-parse', '--is-shallow-repository'], detachedPath), 'true');
       assert.equal(detached.branch, null);
       assert.equal(ctx.git(['branch', '--show-current'], detachedPath), '');
       assert.equal(ctx.git(['rev-parse', 'HEAD'], detachedPath), base);
-      const orphan = await call(client, 'graft_new', { name: 'mcp-orphan', orphan: 'private-root' });
+      const orphan = await call(client, 'graft_add', { name: 'mcp-orphan', orphan: 'private-root' });
       const orphanPath = workspacePath(orphan);
       assert.equal(ctx.git(['symbolic-ref', '--short', 'HEAD'], orphanPath), 'private-root');
       assert.notEqual(ctx.command('git', ['rev-parse', '--verify', 'HEAD'], orphanPath).status, 0);
@@ -872,12 +872,12 @@ export const cases: Scenario[] = [
       const nativeClone = object(doctor.source_storage, 'source storage').native_clone;
       assert.equal(typeof nativeClone, 'boolean');
       const key = 'mcp-shared-fixture';
-      const conflict = ctx.fail(['seed', '--shared', '--copy', '--key', key]);
+      const conflict = ctx.fail(['deps', 'share', '--copy', '--key', key]);
       assert.equal(conflict.code, 'invalid_dependency_mode');
       assert.match(String(conflict.message), /omit --copy/i);
 
       // Seeding is CLI-only; MCP grafts inherit the registered shared install.
-      const seed = nativeClone ? ctx.cli(['seed', '--shared', '--key', key]) : ctx.fail(['seed', '--shared', '--key', key]);
+      const seed = nativeClone ? ctx.cli(['deps', 'share', '--key', key]) : ctx.fail(['deps', 'share', '--key', key]);
       if (!nativeClone) assert.equal(seed.code, 'cow_unavailable');
       await withClient(ctx, true, async client => {
         await initialize(client);
@@ -887,14 +887,14 @@ export const cases: Scenario[] = [
           assert.equal(dependencies.status, 'attached');
           assert.equal(dependencies.copied_bytes, 0);
           assert.equal(readFileSync(join(attached.path, file), 'utf8'), fixtureContents);
-          const optedOut = await call(client, 'graft_new', { name: 'mcp-no-deps', no_deps: true });
+          const optedOut = await call(client, 'graft_add', { name: 'mcp-no-deps', no_deps: true });
           assert(!('dependencies' in object(optedOut.storage, 'opted-out storage')));
           assert(!existsSync(join(workspacePath(optedOut), file)));
         }
       });
       await withClient(ctx, false, async client => {
         await initialize(client);
-        const sourceOnly = await call(client, 'graft_new', { name: 'mcp-disabled', no_deps: false });
+        const sourceOnly = await call(client, 'graft_add', { name: 'mcp-disabled', no_deps: false });
         assert(!('dependencies' in object(sourceOnly.storage, 'disabled storage')));
         assert(!existsSync(join(workspacePath(sourceOnly), file)));
       });
@@ -908,7 +908,7 @@ export const cases: Scenario[] = [
         assert(!('dependencies' in object(noDeps.result.storage, 'CLI opted-out storage')));
         assert(!existsSync(join(noDeps.path, file)));
       } else {
-        assert.equal(ctx.fail(['seed', '--shared', '--key', 'cli-shared-fixture']).code, 'cow_unavailable');
+        assert.equal(ctx.fail(['deps', 'share', '--key', 'cli-shared-fixture']).code, 'cow_unavailable');
       }
     },
   },
@@ -1039,9 +1039,9 @@ export const cases: Scenario[] = [
         assert.equal(readFileSync(savedModule, 'utf8'), fixtureContents);
         assert.equal(readFileSync(sourceModule, 'utf8'), producerEdit);
 
-        const forgotten = ctx.cli(layerArgs('forget', name, consumer.lease, key));
+        const forgotten = ctx.cli(layerArgs('remove', name, consumer.lease, key));
         assert.deepEqual(forgotten, {
-          action: 'forget', digest, backend: mode.backend, logical_bytes: 0, cloned_bytes: 0, copied_bytes: 0,
+          action: 'remove', digest, backend: mode.backend, logical_bytes: 0, cloned_bytes: 0, copied_bytes: 0,
           ...(process.platform === 'win32' ? { retained: true } : {}),
         });
         assert.deepEqual(readdirSync(layers).filter(entry => entry !== '.git-graft-id'), []);
@@ -1054,7 +1054,7 @@ export const cases: Scenario[] = [
       });
       npm(ctx, ['ci', '--offline', '--ignore-scripts', '--cache', join(cache, 'npm')], ctx.repo);
       const key = keyPrefix + '-primary';
-      const primarySeed = ctx.cli(['seed', '--key', key, '--copy']);
+      const primarySeed = ctx.cli(['deps', 'share', '--snapshot', '--copy', '--key', key]);
       const clean = await spawnWorkspace(client, 'primary-consumer');
       const transfer = ctx.cli(layerArgs('restore', 'primary-consumer', clean.lease, key, true));
       assert.equal(transfer.digest, primarySeed.digest);

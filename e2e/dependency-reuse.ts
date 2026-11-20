@@ -45,10 +45,10 @@ export const cases: Scenario[] = [{
     const digest = (path: string) => createHash('sha256').update(readFileSync(path)).digest('hex');
     const originalDigest = digest(original);
     assert.equal(originalDigest,fixture.payloadDigest);
-    const incompatible = ctx.command(ctx.bin,['--repo',ctx.repo,'--json','seed','--shared','--copy','--key','bad']);
+    const incompatible = ctx.command(ctx.bin,['--repo',ctx.repo,'--json','deps','share','--copy','--key','bad']);
     assert.ifError(incompatible.error); assert.notEqual(incompatible.status,0);
     assert.equal(objectResult(JSON.parse(incompatible.stderr || incompatible.stdout)).code,'invalid_dependency_mode');
-    const attempt = ctx.command(ctx.bin,['--repo',ctx.repo,'--json','seed','--shared','--key','fixture']);
+    const attempt = ctx.command(ctx.bin,['--repo',ctx.repo,'--json','deps','share','--key','fixture']);
     assert.ifError(attempt.error);
     if (attempt.status !== 0) {
       const failure = objectResult(JSON.parse(attempt.stderr || attempt.stdout));
@@ -57,7 +57,7 @@ export const cases: Scenario[] = [{
       assert(!existsSync(join(absent.path,'node_modules')));
       const storage = objectResult(absent.result.storage);
       assert(!('dependencies' in storage));
-      const saved = ctx.cli(['seed','--copy','--key','portable']);
+      const saved = ctx.cli(['deps','share','--snapshot','--copy','--key','portable']);
       const blocked = ctx.fail(['deps','layer','restore','unsupported','--lease',absent.lease,'--key','portable']);
       assert.equal(blocked.code,'cow_unavailable');
       assert(!existsSync(join(absent.path,'node_modules')));
@@ -262,12 +262,12 @@ export const cases: Scenario[] = [{
     assert.equal(readFileSync(original, 'utf8'), 'module.exports = 42;\n');
 
     writeFileSync(join(ctx.repo, 'tracked.txt'), 'dirty');
-    ctx.fail(['seed', '--key', 'fixture']);
+    ctx.fail(['deps', 'share', '--snapshot', '--key', 'fixture']);
     writeFileSync(join(ctx.repo, 'tracked.txt'), 'initial\n');
-    const saved = ctx.cli(['seed', '--copy', '--key', 'fixture']);
+    const saved = ctx.cli(['deps', 'share', '--snapshot', '--copy', '--key', 'fixture']);
     assert.equal(typeof saved.digest, 'string');
     assert(Number(saved.logical_bytes) > 0);
-    ctx.fail(['seed', '--key', 'fixture']);
+    ctx.fail(['deps', 'share', '--snapshot', '--key', 'fixture']);
     const ws = ctx.spawn('consumer');
     assert(lstatSync(join(ws.path,'.git')).isDirectory());
     const layer = (action: string, key = 'fixture') => ['deps', 'layer', action, 'consumer', '--lease', ws.lease, '--key', key, '--copy'];
@@ -309,7 +309,7 @@ export const cases: Scenario[] = [{
         ctx.unavailable('Creating a directory junction requires permission');
       throw error;
     }
-    ctx.fail(['seed', '--key', 'fixture']);
+    ctx.fail(['deps', 'share', '--snapshot', '--key', 'fixture']);
     assert.equal(readFileSync(join(outside, 'keep'), 'utf8'), 'keep');
   },
 }];

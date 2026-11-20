@@ -329,7 +329,7 @@ const layerCase: Scenario = {
       assert.equal(normal.copied_bytes,0);
       assert.equal(normal.logical_bytes,normal.cloned_bytes);
       ctx.measure('layer_default_backend',normal.backend);
-      ctx.cli(layer('forget',second));
+      ctx.cli(layer('remove',second));
     } else {
       const refusal=record(JSON.parse(attempt.stderr || attempt.stdout));
       assert.equal(refusal.code,'cow_unavailable');
@@ -344,14 +344,14 @@ const layerCase: Scenario = {
     const original=readFileSync(cached); writeFileSync(cached,'tampered');
     ctx.fail(layer('restore',third,'node-1',true));
     assert(!existsSync(join(third.path,'node_modules')));
-    ctx.fail(layer('forget',second));
+    ctx.fail(layer('remove',second));
     assert.equal(readFileSync(cached,'utf8'),'tampered');
     writeFileSync(cached,original);
     if (process.platform !== 'win32') {
       const outside=join(ctx.root,'shared-package-file');
       linkSync(cached,outside);
       ctx.fail(layer('restore',third,'node-1',true));
-      ctx.fail(layer('forget',second));
+      ctx.fail(layer('remove',second));
       assert(!existsSync(join(third.path,'node_modules')));
       assert.deepEqual(readFileSync(cached),original);
       assert.deepEqual(readFileSync(outside),original);
@@ -359,7 +359,7 @@ const layerCase: Scenario = {
       const mode=statSync(cached).mode & 0o777;
       chmodSync(cached,mode ^ 0o100);
       ctx.fail(layer('restore',third,'node-1',true));
-      ctx.fail(layer('forget',second));
+      ctx.fail(layer('remove',second));
       assert.equal(statSync(cached).mode & 0o777,mode ^ 0o100);
       chmodSync(cached,mode);
     }
@@ -376,7 +376,7 @@ const layerCase: Scenario = {
     }
     independentFiles(sourcePackage,restoredPackage);
     ctx.fail(layer('restore',third));
-    const forgotten=ctx.cli(layer('forget',second));
+    const forgotten=ctx.cli(layer('remove',second));
     assert(!existsSync(join(state,'layers',String(saved.digest))));
     if (process.platform === 'win32') {
       assert.equal(forgotten.retained,true);

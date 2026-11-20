@@ -80,7 +80,7 @@ export const cases: Scenario[] = [{
     const primary = ctx.git(['rev-parse', 'HEAD']);
     const workspace = ctx.git(['rev-parse', 'HEAD'], ws.path);
     const staged = ctx.git(['diff', '--cached', '--binary'], ws.path);
-    assert.equal(ctx.fail(['land', 'unicode-case', '--lease', ws.lease, '--commit', 'Land source']).code,
+    assert.equal(ctx.fail(['merge', 'unicode-case', '--lease', ws.lease, '--commit', 'Land source']).code,
       'registered_install_exposed');
     assert.equal(ctx.git(['rev-parse', 'HEAD']), primary);
     assert.equal(ctx.git(['rev-parse', 'HEAD'], ws.path), workspace);
@@ -132,7 +132,7 @@ export const cases: Scenario[] = [{
     assert.equal(ctx.git(['show', `${base}:vendor/bundle-notes.txt`]), 'original nested source');
     writeFileSync(join(ws.path, 'node_modules_notes.txt'), 'updated top source\n');
     writeFileSync(join(ws.path, 'vendor/bundle-notes.txt'), 'updated nested source\n');
-    const result = ctx.cli(['land', 'protected-land', '--lease', ws.lease,
+    const result = ctx.cli(['merge', 'protected-land', '--lease', ws.lease,
       '--commit', 'Land source with installs', '--discard-ignored']);
     assert.equal(ctx.git(['rev-parse', 'HEAD']), result.commit);
     assert.equal(ctx.git(['show', 'HEAD:node_modules_notes.txt']), 'updated top source');
@@ -187,7 +187,7 @@ export const cases: Scenario[] = [{
     assert.notEqual(attachment.status, 'attached');
     assert(!existsSync(join(ws.path, 'vendor/bundle/package')));
     writeFileSync(join(ws.path, 'tracked.txt'), 'landed source\n');
-    ctx.cli(['land', 'local-exclude', '--lease', ws.lease, '--commit', 'Land source']);
+    ctx.cli(['merge', 'local-exclude', '--lease', ws.lease, '--commit', 'Land source']);
     assert.equal(readFileSync(join(ctx.repo, 'tracked.txt'), 'utf8'), 'landed source\n');
     assert.equal(ctx.git(['ls-tree', '-r', '--name-only', 'HEAD', '--', 'vendor']), '');
     assert.equal(readFileSync(join(ctx.repo, 'vendor/bundle/package'), 'utf8'), 'dependency payload');
@@ -207,7 +207,7 @@ export const cases: Scenario[] = [{
       writeFileSync(join(ws.path, '.gitignore'), ignored);
       writeFileSync(join(ws.path, 'tracked.txt'), 'workspace source\n');
       const workspaceHead = ctx.git(['rev-parse', 'HEAD'], ws.path);
-      assert.equal(ctx.fail(['land', name, '--lease', ws.lease, '--commit', 'Land source']).code,
+      assert.equal(ctx.fail(['merge', name, '--lease', ws.lease, '--commit', 'Land source']).code,
         'registered_install_exposed');
       assert.equal(ctx.git(['rev-parse', 'HEAD']), primary);
       assert.equal(ctx.git(['rev-parse', 'HEAD'], ws.path), workspaceHead);
@@ -262,12 +262,12 @@ export const cases: Scenario[] = [{
     const active = ctx.spawn('purge-active');
     assert.equal(registered(active.result)?.status, 'attached');
     for (const flags of [[], ['--apply']]) {
-      const live = objectResult(ctx.cli(['prune','--expired', '--purge-cache', ...flags]).cache);
+      const live = objectResult(ctx.cli(['prune', '--purge-cache', ...flags]).cache);
       assert.equal(live.eligible, false);
       assert.equal(live.purged, false);
       assert(existsSync(generation));
     }
-    ctx.cli(['prune', 'purge-active', '--lease', active.lease, '--discard']);
+    ctx.cli(['remove', 'purge-active', '--lease', active.lease, '--discard']);
     const foreign = join(fixture.root, 'foreign-user-directory');
     mkdirSync(foreign);
     writeFileSync(join(foreign, 'keep'), 'user data');
@@ -280,7 +280,7 @@ export const cases: Scenario[] = [{
     const changed = join(fixture.root, changedName);
     writeFileSync(join(changed, 'tree', 'package'), 'modified data');
     for (const flags of [[], ['--apply']]) {
-      const receipt = objectResult(ctx.cli(['prune','--expired', '--purge-cache', ...flags]).cache);
+      const receipt = objectResult(ctx.cli(['prune', '--purge-cache', ...flags]).cache);
       assert(Array.isArray(receipt.candidates) && receipt.candidates.includes(generation));
       assert(Array.isArray(receipt.blocked));
       assert(receipt.blocked.map(objectResult).some(item => item.path === foreign));
@@ -313,9 +313,9 @@ export const cases: Scenario[] = [{
       const ws = ctx.spawn(name);
       assert.notEqual(registered(ws.result)?.status, 'attached');
       assert(!existsSync(join(ws.path, 'vendor/bundle')));
-      ctx.cli(['prune', name, '--lease', ws.lease]);
+      ctx.cli(['remove', name, '--lease', ws.lease]);
       for (const flags of [[], ['--apply']]) {
-        const receipt = objectResult(ctx.cli(['prune','--expired', '--purge-cache', ...flags]).cache);
+        const receipt = objectResult(ctx.cli(['prune', '--purge-cache', ...flags]).cache);
         assert(Array.isArray(receipt.blocked) && receipt.blocked.map(objectResult).some(item => item.path === generation));
         assert(existsSync(join(generation, 'tree', 'package')));
         assert.equal(readFileSync(join(original, 'tree', 'package'), 'utf8'), 'original package');

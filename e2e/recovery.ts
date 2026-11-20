@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import { objectResult, parseExact, type Context, type Scenario } from './harness.ts';
 
 function drop(ctx: Context, name: string, lease: string) {
-  return ctx.cli(['prune', name, '--lease', lease, '--discard']);
+  return ctx.cli(['remove', name, '--lease', lease, '--discard']);
 }
 
 function restore(name: string, lease: string) {
@@ -78,8 +78,8 @@ export const cases: Scenario[] = [
       ctx.git(['-c', 'gc.reflogExpire=now', '-c', 'gc.reflogExpireUnreachable=now', 'gc', '--prune=now']);
       ctx.git(['fsck', '--full']);
       assert.notEqual(ctx.command('git', ['cat-file', '-e', `${tip}^{commit}`]).status, 0);
-      ctx.cli(['prune','--expired', '--apply']);
-      ctx.fail(['new', name, '--request-id', ws.lease]);
+      ctx.cli(['prune', '--apply']);
+      ctx.fail(['add', name, '--request-id', ws.lease]);
 
       const response = ctx.cli(restore(name, ws.lease));
       assert.equal(response.path, ws.path);
@@ -138,7 +138,7 @@ export const cases: Scenario[] = [
       const archive = join(dirname(archivePath(ctx, seed.result.id)), String(id));
       writeFileSync(join(ws.path, 'local.txt'), 'preserve');
       const active = objectResult(parseExact(readFileSync(path, 'utf8')));
-      const command = ['prune', 'retry', '--lease', ws.lease, '--discard'];
+      const command = ['remove', 'retry', '--lease', ws.lease, '--discard'];
       writeFileSync(path, JSON.stringify({
         ...active, archive, transition: { action: 'retire', status: 'dropped' },
       }));
@@ -187,7 +187,7 @@ export const cases: Scenario[] = [
       const tip = history(ctx, ws.path, 'landed work');
       mkdirSync(join(ws.path, 'ignored'));
       writeFileSync(join(ws.path, 'ignored', 'local.txt'), 'ignored work');
-      const args = ['land', name, '--lease', ws.lease];
+      const args = ['merge', name, '--lease', ws.lease];
       assert.match(String(ctx.fail(args).message), /ignored files/i);
       assert.equal(ctx.git(['rev-parse', 'main']), ctx.git(['rev-parse', tip + '^'], ws.path));
       const landed = ctx.cli([...args, '--discard-ignored']);

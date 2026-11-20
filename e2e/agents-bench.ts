@@ -316,8 +316,8 @@ function run(arm: Arm | 'nativeConventional', fixture: Fixture, apfsCalibration?
     let copiedLayer = false;
     if (!isNative) stage('seed', () => {
       const key = 'workflow-bench-npm-offline-v1';
-      const result = observedCommand('git graft seed',gitExe,
-        ['graft','--repo',ctx.repo,'--json','seed','--shared','--key',key]);
+      const result = observedCommand('git graft deps share',gitExe,
+        ['graft','--repo',ctx.repo,'--json','deps','share','--key',key]);
       assert.ifError(result.error);
       if (result.status === 0) {
         const receipt = objectResult(JSON.parse(result.stdout));
@@ -334,7 +334,7 @@ function run(arm: Arm | 'nativeConventional', fixture: Fixture, apfsCalibration?
         }).find(value => typeof value.code === 'string');
         assert.equal(refusal?.code,'cow_unavailable',result.stderr);
         copiedLayer = true;
-        assert.equal(graft(['seed','--key',key,'--copy']).action,'save');
+        assert.equal(graft(['deps','share','--key',key,'--snapshot','--copy']).action,'save');
       }
     });
     stage('primaryDirt', () => {
@@ -370,7 +370,7 @@ function run(arm: Arm | 'nativeConventional', fixture: Fixture, apfsCalibration?
           git(['worktree','add','-b',name,path,'main']);
           npm(['ci','--offline'],path);
         } else {
-          const result = graft(['new',name,'--history','local']);
+          const result = graft(['add',name,'--history','local']);
           const checkout = result.path;
           assert(typeof checkout === 'string' && typeof result.lease === 'string');
           path = checkout;
@@ -470,12 +470,12 @@ function run(arm: Arm | 'nativeConventional', fixture: Fixture, apfsCalibration?
         git(['update-ref','refs/heads/integration',landedTip,head]);
         nativeRetire(landed,landedTip,['node_modules','dist'],false);
       } else {
-        assert.equal(cli('land',landed,['--into','integration','--discard-ignored']).removed,true);
+        assert.equal(cli('merge',landed,['--into','integration','--discard-ignored']).removed,true);
       }
     });
     stage('drop', () => {
       if (isNative) nativeRetire(dropped,droppedTip,discardedFiles,true);
-      else assert.equal(cli('prune',dropped,['--discard']).removed,true);
+      else assert.equal(cli('remove',dropped,['--discard']).removed,true);
     });
     assert(workspaces.every(workspace => !existsSync(workspace.path)));
     assert.equal(git(['rev-parse','integration'],ctx.repo,false),landedTip);
@@ -506,13 +506,13 @@ function run(arm: Arm | 'nativeConventional', fixture: Fixture, apfsCalibration?
     assert.equal(createHash('sha256').update(readFileSync(join(dropped.path,dependencyPayload))).digest('hex'),fixture.archive.payloadDigest);
     stage('dropRestored', () => {
       if (isNative) nativeRetire(dropped,droppedTip,discardedFiles,false);
-      else assert.equal(cli('prune',dropped,['--discard']).removed,true);
+      else assert.equal(cli('remove',dropped,['--discard']).removed,true);
     });
     }
     stage('gc', () => {
-      if (isNative) git(['worktree','prune']);
+      if (isNative) git(['worktree','remove']);
       else {
-        const result = graft(['prune','--expired','--purge-cache','--apply']);
+        const result = graft(['prune','--purge-cache','--apply']);
         assert.equal(result.applied,true);
         if (result.cache) receipts.cache = counters(result.cache);
       }
