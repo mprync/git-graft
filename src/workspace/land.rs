@@ -22,17 +22,27 @@ mod scratch;
 
 const STORE_OWNER: &str = "graft-object-store";
 
-fn namespace(id: &str) -> String {
-    format!("refs/graft/workspaces/{}", blake3::hash(id.as_bytes()))
+/// The first 128 bits of a BLAKE3 hash in hex. Ref and file names built from
+/// these stay well inside Windows' 260-character path limit, which Git for
+/// Windows enforces for loose refs.
+fn short_key(hash: blake3::Hash) -> String {
+    hash.to_hex()[..32].to_owned()
 }
 
-fn plan_key(plan: &Plan) -> blake3::Hash {
+fn namespace(id: &str) -> String {
+    format!(
+        "refs/graft/workspaces/{}",
+        short_key(blake3::hash(id.as_bytes()))
+    )
+}
+
+fn plan_key(plan: &Plan) -> String {
     let mut key = blake3::Hasher::new();
     for field in [&plan.target, &plan.old, &plan.new, &plan.tip] {
         key.update(field.as_bytes());
         key.update(b"\0");
     }
-    key.finalize()
+    short_key(key.finalize())
 }
 
 fn plan_pins(plan: &Plan) -> [(String, &str); 3] {

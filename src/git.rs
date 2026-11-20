@@ -59,10 +59,6 @@ fn minimum_git_includes_vendor_builds() {
 pub fn command(dir: &Path) -> Command {
     let mut cmd = Command::new("git");
     clear_location(&mut cmd);
-    // Workspace refs and private stores nest deeply. Git for Windows refuses
-    // paths over 260 characters unless long paths are enabled.
-    #[cfg(windows)]
-    cmd.args(["-c", "core.longpaths=true"]);
     cmd.arg("-C")
         .arg(dir)
         .env("GIT_NO_LAZY_FETCH", "1")
