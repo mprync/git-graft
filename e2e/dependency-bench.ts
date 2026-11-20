@@ -5,8 +5,8 @@
  * toolchain, installs them once in the primary checkout, then compares two ways to give
  * each task a ready-to-test checkout:
  *   worktree  `git worktree add` followed by `npm ci` in the new checkout
- *   graft     `git graft spawn`, with the primary's installed tree registered once by
- *             `git graft seed-layer --shared`
+ *   graft     `git graft new`, with the primary's installed tree registered once by
+ *             `git graft seed --shared`
  * Disk is the increase in physical APFS file data under the fixture after each workspace,
  * measured by e2e/apfs-file-data.py, so it counts only blocks a workspace really owns.
  * Needs macOS on APFS and npm. Installs run offline, so fill the npm cache first by
@@ -80,7 +80,7 @@ function arm(name: 'worktree' | 'graft'): Sample[] {
   const root = realpathSync(mkdtempSync(join(tmpdir(), `graft-deps-${name}-`)));
   try {
     const repo = primary(root);
-    if (name === 'graft') run(bin, ['--repo', repo, '--json', 'seed-layer', '--shared', '--key', 'bench-npm'], repo);
+    if (name === 'graft') run(bin, ['--repo', repo, '--json', 'seed', '--shared', '--key', 'bench-npm'], repo);
     const samples: Sample[] = [];
     let before = fileData(root);
     for (let index = 1; index <= count; index++) {
@@ -89,7 +89,7 @@ function arm(name: 'worktree' | 'graft'): Sample[] {
           ['git', ['worktree', 'add', '-q', '-b', `task-${index}`, join(root, `task-${index}`)], repo],
           ['npm', ['ci', '--offline', '--ignore-scripts', '--no-audit', '--no-fund'], join(root, `task-${index}`)],
         ])
-        : timed([[bin, ['--repo', repo, '--json', 'spawn', `task-${index}`, '--base', 'main'], repo]]);
+        : timed([[bin, ['--repo', repo, '--json', 'new', `task-${index}`, '--base', 'main'], repo]]);
       const after = fileData(root);
       samples.push({ seconds, bytes: Number(after - before) });
       before = after;

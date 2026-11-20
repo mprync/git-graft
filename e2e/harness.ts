@@ -106,7 +106,7 @@ export class Context {
     return objectResult(JSON.parse(out.stderr || out.stdout));
   }
   spawn(name: string, extra: string[]=[], cwd=this.repo) {
-    const result=this.cli(['spawn',name,...extra],cwd);
+    const result=this.cli(['new',name,...extra],cwd);
     assert(typeof result.lease==='string' && typeof result.path==='string');
     return {path:result.path,lease:result.lease,result};
   }

@@ -45,10 +45,10 @@ export const cases: Scenario[] = [{
     const digest = (path: string) => createHash('sha256').update(readFileSync(path)).digest('hex');
     const originalDigest = digest(original);
     assert.equal(originalDigest,fixture.payloadDigest);
-    const incompatible = ctx.command(ctx.bin,['--repo',ctx.repo,'--json','seed-layer','--shared','--copy','--key','bad']);
+    const incompatible = ctx.command(ctx.bin,['--repo',ctx.repo,'--json','seed','--shared','--copy','--key','bad']);
     assert.ifError(incompatible.error); assert.notEqual(incompatible.status,0);
     assert.equal(objectResult(JSON.parse(incompatible.stderr || incompatible.stdout)).code,'invalid_dependency_mode');
-    const attempt = ctx.command(ctx.bin,['--repo',ctx.repo,'--json','seed-layer','--shared','--key','fixture']);
+    const attempt = ctx.command(ctx.bin,['--repo',ctx.repo,'--json','seed','--shared','--key','fixture']);
     assert.ifError(attempt.error);
     if (attempt.status !== 0) {
       const failure = objectResult(JSON.parse(attempt.stderr || attempt.stdout));
@@ -57,11 +57,11 @@ export const cases: Scenario[] = [{
       assert(!existsSync(join(absent.path,'node_modules')));
       const storage = objectResult(absent.result.storage);
       assert(!('dependencies' in storage));
-      const saved = ctx.cli(['seed-layer','--copy','--key','portable']);
-      const blocked = ctx.fail(['layer','unsupported','--lease',absent.lease,'restore','--key','portable']);
+      const saved = ctx.cli(['seed','--copy','--key','portable']);
+      const blocked = ctx.fail(['deps','layer','restore','unsupported','--lease',absent.lease,'--key','portable']);
       assert.equal(blocked.code,'cow_unavailable');
       assert(!existsSync(join(absent.path,'node_modules')));
-      const restored = ctx.cli(['layer','unsupported','--lease',absent.lease,'restore','--copy','--key','portable']);
+      const restored = ctx.cli(['deps','layer','restore','unsupported','--lease',absent.lease,'--copy','--key','portable']);
       assert.equal(saved.backend,'copy'); assert(Number(saved.copied_bytes)>0);
       assert.equal(restored.backend,'copy'); assert(Number(restored.copied_bytes)>0);
       assert.equal(digest(join(absent.path,'node_modules/graft-fixture/payload.bin')),originalDigest);
@@ -84,7 +84,7 @@ export const cases: Scenario[] = [{
     const opted = ctx.spawn('opted',['--no-deps']);
     assert(!('dependencies' in objectResult(opted.result.storage)));
     assert(!existsSync(join(opted.path,'node_modules')));
-    const runtimeCache = String(ctx.cli(['env','first']).cache_dir);
+    const runtimeCache = String(ctx.cli(['status', 'first', '--env']).cache_dir);
     const cached = join(dirname(runtimeCache),'layers',String(saved.digest),'node_modules/graft-fixture/payload.bin');
     const cachedLock = join(dirname(dirname(cached)),'.package-lock.json');
     const cachedLockBytes = readFileSync(cachedLock);
@@ -111,7 +111,7 @@ export const cases: Scenario[] = [{
     }
     assertSeparateRegularFiles([original, cached, firstLarge, siblingLarge]);
     const before = statSync(firstLarge,{bigint:true});
-    const fault = ctx.fail(['add-dep','first','--lease',first.lease,'--manager','npm','--offline']);
+    const fault = ctx.fail(['deps','add','first','--lease',first.lease,'--manager','npm','--offline']);
     assert.equal(fault.code,'dependencies_already_attached');
     assert.equal(statSync(firstLarge,{bigint:true}).ino,before.ino);
     const extra = join(ctx.root,'extra'); mkdirSync(extra);
@@ -122,7 +122,7 @@ export const cases: Scenario[] = [{
     const modules = join(first.path,'node_modules');
     const kept = join(first.path,'kept-install');
     renameSync(modules,kept);
-    const missing = ctx.fail(['add-dep','first','--lease',first.lease,'--manager','npm','--offline',tarball]);
+    const missing = ctx.fail(['deps','add','first','--lease',first.lease,'--manager','npm','--offline',tarball]);
     assert.match(String(missing.message), /attached node_modules is missing/);
     assert(!existsSync(modules), 'a missing shared install must not trigger reinstallation');
     renameSync(kept,modules);
@@ -161,7 +161,7 @@ export const cases: Scenario[] = [{
           symlinkSync(join(ctx.repo,target),path,target === 'node_modules' ? (process.platform === 'win32' ? 'junction' : 'dir') : 'file');
           ctx.env[pathKey] = `${fakeBin}${delimiter}${oldPath ?? ''}`;
           ctx.env.GRAFT_TEST_NPM_MARKER = marker;
-          ctx.fail(['add-dep',name,'--lease',workspace.lease,'--manager','npm','--offline',tarball]);
+          ctx.fail(['deps','add',name,'--lease',workspace.lease,'--manager','npm','--offline',tarball]);
           assert(!existsSync(marker),'npm must not start for redirected install paths');
           assert.equal(readFileSync(sentinel,'utf8'),'primary sentinel\n');
           assert.deepEqual(readFileSync(join(ctx.repo,'package.json')),primaryManifest);
@@ -193,7 +193,7 @@ export const cases: Scenario[] = [{
     assert.equal(npm(ctx,['prefix'],first.path),ctx.root,'fixture must select the ancestor npm workspace without isolation');
     ctx.env.npm_config_global = 'true'; ctx.env.npm_config_prefix = outsidePrefix;
     const freeBefore = free();
-    const added = ctx.cli(['add-dep','first','--lease',first.lease,'--manager','npm','--offline',tarball]);
+    const added = ctx.cli(['deps','add','first','--lease',first.lease,'--manager','npm','--offline',tarball]);
     delete ctx.env.npm_config_global; delete ctx.env.npm_config_prefix;
     assert.equal(added.success,true);
     assert.deepEqual(readdirSync(outsidePrefix),['sentinel']);
@@ -262,17 +262,17 @@ export const cases: Scenario[] = [{
     assert.equal(readFileSync(original, 'utf8'), 'module.exports = 42;\n');
 
     writeFileSync(join(ctx.repo, 'tracked.txt'), 'dirty');
-    ctx.fail(['seed-layer', '--key', 'fixture']);
+    ctx.fail(['seed', '--key', 'fixture']);
     writeFileSync(join(ctx.repo, 'tracked.txt'), 'initial\n');
-    const saved = ctx.cli(['seed-layer', '--copy', '--key', 'fixture']);
+    const saved = ctx.cli(['seed', '--copy', '--key', 'fixture']);
     assert.equal(typeof saved.digest, 'string');
     assert(Number(saved.logical_bytes) > 0);
-    ctx.fail(['seed-layer', '--key', 'fixture']);
+    ctx.fail(['seed', '--key', 'fixture']);
     const ws = ctx.spawn('consumer');
     assert(lstatSync(join(ws.path,'.git')).isDirectory());
-    const layer = (action: string, key = 'fixture') => ['layer', 'consumer', '--lease', ws.lease, action, '--key', key, '--copy'];
+    const layer = (action: string, key = 'fixture') => ['deps', 'layer', action, 'consumer', '--lease', ws.lease, '--key', key, '--copy'];
     ctx.fail(layer('restore', 'different'));
-    const state = dirname(String(ctx.cli(['env', 'consumer']).cache_dir));
+    const state = dirname(String(ctx.cli(['status', 'consumer', '--env']).cache_dir));
     const cached = join(state, 'layers', String(saved.digest), 'node_modules', 'graft-fixture', 'index.js');
     const bytes = readFileSync(cached);
     writeFileSync(cached, 'tampered');
@@ -309,7 +309,7 @@ export const cases: Scenario[] = [{
         ctx.unavailable('Creating a directory junction requires permission');
       throw error;
     }
-    ctx.fail(['seed-layer', '--key', 'fixture']);
+    ctx.fail(['seed', '--key', 'fixture']);
     assert.equal(readFileSync(join(outside, 'keep'), 'utf8'), 'keep');
   },
 }];

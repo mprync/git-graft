@@ -22,7 +22,7 @@ function land(ctx: Context, name: string, workspace: Workspace, ...options: stri
 }
 
 function undo(name: string, lease: string): string[] {
-  return ['undo-land', name, '--lease', lease];
+  return ['land', name, '--undo', '--lease', lease];
 }
 
 function planStore(ctx: Context): string {
@@ -93,7 +93,7 @@ export const cases: Scenario[] = [
       }
       const historyBlob = ctx.git(['rev-parse', `${old}:history.bin`]);
       assert.equal(ids.filter(id => id === historyBlob).length, 1, 'plan store duplicated the large history blob');
-      ctx.cli(['gc', '--apply']);
+      ctx.cli(['prune','--expired', '--apply']);
       ctx.git(['gc', '--prune=now']);
       ctx.git(['fsck', '--full'], store);
       ctx.git(['fsck', '--full']);
@@ -102,7 +102,7 @@ export const cases: Scenario[] = [
       ctx.cli(undo('cache-delta', ws.lease));
       assert.equal(existsSync(join(ctx.repo, 'feature.txt')), false);
       assert.equal(readFileSync(join(ws.path, 'feature.txt'), 'utf8'), 'landed change\n');
-      ctx.cli(['drop', 'cache-base', '--lease', first.lease]);
+      ctx.cli(['prune', 'cache-base', '--lease', first.lease]);
     },
   },
   {
@@ -119,7 +119,7 @@ export const cases: Scenario[] = [
       const privateFile = join(ws.path, 'local.txt');
       writeFileSync(privateFile, 'restored workspace data\n');
 
-      ctx.cli(['gc', '--apply']);
+      ctx.cli(['prune','--expired', '--apply']);
       ctx.git(['gc', '--prune=now']);
       ctx.git(['fsck', '--full']);
       ctx.git(['fsck', '--full'], ws.path);
@@ -324,7 +324,7 @@ export const cases: Scenario[] = [
     name: 'undo authenticates the retired landing and rejects drop and no-op',
     run(ctx) {
       const dropped = ctx.spawn('dropped');
-      ctx.cli(['drop', 'dropped', '--lease', dropped.lease]);
+      ctx.cli(['prune', 'dropped', '--lease', dropped.lease]);
       assert.match(String(ctx.fail(undo('dropped', dropped.lease)).message), /not retired by landing/i);
       const unchanged = ctx.spawn('unchanged');
       const old = ctx.git(['rev-parse', 'HEAD']);

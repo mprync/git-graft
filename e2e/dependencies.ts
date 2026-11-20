@@ -40,15 +40,15 @@ function commit(ctx: Context, cwd: string): string {
   return ctx.git(['rev-parse', 'HEAD'], cwd);
 }
 function add(ctx: Context, ws: Workspace, manager: string, packages: string[] = [], offline = false): Result {
-  return ctx.cli(['add-dep', workspaceName(ws), '--lease', ws.lease,
+  return ctx.cli(['deps','add', workspaceName(ws), '--lease', ws.lease,
     '--manager', manager, ...(offline ? ['--offline'] : []), ...packages]);
 }
 function failedAdd(ctx: Context, ws: Workspace, manager: string): Result {
-  return ctx.fail(['add-dep', workspaceName(ws), '--lease', ws.lease,
+  return ctx.fail(['deps','add', workspaceName(ws), '--lease', ws.lease,
     '--manager', manager, '--offline']);
 }
 function runtime(ctx: Context, ws: Workspace): Result {
-  return ctx.cli(['env', workspaceName(ws)]);
+  return ctx.cli(['status', workspaceName(ws), '--env']);
 }
 function execute(ctx: Context, ws: Workspace, argv: string[]): Result {
   return ctx.cli(['exec', workspaceName(ws), '--lease', ws.lease, '--', ...argv]);
@@ -302,7 +302,7 @@ const layerCase: Scenario = {
     add(ctx,first,'npm',[`file:${fixture.path}`]);
     add(ctx,second,'npm',[],true);
     const layer=(action: string, ws: Workspace, key='node-1', copy=false) =>
-      ['layer',workspaceName(ws),'--lease',ws.lease,action,'--key',key,...(copy ? ['--copy'] : [])];
+      ['deps','layer',action,workspaceName(ws),'--lease',ws.lease,'--key',key,...(copy ? ['--copy'] : [])];
     const badLink=join(second.path,'node_modules','external');
     try { symlinkSync(ctx.root,badLink,process.platform === 'win32' ? 'junction' : 'dir'); }
     catch (error) {

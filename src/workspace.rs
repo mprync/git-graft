@@ -284,7 +284,7 @@ fn spawn(p: &Project, origin: &Path, mut args: Spawn) -> Result<Value> {
     })();
     if let Err(error) = build {
         return Err(api::fault(
-            "spawn_incomplete",
+            "new_incomplete",
             format!("Creating the graft stopped: {error:#}"),
             json!({"name":r.name,"lease":r.lease,"path":r.path,"recovery":"Inspect the reserved path. Run prune with --discard to archive the partial graft."}),
         ));

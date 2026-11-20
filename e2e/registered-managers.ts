@@ -19,7 +19,7 @@ if (!fs.existsSync(download)) { fs.writeFileSync(download, 'local package'); fs.
 fs.writeFileSync('private-output', args.join('|'));
 process.stdout.write(JSON.stringify({cache, args}));
 `);
-  return ['register-manager', manager, '--cache-env', 'FIXTURE_CACHE',
+  return ['deps','manager','add', manager, '--cache-env', 'FIXTURE_CACHE',
     '--cache-arg', script, '--cache-arg', 'literal with spaces', '--cache-arg', '{cache}', ...extra];
 }
 function execute(ctx: Context, ws: ReturnType<Context['spawn']>, exe: string, explicit: boolean) {
@@ -112,7 +112,7 @@ export const cases: Scenario[] = [{
     }
     const top = registration(ctx, ['--install-dir', 'node_modules', '--input', 'fixture.lock', '--key', 'top']);
     const nested = registration(ctx, ['--install-dir', 'vendor/bundle', '--input', 'fixture.lock', '--key', 'nested']);
-    nested[1] = 'nested-fixture-manager';
+    nested[3] = 'nested-fixture-manager';
     ctx.cli(top); ctx.cli(nested);
     const ws = ctx.spawn('protected-land');
     const receipts = objectResult(ws.result.storage).registered_dependencies;
@@ -147,25 +147,25 @@ export const cases: Scenario[] = [{
   name: 'manager discovery does not create missing state or replace foreign state',
   run(ctx) {
     const state = join(ctx.repo, '.git', 'graft');
-    assert.deepEqual(ctx.cli(['list-managers']).managers, []);
+    assert.deepEqual(ctx.cli(['deps','manager','list']).managers, []);
     assert(!existsSync(state));
     mkdirSync(state);
     const foreign = join(state, 'foreign-note');
     writeFileSync(foreign, 'retain foreign state');
-    ctx.fail(['list-managers']);
+    ctx.fail(['deps','manager','list']);
     assert.equal(readFileSync(foreign, 'utf8'), 'retain foreign state');
     assert.deepEqual(readdirSync(state), ['foreign-note']);
   },
 }, {
   name: 'manager discovery does not recreate removed cache directories',
   run(ctx) {
-    ctx.cli(['register-manager', 'cache-only']);
+    ctx.cli(['deps','manager','add', 'cache-only']);
     const state = join(ctx.repo, '.git', 'graft');
     const cache = join(state, 'cache');
     const layers = join(state, 'layers');
     rmSync(cache, { recursive: true, force: true });
     rmSync(layers, { recursive: true, force: true });
-    const list = ctx.cli(['list-managers']);
+    const list = ctx.cli(['deps','manager','list']);
     assert(Array.isArray(list.managers) && list.managers.some(item => objectResult(item).manager === 'cache-only'));
     assert(!existsSync(cache));
     assert(!existsSync(layers));
@@ -244,8 +244,8 @@ export const cases: Scenario[] = [{
         '--manager', 'foreign-fixture', '--', ...argv]);
       assert.equal(readFileSync(registry, 'utf8'), data);
       for (const args of [
-        ['register-manager', 'foreign-fixture', '--cache-env', 'FIXTURE_CACHE'],
-        ['unregister-manager', 'foreign-fixture'],
+        ['deps','manager','add', 'foreign-fixture', '--cache-env', 'FIXTURE_CACHE'],
+        ['deps','manager','remove', 'foreign-fixture'],
       ]) {
         ctx.fail(args);
         assert.equal(readFileSync(registry, 'utf8'), data);
@@ -262,17 +262,17 @@ export const cases: Scenario[] = [{
     const active = ctx.spawn('purge-active');
     assert.equal(registered(active.result)?.status, 'attached');
     for (const flags of [[], ['--apply']]) {
-      const live = objectResult(ctx.cli(['gc', '--purge-cache', ...flags]).cache);
+      const live = objectResult(ctx.cli(['prune','--expired', '--purge-cache', ...flags]).cache);
       assert.equal(live.eligible, false);
       assert.equal(live.purged, false);
       assert(existsSync(generation));
     }
-    ctx.cli(['drop', 'purge-active', '--lease', active.lease, '--discard']);
+    ctx.cli(['prune', 'purge-active', '--lease', active.lease, '--discard']);
     const foreign = join(fixture.root, 'foreign-user-directory');
     mkdirSync(foreign);
     writeFileSync(join(foreign, 'keep'), 'user data');
     const secondArgs = [...fixture.args];
-    secondArgs[1] = 'second-manager';
+    secondArgs[3] = 'second-manager';
     secondArgs[secondArgs.indexOf('--key') + 1] = 'second-purge';
     ctx.cli(secondArgs);
     const changedName = readdirSync(fixture.root).find(name => /^[a-f0-9]{64}$/.test(name) && name !== fixture.generations[0]);
@@ -280,7 +280,7 @@ export const cases: Scenario[] = [{
     const changed = join(fixture.root, changedName);
     writeFileSync(join(changed, 'tree', 'package'), 'modified data');
     for (const flags of [[], ['--apply']]) {
-      const receipt = objectResult(ctx.cli(['gc', '--purge-cache', ...flags]).cache);
+      const receipt = objectResult(ctx.cli(['prune','--expired', '--purge-cache', ...flags]).cache);
       assert(Array.isArray(receipt.candidates) && receipt.candidates.includes(generation));
       assert(Array.isArray(receipt.blocked));
       assert(receipt.blocked.map(objectResult).some(item => item.path === foreign));
@@ -313,9 +313,9 @@ export const cases: Scenario[] = [{
       const ws = ctx.spawn(name);
       assert.notEqual(registered(ws.result)?.status, 'attached');
       assert(!existsSync(join(ws.path, 'vendor/bundle')));
-      ctx.cli(['drop', name, '--lease', ws.lease]);
+      ctx.cli(['prune', name, '--lease', ws.lease]);
       for (const flags of [[], ['--apply']]) {
-        const receipt = objectResult(ctx.cli(['gc', '--purge-cache', ...flags]).cache);
+        const receipt = objectResult(ctx.cli(['prune','--expired', '--purge-cache', ...flags]).cache);
         assert(Array.isArray(receipt.blocked) && receipt.blocked.map(objectResult).some(item => item.path === generation));
         assert(existsSync(join(generation, 'tree', 'package')));
         assert.equal(readFileSync(join(original, 'tree', 'package'), 'utf8'), 'original package');
@@ -360,7 +360,7 @@ export const cases: Scenario[] = [{
     assert(typeof first.cache_dir === 'string');
     const cache = first.cache_dir;
     assert.equal(ctx.cli(args).cache_dir, cache);
-    const listed = ctx.cli(['list-managers']);
+    const listed = ctx.cli(['deps','manager','list']);
     assert(Array.isArray(listed.managers));
     assert(listed.managers.some(item => objectResult(item).manager === manager && objectResult(item).cache_dir === cache));
     const executable = join(ctx.root, manager + (process.platform === 'win32' ? '.exe' : ''));
@@ -379,17 +379,17 @@ export const cases: Scenario[] = [{
     writeFileSync(join(other, 'tracked'), 'other');
     ctx.git(['add', '.'], other); ctx.git(['commit', '-qm', 'other'], other);
     assert(!existsSync(join(other, '.git', 'graft')));
-    assert.deepEqual(ctx.cli(['list-managers'], other).managers, []);
+    assert.deepEqual(ctx.cli(['deps','manager','list'], other).managers, []);
     assert(!existsSync(join(other, '.git', 'graft')));
     assert.notEqual(ctx.cli(args, other).cache_dir, cache);
-    assert.deepEqual(ctx.cli(['unregister-manager', manager]), { manager, registered: false, cache_retained: true });
+    assert.deepEqual(ctx.cli(['deps','manager','remove', manager]), { manager, registered: false, cache_retained: true });
     assert.equal(readFileSync(join(cache, 'download'), 'utf8'), 'local package');
     assert.equal(readFileSync(join(a.path, 'private-output'), 'utf8'), 'changed');
   },
 }, {
   name: 'cache-only registration, unselected execution and unknown explicit managers',
   run(ctx) {
-    const entry = ctx.cli(['register-manager', 'cache-only']);
+    const entry = ctx.cli(['deps','manager','add', 'cache-only']);
     const ws = ctx.spawn('cache-only-workspace');
     const argv = [process.execPath, '-e', 'process.stdout.write(JSON.stringify({cache:process.env.GRAFT_PACKAGE_CACHE ?? null}))'];
     const run = (selection: string[]) => objectResult(JSON.parse(String(ctx.cli([
@@ -409,9 +409,9 @@ export const cases: Scenario[] = [{
     mkdirSync(join(source.path, 'vendor/bundle'), { recursive: true });
     writeFileSync(join(source.path, 'vendor/bundle/package'), 'workspace seed');
     const base = registration(ctx, ['--install-dir', 'vendor/bundle', '--input', 'fixture.lock', '--key', 'seed']);
-    ctx.fail([...base, '--workspace', 'seed-source', '--lease', 'wrong']);
-    ctx.fail([...base, '--workspace', 'seed-source']);
-    const receipt = ctx.cli([...base, '--workspace', 'seed-source', '--lease', source.lease]);
+    ctx.fail([...base, '--graft', 'seed-source', '--lease', 'wrong']);
+    ctx.fail([...base, '--graft', 'seed-source']);
+    const receipt = ctx.cli([...base, '--graft', 'seed-source', '--lease', source.lease]);
     assert.equal(receipt.manager, manager);
     const next = ctx.spawn('seed-consumer');
     const native = objectResult(ctx.cli(['doctor']).source_storage).native_clone;
@@ -486,7 +486,7 @@ export const cases: Scenario[] = [{
       assert(!existsSync(join(a.path, 'vendor/bundle')));
     }
     const cache = String(registeredManager.cache_dir);
-    ctx.cli(['unregister-manager', manager]);
+    ctx.cli(['deps','manager','remove', manager]);
     assert(existsSync(cache));
     assert.equal(readFileSync(join(tree, 'package'), 'utf8'), native ? 'second version' : 'original package');
   },

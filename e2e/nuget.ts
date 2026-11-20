@@ -41,7 +41,7 @@ try {
   writeFileSync(join(ctx.repo, 'Check.cs'), 'public class Check {}');
   ctx.git(['add', '.']);
   ctx.git(['commit', '-qm', 'Local NuGet project']);
-  const registration = ctx.cli(['register-manager', 'dotnet', '--cache-env', 'NUGET_PACKAGES']);
+  const registration = ctx.cli(['deps','manager','add', 'dotnet', '--cache-env', 'NUGET_PACKAGES']);
   const packages = registration.cache_dir;
   assert(typeof packages === 'string');
   const first = ctx.spawn('alpha'), second = ctx.spawn('beta');
@@ -74,7 +74,7 @@ try {
     dotnet(ws, 'build', 'GraftCheck.csproj', '--no-restore', '--disable-build-servers', '-p:UseSharedCompilation=false');
     assert(existsSync(join(ws.path, 'bin', 'Debug', framework, 'GraftCheck.dll')));
   }
-  ctx.cli(['unregister-manager', 'dotnet']);
+  ctx.cli(['deps','manager','remove', 'dotnet']);
   assert(existsSync(original));
   assert(!existsSync(join(inherited, 'graft.fixture')));
   assert(!existsSync(join(ctx.repo, 'obj/project.assets.json')));

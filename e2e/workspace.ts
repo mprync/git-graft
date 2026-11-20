@@ -9,7 +9,7 @@ import { delimiter, dirname, isAbsolute, join } from 'node:path';
 import { objectResult, type Context, type Scenario } from './harness.ts';
 
 function spawn(ctx: Context, name: string, options: string[] = [], repo = ctx.repo, base: string | null = 'HEAD') {
-  const result = ctx.cli(['spawn', name, ...(base === null ? [] : ['--base', base]), ...options], repo);
+  const result = ctx.cli(['new', name, ...(base === null ? [] : ['--base', base]), ...options], repo);
   assert.equal(result.name, name);
   const { path, lease } = result;
   assert(typeof path === 'string' && typeof lease === 'string' && lease.length > 0);
@@ -256,14 +256,14 @@ export const cases: Scenario[] = [
         const ws = spawn(ctx, 'identity', options);
         assert.equal(ws.lease, id);
         assert.deepEqual(spawn(ctx, ws.name, options).result, ws.result);
-        ctx.fail(['spawn', ws.name, '--base', 'main', ...options]);
+        ctx.fail(['new', ws.name, '--base', 'main', ...options]);
         const moved = join(ctx.root, 'moved checkout');
         const repaired = join(ctx.root, 'manually moved checkout');
         const move = ['move', ws.name, moved, '--lease', ws.lease];
         const repair = ['repair', ws.name, repaired, '--lease', ws.lease];
         assert.equal(ctx.cli(['status', ws.name]).locked, 'review in progress');
         ctx.fail(move);
-        ctx.fail(owned('drop', ws, '--discard'));
+        ctx.fail(owned('prune', ws, '--discard'));
         ctx.fail(owned('land', ws));
         ctx.fail(owned('unlock', { ...ws, lease: randomUUID() }));
         assertRepository(ctx, ws.path);
@@ -289,12 +289,12 @@ export const cases: Scenario[] = [
 
         assert.equal(ctx.cli(['status', ws.name]).locked, 'packing up');
         ctx.cli(owned('unlock', ws));
-        const drop = owned('drop', ws);
+        const drop = owned('prune', ws);
         const retired = ctx.cli(drop);
         assert.equal(retired.recovery_lease, ws.lease);
         assert(!existsSync(repaired));
         assert.deepEqual(ctx.cli(drop), retired);
-        ctx.fail(['spawn', ws.name, '--base', 'HEAD', ...options]);
+        ctx.fail(['new', ws.name, '--base', 'HEAD', ...options]);
         const listing = ctx.cli(['list']);
         assert(Array.isArray(listing.recoverable));
         assert(listing.recoverable.some(workspace => objectResult(workspace).name === ws.name));
@@ -354,7 +354,7 @@ export const cases: Scenario[] = [
     run(ctx) {
       const base = ctx.git(['rev-parse', 'HEAD']);
       const invalid = ctx.command(ctx.bin,
-        ['--repo', ctx.repo, '--json', 'spawn', 'invalid', '--base', base, '--detach', '--branch', 'chosen']);
+        ['--repo', ctx.repo, '--json', 'new', 'invalid', '--base', base, '--detach', '--branch', 'chosen']);
       assert.ifError(invalid.error);
       assert.notEqual(invalid.status, 0);
       assert.match(invalid.stderr, /cannot be used with/);
@@ -408,7 +408,7 @@ export const cases: Scenario[] = [
       assert.equal(ctx.cli(owned('land', ws), bare).commit, tip);
       assert.equal(ctx.git(['rev-parse', 'refs/heads/main'], bare), tip);
       assert.equal(ctx.git(['show', 'main:feature.txt'], bare), 'bare landing');
-      const result = ctx.cli(owned('undo-land', ws), bare);
+      const result = ctx.cli(owned('land', ws, '--undo'), bare);
       assert.equal(ctx.git(['rev-parse', 'refs/heads/main'], bare), result.commit);
       assert.equal(ctx.git(['rev-parse', 'main^{tree}'], bare), ctx.git(['rev-parse', `${base}^{tree}`], bare));
       ctx.git(['fsck', '--full'], bare);

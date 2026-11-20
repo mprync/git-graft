@@ -18,21 +18,13 @@ type Pending = {
 const protocol = '2025-06-18';
 const requestTimeoutMs = 30_000;
 const maxRequestBytes = 256 * 1024;
-const executionTools = ['workspace_exec', 'workspace_add_dependency', 'workspace_layer', 'workspace_seed_layer',
-  'workspace_register_manager', 'workspace_unregister_manager'];
-const defaultTools = [
-  'workspace_doctor', 'workspace_list', 'workspace_spawn', 'workspace_status',
-  'workspace_heartbeat', 'workspace_env', 'workspace_land_and_wipe', 'workspace_discard', 'workspace_gc',
-  'workspace_restore', 'workspace_undo_land', 'workspace_lock', 'workspace_unlock', 'workspace_move',
-  'workspace_repair', 'workspace_list_managers',
-];
+const executionTools = ['graft_exec', 'graft_add_dependency'];
+const defaultTools = ['graft_list', 'graft_new', 'graft_status', 'graft_renew', 'graft_land', 'graft_prune',
+  'graft_restore'];
 const spawnOptions = ['base', 'branch', 'detach', 'history', 'lock', 'name', 'no_checkout', 'no_deps', 'orphan',
   'reason', 'request_id', 'sparse'];
-const leaseTools = new Set([
-  'workspace_add_dependency', 'workspace_discard', 'workspace_exec', 'workspace_heartbeat',
-  'workspace_land_and_wipe', 'workspace_layer', 'workspace_lock', 'workspace_move',
-  'workspace_repair', 'workspace_restore', 'workspace_undo_land', 'workspace_unlock',
-]);
+const leaseTools = new Set(['graft_add_dependency', 'graft_prune', 'graft_exec', 'graft_renew', 'graft_land',
+  'graft_restore']);
 
 function isObject(value: unknown): value is JsonObject {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -216,21 +208,20 @@ async function discover(client: McpClient, allowExec: boolean): Promise<Map<stri
     if (executionTools.includes(name)) assert.match(description, /--allow-exec/);
   }
   assert.deepEqual([...catalog.keys()].sort(), expected.sort());
-  const spawnDescription = string(catalog.get('workspace_spawn')?.description, 'spawn description');
+  const spawnDescription = string(catalog.get('graft_new')?.description, 'spawn description');
   assert.match(spawnDescription, /omit history/i);
   assert.match(spawnDescription, /defaults to local/i);
   assert.match(spawnDescription, /isolated.*(?:unrelated|excluded)/i);
-  const spawnSchema = object(catalog.get('workspace_spawn')?.inputSchema, 'spawn schema');
+  const spawnSchema = object(catalog.get('graft_new')?.inputSchema, 'spawn schema');
   assert.deepEqual(spawnSchema.required, ['name']);
   assert.deepEqual(Object.keys(object(spawnSchema.properties, 'spawn properties')).sort(), spawnOptions);
-  for (const [name, fields] of [
-    ['workspace_lock', ['lease', 'name']], ['workspace_unlock', ['lease', 'name']],
-    ['workspace_move', ['lease', 'name', 'path']], ['workspace_repair', ['lease', 'name', 'path']],
-  ] as const) {
-    const schema = object(catalog.get(name)?.inputSchema, `${name} schema`);
-    assert(Array.isArray(schema.required));
-    assert.deepEqual([...schema.required].sort(), fields);
-  }
+  const landSchema = object(catalog.get('graft_land')?.inputSchema, 'land schema');
+  assert(Array.isArray(landSchema.required));
+  assert.deepEqual([...landSchema.required].sort(), ['lease', 'name']);
+  assert('undo' in object(landSchema.properties, 'land properties'));
+  const pruneSchema = object(catalog.get('graft_prune')?.inputSchema, 'prune schema');
+  assert(Array.isArray(pruneSchema.required));
+  assert.deepEqual([...pruneSchema.required].sort(), ['lease', 'name']);
   return catalog;
 }
 
@@ -253,7 +244,7 @@ async function invalidCall(client: McpClient, name: string, args: JsonObject): P
 }
 
 async function spawnWorkspace(client: McpClient, name: string, requestId = randomUUID()) {
-  const result = await call(client, 'workspace_spawn', { name, request_id: requestId });
+  const result = await call(client, 'graft_new', { name, request_id: requestId });
   const path = workspacePath(result);
   const lease = string(result.lease, 'workspace lease');
   assert.equal(lease, requestId);
@@ -262,6 +253,11 @@ async function spawnWorkspace(client: McpClient, name: string, requestId = rando
   assert.equal(result.phase, 'ready');
   assert.equal(readFileSync(join(path, 'tracked.txt'), 'utf8'), 'initial\n');
   return { path, lease, result };
+}
+
+/** Arguments for `deps layer save|restore|forget` on the CLI; layers are CLI-only. */
+function layerArgs(action: string, name: string, lease: string, key: string, copy = false): string[] {
+  return ['deps', 'layer', action, name, '--lease', lease, '--key', key, ...(copy ? ['--copy'] : [])];
 }
 
 function assertRefMissing(ctx: Context, name: string): void {
@@ -329,24 +325,21 @@ function prepareNpmFixture(ctx: Context): string {
 
 export const cases: Scenario[] = [
   {
-    name: 'restricted manager discovery leaves fresh and foreign project state untouched',
-    async run(ctx) {
+    name: 'manager listing leaves fresh and foreign project state untouched',
+    run(ctx) {
       const state = join(ctx.repo, '.git', 'graft');
-      await withClient(ctx, false, async client => {
-        await initialize(client);
-        assert.deepEqual(await call(client, 'workspace_list_managers'), { managers: [] });
-        assert(!existsSync(state));
-        mkdirSync(state);
-        const foreign = join(state, 'foreign-note');
-        writeFileSync(foreign, 'retain foreign state');
-        await call(client, 'workspace_list_managers', {}, true);
-        assert.equal(readFileSync(foreign, 'utf8'), 'retain foreign state');
-        assert.deepEqual(readdirSync(state), ['foreign-note']);
-      });
+      assert.deepEqual(ctx.cli(['deps', 'manager', 'list']), { managers: [] });
+      assert(!existsSync(state));
+      mkdirSync(state);
+      const foreign = join(state, 'foreign-note');
+      writeFileSync(foreign, 'retain foreign state');
+      ctx.fail(['deps', 'manager', 'list']);
+      assert.equal(readFileSync(foreign, 'utf8'), 'retain foreign state');
+      assert.deepEqual(readdirSync(state), ['foreign-note']);
     },
   },
   {
-    name: 'MCP registered managers expose shared cache and preserve it on removal',
+    name: 'registered managers expose a shared cache to MCP execution and keep it on removal',
     run: async ctx => withClient(ctx, true, async client => {
       await initialize(client);
       const catalog = await discover(client, true);
@@ -355,29 +348,29 @@ export const cases: Scenario[] = [
       writeFileSync(scriptPath, 'process.stdout.write(JSON.stringify({cache:process.env.FIXTURE_CACHE,graft:process.env.GRAFT_PACKAGE_CACHE,argv:process.argv.slice(2)}))');
       const registration = { manager: 'fixture-manager', cache_env: 'FIXTURE_CACHE',
         cache_args: [scriptPath, 'literal with spaces', '{cache}'] };
-      const added = await call(client, 'workspace_register_manager', registration);
+      const added = ctx.cli(['deps', 'manager', 'add', registration.manager, '--cache-env', registration.cache_env,
+        ...registration.cache_args.flatMap(arg => ['--cache-arg', arg])]);
       assert.equal(added.manager, registration.manager);
       const cache = string(added.cache_dir, 'registered cache');
-      const listed = await call(client, 'workspace_list_managers');
+      const listed = ctx.cli(['deps', 'manager', 'list']);
       assert(Array.isArray(listed.managers));
       assert(listed.managers.some(item => object(item, 'manager').manager === registration.manager));
       const workspace = await spawnWorkspace(client, 'registered-mcp');
-      const empty = await call(client, 'workspace_exec', { name: 'registered-mcp', lease: workspace.lease, argv: [] }, true);
+      const empty = await call(client, 'graft_exec', { name: 'registered-mcp', lease: workspace.lease, argv: [] }, true);
       assert.match(string(empty.message, 'empty exec error'), /empty|required/i);
-      const executed = await call(client, 'workspace_exec', { name: 'registered-mcp', lease: workspace.lease,
+      const executed = await call(client, 'graft_exec', { name: 'registered-mcp', lease: workspace.lease,
         manager: registration.manager, argv: [process.execPath, 'argument with spaces'] });
       const output = object(JSON.parse(string(executed.stdout, 'registered exec output')), 'registered output');
       assert.equal(output.cache, cache);
       assert.equal(output.graft, cache);
       assert.deepEqual(output.argv, ['literal with spaces', cache, 'argument with spaces']);
-      const removed = await call(client, 'workspace_unregister_manager', { manager: registration.manager });
+      const removed = ctx.cli(['deps', 'manager', 'remove', registration.manager]);
       assert.deepEqual(removed, { manager: registration.manager, registered: false, cache_retained: true });
       assert(existsSync(cache));
-      for (const tool of ['workspace_register_manager', 'workspace_list_managers', 'workspace_unregister_manager']) ctx.coverTool(tool);
     }),
   },
   {
-    name: 'restricted MCP cannot mutate registrations or attach their installations',
+    name: 'restricted MCP does not attach registered installations',
     async run(ctx) {
       writeFileSync(join(ctx.repo, 'fixture.lock'), 'locked\n');
       writeFileSync(join(ctx.repo, '.gitignore'), 'vendor/\n');
@@ -385,21 +378,12 @@ export const cases: Scenario[] = [
       ctx.git(['commit', '-qm', 'registered input']);
       mkdirSync(join(ctx.repo, 'vendor/bundle'), { recursive: true });
       writeFileSync(join(ctx.repo, 'vendor/bundle/package'), 'seed');
-      const registration = ctx.cli(['register-manager', 'restricted-fixture', '--cache-env', 'FIXTURE_CACHE',
+      const registration = ctx.cli(['deps', 'manager', 'add', 'restricted-fixture', '--cache-env', 'FIXTURE_CACHE',
         '--install-dir', 'vendor/bundle', '--input', 'fixture.lock', '--key', 'restricted']);
       await withClient(ctx, false, async client => {
         await initialize(client);
         await discover(client, false);
-        const before = await call(client, 'workspace_list_managers');
-        for (const [name, args] of [
-          ['workspace_register_manager', { manager: 'forbidden', cache_env: 'FIXTURE_CACHE' }],
-          ['workspace_unregister_manager', { manager: 'restricted-fixture' }],
-        ] as const) {
-          const denied = await call(client, name, args, true);
-          assert.match(string(denied.message, 'restricted manager error'), /--allow-exec/);
-        }
-        assert.deepEqual(await call(client, 'workspace_list_managers'), before);
-        const spawned = await call(client, 'workspace_spawn', { name: 'restricted-seed', no_deps: false });
+        const spawned = await call(client, 'graft_new', { name: 'restricted-seed', no_deps: false });
         const storage = object(spawned.storage, 'restricted spawn storage');
         assert(!('registered_dependencies' in storage) ||
           (Array.isArray(storage.registered_dependencies) && storage.registered_dependencies.every(item => object(item, 'receipt').status !== 'attached')));
@@ -427,9 +411,9 @@ export const cases: Scenario[] = [
       for (const ping of pings) assert.deepEqual(result(ping), {});
       ctx.coverCli('mcp');
       const catalog = await discover(client, false);
-      assert.equal(object(catalog.get('workspace_doctor')?.annotations, 'doctor annotations').readOnlyHint, true);
-      assert.equal(object(catalog.get('workspace_land_and_wipe')?.annotations, 'land annotations').destructiveHint, true);
-      const spawnSchema = object(catalog.get('workspace_spawn')?.inputSchema, 'spawn schema');
+      assert.equal(object(catalog.get('graft_list')?.annotations, 'list annotations').readOnlyHint, true);
+      assert.equal(object(catalog.get('graft_land')?.annotations, 'land annotations').destructiveHint, true);
+      const spawnSchema = object(catalog.get('graft_new')?.inputSchema, 'spawn schema');
       assert.deepEqual(spawnSchema.required, ['name']);
       const properties = object(spawnSchema.properties, 'spawn schema properties');
       assert.equal(object(properties.name, 'spawn name schema').type, 'string');
@@ -441,37 +425,35 @@ export const cases: Scenario[] = [
       // one frame, even when it is read in several chunks.
       const oversizedMutation = JSON.stringify({
         jsonrpc: '2.0', id: 9001, method: 'tools/call',
-        params: { name: 'workspace_spawn', arguments: { name: 'oversized' } },
+        params: { name: 'graft_new', arguments: { name: 'oversized' } },
       });
       client.send(oversizedMutation.padEnd(maxRequestBytes + 1));
       assert.deepEqual(result(await client.request('ping', {}, maxRequestBytes)), {});
 
-      await invalidCall(client, 'workspace_status', { name: 7 });
-      await invalidCall(client, 'workspace_status', {});
-      await invalidCall(client, 'workspace_spawn', { name: 'unknown-history', history: 'remote' });
-      await invalidCall(client, 'workspace_list', { unexpected: true });
-      await invalidCall(client, 'workspace_unknown', {});
-      assert.equal((await call(client, 'workspace_status', { name: 'missing' }, true)).code, 'not_found');
+      await invalidCall(client, 'graft_status', { name: 7 });
+      await invalidCall(client, 'graft_status', {});
+      await invalidCall(client, 'graft_new', { name: 'unknown-history', history: 'remote' });
+      await invalidCall(client, 'graft_list', { unexpected: true });
+      await invalidCall(client, 'graft_unknown', {});
+      assert.equal((await call(client, 'graft_status', { name: 'missing' }, true)).code, 'not_found');
 
-      const doctor = await call(client, 'workspace_doctor');
-      const cliDoctor = ctx.cli(['doctor']);
-      assert.deepEqual(doctor, cliDoctor);
+      const doctor = ctx.cli(['doctor']);
       assert.equal(realpathSync(string(doctor.common_dir, 'common Git directory')), realpathSync(join(ctx.repo, '.git')));
-      ctx.coverTool('workspace_doctor');
+      // Maintenance commands stay on the CLI and are not served over MCP.
+      for (const removed of ['graft_doctor', 'graft_env', 'graft_lock', 'graft_unlock', 'graft_move', 'graft_repair',
+        'graft_gc', 'graft_layer', 'graft_seed_layer', 'graft_list_managers']) {
+        await invalidCall(client, removed, {});
+      }
 
-      assert.deepEqual(await call(client, 'workspace_list'), { workspaces: [], recoverable: [] });
+      assert.deepEqual(await call(client, 'graft_list'), { workspaces: [], recoverable: [] });
       const workspace = await spawnWorkspace(client, 'wire');
       const owned = { name: 'wire', lease: workspace.lease };
       const marker = join(workspace.path, 'execution-marker');
       const denied: [string, JsonObject][] = [
-        ['workspace_exec', { ...owned, argv: [process.execPath, '-e',
+        ['graft_exec', { ...owned, argv: [process.execPath, '-e',
           'require("fs").writeFileSync("execution-marker", "ran")'] }],
-        ['workspace_add_dependency', { ...owned, manager: 'npm', offline: true, packages: [] }],
-        ['workspace_layer', { ...owned, action: 'save', key: 'test-toolchain' }],
-        ['workspace_seed_layer', { key: 'test-toolchain' }],
-        ['workspace_register_manager', { manager: 'fixture', cache_env: 'FIXTURE_CACHE' }],
-        ['workspace_unregister_manager', { manager: 'fixture' }],
-        ['workspace_land_and_wipe', { ...owned, into: 'main', reconcile: true }],
+        ['graft_add_dependency', { ...owned, manager: 'npm', offline: true, packages: [] }],
+        ['graft_land', { ...owned, into: 'main', reconcile: true }],
       ];
       for (const [name, args] of denied) {
         const refusal = await call(client, name, args, true);
@@ -489,11 +471,11 @@ export const cases: Scenario[] = [
       await initialize(client, '2024-11-05');
       assert.deepEqual(result(await client.request('ping')), {});
       await discover(client, false);
-      assert.deepEqual(await call(client, 'workspace_list'), { workspaces: [], recoverable: [] });
+      assert.deepEqual(await call(client, 'graft_list'), { workspaces: [], recoverable: [] });
     }),
   },
   {
-    name: 'MCP ownership, spawn and discard receipts, and stale GC match CLI',
+    name: 'MCP ownership, new and prune receipts, and expired pruning match CLI',
     run: async (ctx) => withClient(ctx, false, async (client) => {
       await initialize(client);
       const name = 'lifecycle';
@@ -505,92 +487,92 @@ export const cases: Scenario[] = [
         await initialize(replay);
         assert.deepEqual(await spawnWorkspace(replay, name, first.lease), first);
         const requestId = first.lease.toUpperCase().replaceAll('-', '');
-        assert.deepEqual(await call(replay, 'workspace_spawn', { name, request_id: requestId }), first.result);
+        assert.deepEqual(await call(replay, 'graft_new', { name, request_id: requestId }), first.result);
       });
-      const differentOptions = await call(client, 'workspace_spawn', {
+      const differentOptions = await call(client, 'graft_new', {
         name, request_id: first.lease, detach: true,
       }, true);
-      assert.match(string(differentOptions.message, 'spawn replay error'), /different spawn options/);
-      assert.equal((await call(client, 'workspace_spawn', { name, request_id: randomUUID() }, true)).code, 'already_exists');
+      assert.match(string(differentOptions.message, 'spawn replay error'), /different new options/);
+      assert.equal((await call(client, 'graft_new', { name, request_id: randomUUID() }, true)).code, 'already_exists');
       assert.equal(ctx.git(['rev-parse', 'HEAD'], first.path), first.result.base);
       assert.equal(ctx.git(['symbolic-ref', 'HEAD'], first.path), `refs/heads/graft/${name}`);
-      ctx.coverTool('workspace_spawn');
+      ctx.coverTool('graft_new');
 
-      const listed = await call(client, 'workspace_list');
+      const listed = await call(client, 'graft_list');
       assert.deepEqual(listed, ctx.cli(['list']));
       assert(Array.isArray(listed.workspaces) && listed.workspaces.length === 1);
       const record = object(listed.workspaces[0], 'listed workspace');
       assert.equal(record.name, name);
       assert.equal(workspacePath(record), first.path);
       assert(!JSON.stringify(listed).includes(first.lease));
-      ctx.coverTool('workspace_list');
+      ctx.coverTool('graft_list');
 
-      const status = await call(client, 'workspace_status', { name });
+      const status = await call(client, 'graft_status', { name });
       assert.deepEqual(status, ctx.cli(['status', name]));
       assert.equal(workspacePath(status), first.path);
       assert.equal(status.head, first.result.base);
       assert.deepEqual(status.changes, []);
       assert(!JSON.stringify(status).includes(first.lease));
-      ctx.coverTool('workspace_status');
+      ctx.coverTool('graft_status');
 
       const owned = { name, lease: first.lease };
       const wrongLease = { name, lease: randomUUID() };
-      for (const tool of ['workspace_heartbeat', 'workspace_discard', 'workspace_land_and_wipe',
-        'workspace_restore', 'workspace_undo_land']) {
-        await invalidCall(client, tool, { name });
-        const error = await call(client, tool, wrongLease, true);
+      for (const [tool, extra] of [['graft_renew', {}], ['graft_prune', {}], ['graft_land', {}],
+        ['graft_land', { undo: true }], ['graft_restore', {}]] as const) {
+        await invalidCall(client, tool, { name, ...extra });
+        const error = await call(client, tool, { ...wrongLease, ...extra }, true);
         assert.equal(error.code, 'lease_mismatch');
         assert(!JSON.stringify(error).includes(first.lease));
       }
+      await invalidCall(client, 'graft_land', { ...owned, undo: true, into: 'main' });
+      await invalidCall(client, 'graft_land', { ...owned, undo: true, squash: true });
       assert.equal(ctx.git(['rev-parse', 'HEAD']), primaryHead);
-      assert.deepEqual(await call(client, 'workspace_status', { name }), status);
-      const renewal = await call(client, 'workspace_heartbeat', owned);
+      assert.deepEqual(await call(client, 'graft_status', { name }), status);
+      const renewal = await call(client, 'graft_renew', owned);
       const previousHeartbeat = first.result.last_heartbeat;
       assert(typeof renewal.last_heartbeat === 'number' && typeof previousHeartbeat === 'number');
       assert(renewal.last_heartbeat >= previousHeartbeat);
-      const renewedStatus = await call(client, 'workspace_status', { name });
+      const renewedStatus = await call(client, 'graft_status', { name });
       assert.equal(renewedStatus.last_heartbeat, renewal.last_heartbeat);
       assert(!JSON.stringify(renewal).includes(first.lease));
-      ctx.coverTool('workspace_heartbeat');
+      ctx.coverTool('graft_renew');
 
-      const discarded = await call(client, 'workspace_discard', owned);
+      const discarded = await call(client, 'graft_prune', owned);
       assert.deepEqual(discarded, { action: 'drop', name, removed: true, recovery_lease: first.lease });
       assert(!existsSync(first.path));
       assertRefMissing(ctx, name);
-      assert.deepEqual(await call(client, 'workspace_discard', owned), discarded);
-      assert.deepEqual(ctx.cli(['drop', name, '--lease', first.lease]), discarded);
-      ctx.coverTool('workspace_discard');
+      assert.deepEqual(await call(client, 'graft_prune', owned), discarded);
+      assert.deepEqual(ctx.cli(['prune', name, '--lease', first.lease]), discarded);
+      ctx.coverTool('graft_prune');
 
       mkdirSync(first.path);
       writeFileSync(join(first.path, 'keep.txt'), 'foreign data\n');
-      const blocked = await call(client, 'workspace_restore', owned, true);
+      const blocked = await call(client, 'graft_restore', owned, true);
       assert.equal(blocked.code, 'already_exists');
       assert.equal(readFileSync(join(first.path, 'keep.txt'), 'utf8'), 'foreign data\n');
       renameSync(first.path, join(ctx.root, 'preserved foreign data'));
-      const reopened = await call(client, 'workspace_restore', owned);
+      const reopened = await call(client, 'graft_restore', owned);
       const second = { path: workspacePath(reopened), lease: string(reopened.lease, 'new lease') };
-      assert.deepEqual(await call(client, 'workspace_restore', owned), reopened);
+      assert.deepEqual(await call(client, 'graft_restore', owned), reopened);
       assert.deepEqual(ctx.cli(['restore', name, '--lease', first.lease]), reopened);
-      ctx.coverTool('workspace_restore');
+      ctx.coverTool('graft_restore');
       assert.notEqual(second.lease, first.lease);
-      assert.deepEqual(await call(client, 'workspace_discard', owned), discarded);
-      await call(client, 'workspace_land_and_wipe', owned, true);
-      assert.equal((await call(client, 'workspace_heartbeat', owned, true)).code, 'lease_mismatch');
+      assert.deepEqual(await call(client, 'graft_prune', owned), discarded);
+      await call(client, 'graft_land', owned, true);
+      assert.equal((await call(client, 'graft_renew', owned, true)).code, 'lease_mismatch');
       assert.equal(readFileSync(join(second.path, 'tracked.txt'), 'utf8'), 'initial\n');
 
       const dirty = await spawnWorkspace(client, 'dirty');
       writeFileSync(join(dirty.path, 'local.txt'), 'untracked\n');
       const stale = await spawnWorkspace(client, 'stale');
-      // Age only the two fixture records. Preview and removal use the served MCP tools.
+      // Age only the two fixture records. Expired pruning is CLI-only.
       for (const workspace of [stale, dirty]) {
         const id = string(workspace.result.id, 'fixture workspace id');
         const file = join(ctx.repo, '.git', 'graft', 'workspaces', 'records', `${id}.json`);
         const saved = object(parseExact(readFileSync(file, 'utf8')), 'fixture record');
         writeJson(file, { ...saved, heartbeat: 0 });
       }
-      await invalidCall(client, 'workspace_gc', { apply: 'true' });
-      const preview = await call(client, 'workspace_gc', { apply: false });
-      assert.deepEqual(preview, ctx.cli(['gc']));
+      const preview = ctx.cli(['prune', '--expired']);
       assert.equal(preview.applied, false);
       assert(Array.isArray(preview.retained) && preview.retained.length === 2);
       const eligibility = Object.fromEntries(preview.retained.map(value => {
@@ -601,7 +583,7 @@ export const cases: Scenario[] = [
       assert(!JSON.stringify(preview).includes(stale.lease));
       assert(existsSync(stale.path));
 
-      const applied = await call(client, 'workspace_gc', { apply: true });
+      const applied = ctx.cli(['prune', '--expired', '--apply']);
       assert.equal(applied.applied, true);
       assert(Array.isArray(applied.retained));
       const archived = applied.retained.map(value => object(value, 'GC workspace'))
@@ -613,19 +595,18 @@ export const cases: Scenario[] = [
       assert(!existsSync(stale.path));
       assertRefMissing(ctx, 'stale');
       assert(existsSync(second.path));
-      const restoredStale = await call(client, 'workspace_restore', { name: 'stale', lease: stale.lease });
+      const restoredStale = await call(client, 'graft_restore', { name: 'stale', lease: stale.lease });
       assert.notEqual(restoredStale.lease, stale.lease);
       assert.equal(readFileSync(join(workspacePath(restoredStale), 'tracked.txt'), 'utf8'), 'initial\n');
       assert.equal(readFileSync(join(dirty.path, 'local.txt'), 'utf8'), 'untracked\n');
-      ctx.coverTool('workspace_gc');
-      const parked = await call(client, 'workspace_discard', { name: 'dirty', lease: dirty.lease, discard: true });
+      const parked = await call(client, 'graft_prune', { name: 'dirty', lease: dirty.lease, discard: true });
       assert.equal(parked.recovery_lease, dirty.lease);
-      for (const tool of ['workspace_doctor', 'workspace_list', 'workspace_gc']) {
-        const published = await call(client, tool);
-        assert(!JSON.stringify(published).includes(dirty.lease), tool + ' disclosed a retired workspace lease');
+      for (const [label, published] of [['doctor', ctx.cli(['doctor'])], ['graft_list', await call(client, 'graft_list')],
+        ['prune --expired', ctx.cli(['prune', '--expired'])]] as const) {
+        assert(!JSON.stringify(published).includes(dirty.lease), label + ' disclosed a retired graft lease');
       }
       assert(!ctx.git(['for-each-ref', '--format=%(refname)']).includes(dirty.lease));
-      const returned = await call(client, 'workspace_restore', { name: 'dirty', lease: dirty.lease });
+      const returned = await call(client, 'graft_restore', { name: 'dirty', lease: dirty.lease });
       assert.notEqual(returned.lease, dirty.lease);
       assert.equal(readFileSync(join(dirty.path, 'local.txt'), 'utf8'), 'untracked\n');
     }),
@@ -645,7 +626,7 @@ export const cases: Scenario[] = [
       ctx.git(['commit', '-am', 'Workspace edit'], workspace.path);
       const tip = ctx.git(['rev-parse', 'HEAD'], workspace.path);
 
-      const conflict = await call(client, 'workspace_land_and_wipe', owned, true);
+      const conflict = await call(client, 'graft_land', owned, true);
       assert.equal(conflict.code, 'merge_conflict');
       const details = object(conflict.details, 'merge conflict details');
       assert.deepEqual(details.paths, ['tracked.txt']);
@@ -660,7 +641,7 @@ export const cases: Scenario[] = [
       ctx.git(['switch', 'retry-target']);
       const landArgs = { ...owned, into: 'retry-target', squash: true };
       writeFileSync(join(target, 'keep.txt'), 'local work\n');
-      const dirty = await call(client, 'workspace_land_and_wipe', landArgs, true);
+      const dirty = await call(client, 'graft_land', landArgs, true);
       assert.match(string(dirty.message, 'destination refusal'), /local changes/);
       assert.equal(readFileSync(join(target, 'keep.txt'), 'utf8'), 'local work\n');
       assert.equal(ctx.git(['rev-parse', 'HEAD'], target), base);
@@ -669,7 +650,7 @@ export const cases: Scenario[] = [
       ctx.git(['commit', '-m', 'Preserve local work'], target);
       const previous = ctx.git(['rev-parse', 'HEAD'], target);
 
-      const landed = await call(client, 'workspace_land_and_wipe', landArgs);
+      const landed = await call(client, 'graft_land', landArgs);
       const commit = string(landed.commit, 'landed commit');
       assert.deepEqual(landed, {
         action: 'land', name, target: 'retry-target', previous, commit, workspace_tip: tip, removed: true, recovery_lease: workspace.lease,
@@ -682,22 +663,22 @@ export const cases: Scenario[] = [
       assert.equal(ctx.git(['rev-parse', 'refs/heads/main']), destination);
       assert(!existsSync(workspace.path));
       assertRefMissing(ctx, name);
-      assert.deepEqual(await call(client, 'workspace_land_and_wipe', landArgs), landed);
+      assert.deepEqual(await call(client, 'graft_land', landArgs), landed);
       assert.deepEqual(ctx.cli(['land', name, '--lease', workspace.lease, '--into', 'retry-target', '--squash']), landed);
-      ctx.coverTool('workspace_land_and_wipe');
-      const undone = await call(client, 'workspace_undo_land', owned);
+      ctx.coverTool('graft_land');
+      const undone = await call(client, 'graft_land', { ...owned, undo: true });
       assert.equal(undone.target, 'retry-target');
       assert.equal(ctx.git(['rev-parse', 'HEAD^'], target), commit);
       assert.equal(ctx.git(['rev-parse', 'HEAD^{tree}'], target), ctx.git(['rev-parse', previous + '^{tree}']));
-      assert.deepEqual(await call(client, 'workspace_undo_land', owned), undone);
-      ctx.coverTool('workspace_undo_land');
+      assert.deepEqual(await call(client, 'graft_land', { ...owned, undo: true }), undone);
+      assert.deepEqual(ctx.cli(['land', name, '--undo', '--lease', workspace.lease]), undone);
     }),
   },
   {
-    name: 'MCP locks, moves, repairs and restores a standalone Git checkout',
+    name: 'locks, moves, repairs and restores a standalone graft across the CLI and MCP',
     run: async (ctx) => withClient(ctx, false, async (client) => {
       await initialize(client);
-      assert.deepEqual(await call(client, 'workspace_list'), { workspaces: [], recoverable: [] });
+      assert.deepEqual(await call(client, 'graft_list'), { workspaces: [], recoverable: [] });
       const base = ctx.git(['rev-parse', 'HEAD']);
       const nativePaths = () => ctx.git(['worktree', 'list', '--porcelain']).split(/\r?\n/)
         .filter(line => line.startsWith('worktree '));
@@ -711,80 +692,70 @@ export const cases: Scenario[] = [
       const moved = join(ctx.root, 'moved checkout');
       const repaired = join(ctx.root, 'externally moved checkout');
 
-      await invalidCall(client, 'workspace_lock', { ...owned, unknown: true });
-      await invalidCall(client, 'workspace_lock', { name, reason: 'missing lease' });
-      await invalidCall(client, 'workspace_unlock', { name });
-      await invalidCall(client, 'workspace_move', { name, path: moved });
-      await invalidCall(client, 'workspace_repair', { name, path: repaired });
-      await invalidCall(client, 'workspace_repair', { ...owned, worktree_path: repaired });
-      assert.equal((await call(client, 'workspace_lock', { ...wrong, reason: 'wrong lease' }, true)).code, 'lease_mismatch');
-      assert.equal((await call(client, 'workspace_lock', { ...owned, reason: 'review' })).locked, 'review');
-      ctx.coverTool('workspace_lock');
-      await call(client, 'workspace_move', { ...owned, path: moved }, true);
-      await call(client, 'workspace_discard', { ...owned, discard: true }, true);
-      assert.equal((await call(client, 'workspace_unlock', wrong, true)).code, 'lease_mismatch');
-      assert.equal((await call(client, 'workspace_unlock', owned)).locked, null);
-      ctx.coverTool('workspace_unlock');
-      assert.equal((await call(client, 'workspace_move', { ...wrong, path: moved }, true)).code, 'lease_mismatch');
+      const leaseOf = (graft: { lease: string }) => ['--lease', graft.lease];
+      assert.equal(ctx.fail(['lock', name, ...leaseOf(wrong), '--reason', 'wrong lease']).code, 'lease_mismatch');
+      assert.equal(ctx.cli(['lock', name, ...leaseOf(owned), '--reason', 'review']).locked, 'review');
+      ctx.fail(['move', name, moved, ...leaseOf(owned)]);
+      await call(client, 'graft_prune', { ...owned, discard: true }, true);
+      assert.equal(ctx.fail(['unlock', name, ...leaseOf(wrong)]).code, 'lease_mismatch');
+      assert.equal(ctx.cli(['unlock', name, ...leaseOf(owned)]).locked, null);
+      assert.equal(ctx.fail(['move', name, moved, ...leaseOf(wrong)]).code, 'lease_mismatch');
       assert(!existsSync(moved));
-      await call(client, 'workspace_move', { ...owned, path: join(ctx.repo, 'invalid') }, true);
-      await call(client, 'workspace_move', { ...owned, path: 'relative-checkout' }, true);
+      ctx.fail(['move', name, join(ctx.repo, 'invalid'), ...leaseOf(owned)]);
       const foreign = join(ctx.root, 'foreign checkout');
       mkdirSync(foreign);
       writeFileSync(join(foreign, 'keep'), 'foreign data\n');
-      await call(client, 'workspace_move', { ...owned, path: foreign }, true);
-      await call(client, 'workspace_repair', { ...owned, path: foreign }, true);
+      ctx.fail(['move', name, foreign, ...leaseOf(owned)]);
+      ctx.fail(['repair', name, foreign, ...leaseOf(owned)]);
       assert.equal(readFileSync(join(foreign, 'keep'), 'utf8'), 'foreign data\n');
-      const movedResult = await call(client, 'workspace_move', { ...owned, path: moved });
+      const movedResult = ctx.cli(['move', name, moved, ...leaseOf(owned)]);
       assert.equal(workspacePath(movedResult), moved);
-      assert.deepEqual(await call(client, 'workspace_move', { ...owned, path: moved }), movedResult);
+      assert.deepEqual(ctx.cli(['move', name, moved, ...leaseOf(owned)]), movedResult);
       assert(!existsSync(workspace.path));
-      ctx.coverTool('workspace_move');
       renameSync(moved, repaired);
-      assert.equal((await call(client, 'workspace_repair', { ...wrong, path: repaired }, true)).code, 'lease_mismatch');
-      await call(client, 'workspace_status', { name }, true);
-      const repairedResult = await call(client, 'workspace_repair', { ...owned, path: repaired });
+      assert.equal(ctx.fail(['repair', name, repaired, ...leaseOf(wrong)]).code, 'lease_mismatch');
+      await call(client, 'graft_status', { name }, true);
+      const repairedResult = ctx.cli(['repair', name, repaired, ...leaseOf(owned)]);
       assert.equal(workspacePath(repairedResult), repaired);
-      assert.deepEqual(await call(client, 'workspace_repair', { ...owned, path: repaired }), repairedResult);
-      ctx.coverTool('workspace_repair');
+      assert.deepEqual(ctx.cli(['repair', name, repaired, ...leaseOf(owned)]), repairedResult);
 
       writeFileSync(join(repaired, 'feature.txt'), 'feature\n');
       ctx.git(['add', 'feature.txt'], repaired);
       ctx.git(['commit', '-qm', 'Feature from independent workspace'], repaired);
       const tip = ctx.git(['rev-parse', 'HEAD'], repaired);
       ctx.git(['tag', 'private-tag'], repaired);
-      const status = await call(client, 'workspace_status', { name });
+      const status = await call(client, 'graft_status', { name });
       assert.equal(workspacePath(status), repaired);
       assert.equal(status.head, tip);
       assert.equal(ctx.git(['tag', '--list', 'private-tag']), '');
       assert.equal(ctx.git(['rev-parse', 'HEAD']), base);
 
-      const receipt = await call(client, 'workspace_land_and_wipe', owned);
+      const receipt = await call(client, 'graft_land', owned);
       assert.deepEqual(receipt, {
         action: 'land', name, target: 'main', previous: base, commit: tip,
         workspace_tip: tip, removed: true, recovery_lease: workspace.lease,
       });
       assert(!existsSync(repaired));
       assert.equal(readFileSync(join(ctx.repo, 'feature.txt'), 'utf8'), 'feature\n');
-      const retired = await call(client, 'workspace_list');
+      const retired = await call(client, 'graft_list');
       assert.deepEqual(retired.workspaces, []);
       assert(Array.isArray(retired.recoverable) && retired.recoverable.length === 1);
       const recoverable = object(retired.recoverable[0], 'recoverable workspace');
       assert.equal(recoverable.name, name);
       assert.equal(workspacePath(recoverable), repaired);
       assert(!JSON.stringify(retired).includes(workspace.lease));
-      assert.deepEqual(await call(client, 'workspace_land_and_wipe', owned), receipt);
+      assert.deepEqual(await call(client, 'graft_land', owned), receipt);
 
-      const reversed = await call(client, 'workspace_undo_land', owned);
+      const reversed = await call(client, 'graft_land', { ...owned, undo: true });
       assert.equal(ctx.git(['rev-parse', 'HEAD']), reversed.commit);
       assert.equal(ctx.git(['rev-parse', 'HEAD^']), tip);
       assert.equal(ctx.git(['rev-parse', 'HEAD^{tree}']), ctx.git(['rev-parse', `${base}^{tree}`]));
-      const restored = await call(client, 'workspace_restore', owned);
+      const restored = await call(client, 'graft_restore', owned);
       assert.equal(workspacePath(restored), repaired);
-      assert.deepEqual(await call(client, 'workspace_restore', owned), restored);
+      assert.deepEqual(await call(client, 'graft_restore', owned), restored);
       const lease = string(restored.lease, 'restored lease');
       assert.notEqual(lease, workspace.lease);
-      await call(client, 'workspace_lock', owned, true);
+      ctx.fail(['lock', name, '--lease', workspace.lease]);
       assert.equal(ctx.git(['rev-parse', 'refs/tags/private-tag'], repaired), tip);
       assert.equal(readFileSync(join(repaired, 'feature.txt'), 'utf8'), 'feature\n');
       writeFileSync(join(repaired, 'staged.txt'), 'staged\n');
@@ -792,11 +763,11 @@ export const cases: Scenario[] = [
       writeFileSync(join(repaired, 'untracked.txt'), 'untracked\n');
       mkdirSync(join(repaired, 'ignored'));
       writeFileSync(join(repaired, 'ignored', 'output'), 'ignored build output\n');
-      const discarded = await call(client, 'workspace_discard', { name, lease, discard: true });
+      const discarded = await call(client, 'graft_prune', { name, lease, discard: true });
       assert.equal(discarded.recovery_lease, lease);
       assert(!existsSync(repaired));
-      await call(client, 'workspace_restore', owned, true);
-      const reopened = await call(client, 'workspace_restore', { name, lease });
+      await call(client, 'graft_restore', owned, true);
+      const reopened = await call(client, 'graft_restore', { name, lease });
       assert.equal(workspacePath(reopened), repaired);
       assert.notEqual(reopened.lease, lease);
       assert.equal(ctx.git(['show', ':staged.txt'], repaired), 'staged');
@@ -813,7 +784,7 @@ export const cases: Scenario[] = [
       const initialized = await initialize(client);
       assert.match(string(initialized.instructions, 'instructions'), /enabled by the host/);
       const guidance = string(initialized.instructions, 'history instructions');
-      assert.match(guidance, /history omitted.*project setting.*default: local/i);
+      assert.match(guidance, /omit history.*project setting.*default: local/i);
       assert.match(guidance, /isolated.*selected commit.s reachable history/i);
 
       ctx.command('git', ['config', '--local', '--unset-all', 'graft.history'], ctx.repo);
@@ -821,17 +792,17 @@ export const cases: Scenario[] = [
       ctx.git(['update-ref', 'refs/heads/unrelated', unrelated]);
       const probe = object(ctx.cli(['doctor']).source_storage, 'source filesystem capability');
       const defaultArgs = { name: 'mcp-default-history', request_id: randomUUID() };
-      const defaultWorkspace = await call(client, 'workspace_spawn', defaultArgs);
+      const defaultWorkspace = await call(client, 'graft_new', defaultArgs);
       const visibility = (workspace: JsonObject) => ctx.command('git', ['cat-file', '-e', unrelated], workspacePath(workspace)).status;
       assert.equal(visibility(defaultWorkspace) === 0, probe.native_clone, 'unconfigured local history visibility');
       ctx.git(['config', '--local', 'graft.history', 'isolated']);
-      assert.deepEqual(await call(client, 'workspace_spawn', defaultArgs), defaultWorkspace, 'retry must preserve original policy');
-      const configured = await call(client, 'workspace_spawn', { name: 'mcp-configured-history' });
+      assert.deepEqual(await call(client, 'graft_new', defaultArgs), defaultWorkspace, 'retry must preserve original policy');
+      const configured = await call(client, 'graft_new', { name: 'mcp-configured-history' });
       assert.notEqual(visibility(configured), 0, 'configured isolated policy must exclude unrelated objects');
-      const override = await call(client, 'workspace_spawn', { name: 'mcp-override-history', history: 'local' });
+      const override = await call(client, 'graft_new', { name: 'mcp-override-history', history: 'local' });
       assert.equal(visibility(override) === 0, probe.native_clone, 'explicit local policy must override project setting');
       ctx.git(['config', '--local', 'graft.history', 'local']);
-      const isolated = await call(client, 'workspace_spawn', { name: 'mcp-isolated-history', history: 'isolated' });
+      const isolated = await call(client, 'graft_new', { name: 'mcp-isolated-history', history: 'isolated' });
       assert.notEqual(visibility(isolated), 0, 'explicit isolated policy must exclude unrelated objects');
     }),
   },
@@ -851,23 +822,23 @@ export const cases: Scenario[] = [
         { detach: 'true' },
         { unexpected: true },
       ]) {
-        await invalidCall(client, 'workspace_spawn', { name: 'bad-mode', ...options });
+        await invalidCall(client, 'graft_new', { name: 'bad-mode', ...options });
       }
-      assert.deepEqual(await call(client, 'workspace_list'), { workspaces: [], recoverable: [] });
+      assert.deepEqual(await call(client, 'graft_list'), { workspaces: [], recoverable: [] });
       const base = ctx.git(['rev-parse', 'HEAD']);
       const args = {
         name: 'mcp-branch', request_id: randomUUID(), branch: 'custom/branch',
         base, no_checkout: true, lock: true, reason: 'manual population',
       };
       ctx.git(['config', '--local', 'graft.history', 'local']);
-      const locked = await call(client, 'workspace_spawn', args);
+      const locked = await call(client, 'graft_new', args);
       if (probe.native_clone) {
         assert.equal(object(object(locked.storage, 'workspace storage').objects, 'workspace history').source, 'local-snapshot');
       }
       ctx.git(['config', '--local', '--unset', 'graft.history']);
       assert.equal(locked.lease, args.request_id);
       assert.equal(locked.locked, 'manual population');
-      assert.deepEqual(await call(client, 'workspace_spawn', args), locked);
+      assert.deepEqual(await call(client, 'graft_new', args), locked);
       const empty = workspacePath(locked);
       assert.equal(ctx.git(['symbolic-ref', '--short', 'HEAD'], empty), 'custom/branch');
       assert.equal(ctx.git(['rev-parse', 'HEAD'], empty), base);
@@ -876,13 +847,13 @@ export const cases: Scenario[] = [
       ctx.git(['restore', '--source=HEAD', '--staged', '--worktree', '--', '.'], empty);
       assert.equal(readFileSync(join(empty, 'tracked.txt'), 'utf8'), 'initial\n');
 
-      const detached = await call(client, 'workspace_spawn', { name: 'mcp-detached', detach: true, history: 'tip' });
+      const detached = await call(client, 'graft_new', { name: 'mcp-detached', detach: true, history: 'tip' });
       const detachedPath = workspacePath(detached);
       assert.equal(ctx.git(['rev-parse', '--is-shallow-repository'], detachedPath), 'true');
       assert.equal(detached.branch, null);
       assert.equal(ctx.git(['branch', '--show-current'], detachedPath), '');
       assert.equal(ctx.git(['rev-parse', 'HEAD'], detachedPath), base);
-      const orphan = await call(client, 'workspace_spawn', { name: 'mcp-orphan', orphan: 'private-root' });
+      const orphan = await call(client, 'graft_new', { name: 'mcp-orphan', orphan: 'private-root' });
       const orphanPath = workspacePath(orphan);
       assert.equal(ctx.git(['symbolic-ref', '--short', 'HEAD'], orphanPath), 'private-root');
       assert.notEqual(ctx.command('git', ['rev-parse', '--verify', 'HEAD'], orphanPath).status, 0);
@@ -890,7 +861,7 @@ export const cases: Scenario[] = [
     }),
   },
   {
-    name: 'shared seed and spawn respect CLI and MCP execution boundaries',
+    name: 'shared seed and new respect CLI and MCP execution boundaries',
     async run(ctx) {
       const archive = prepareNpmFixture(ctx);
       const cache = join(ctx.root, 'shared-npm-cache');
@@ -901,31 +872,29 @@ export const cases: Scenario[] = [
       const nativeClone = object(doctor.source_storage, 'source storage').native_clone;
       assert.equal(typeof nativeClone, 'boolean');
       const key = 'mcp-shared-fixture';
-      const conflict = ctx.fail(['seed-layer', '--shared', '--copy', '--key', key]);
+      const conflict = ctx.fail(['seed', '--shared', '--copy', '--key', key]);
       assert.equal(conflict.code, 'invalid_dependency_mode');
       assert.match(String(conflict.message), /omit --copy/i);
 
+      // Seeding is CLI-only; MCP grafts inherit the registered shared install.
+      const seed = nativeClone ? ctx.cli(['seed', '--shared', '--key', key]) : ctx.fail(['seed', '--shared', '--key', key]);
+      if (!nativeClone) assert.equal(seed.code, 'cow_unavailable');
       await withClient(ctx, true, async client => {
         await initialize(client);
-        const sharedConflict = await call(client, 'workspace_seed_layer', { key, shared: true, copy: true }, true);
-        assert.equal(sharedConflict.code, 'invalid_dependency_mode');
-        assert.match(String(sharedConflict.message), /omit --copy/i);
-        const seed = await call(client, 'workspace_seed_layer', { key, shared: true }, !nativeClone);
-        if (!nativeClone) assert.equal(seed.code, 'cow_unavailable');
-        else {
+        if (nativeClone) {
           const attached = await spawnWorkspace(client, 'mcp-shared');
           const dependencies = object(object(attached.result.storage, 'storage').dependencies, 'dependency receipt');
           assert.equal(dependencies.status, 'attached');
           assert.equal(dependencies.copied_bytes, 0);
           assert.equal(readFileSync(join(attached.path, file), 'utf8'), fixtureContents);
-          const optedOut = await call(client, 'workspace_spawn', { name: 'mcp-no-deps', no_deps: true });
+          const optedOut = await call(client, 'graft_new', { name: 'mcp-no-deps', no_deps: true });
           assert(!('dependencies' in object(optedOut.storage, 'opted-out storage')));
           assert(!existsSync(join(workspacePath(optedOut), file)));
         }
       });
       await withClient(ctx, false, async client => {
         await initialize(client);
-        const sourceOnly = await call(client, 'workspace_spawn', { name: 'mcp-disabled', no_deps: false });
+        const sourceOnly = await call(client, 'graft_new', { name: 'mcp-disabled', no_deps: false });
         assert(!('dependencies' in object(sourceOnly.storage, 'disabled storage')));
         assert(!existsSync(join(workspacePath(sourceOnly), file)));
       });
@@ -939,34 +908,27 @@ export const cases: Scenario[] = [
         assert(!('dependencies' in object(noDeps.result.storage, 'CLI opted-out storage')));
         assert(!existsSync(join(noDeps.path, file)));
       } else {
-        assert.equal(ctx.fail(['seed-layer', '--shared', '--key', 'cli-shared-fixture']).code, 'cow_unavailable');
+        assert.equal(ctx.fail(['seed', '--shared', '--key', 'cli-shared-fixture']).code, 'cow_unavailable');
       }
     },
   },
   {
-    name: 'MCP executes scoped processes, installs from cache and verifies the layer backend',
+    name: 'MCP executes scoped processes and installs from cache; CLI layers use the verified backend',
     run: async (ctx) => withClient(ctx, true, async (client) => {
       const initialized = await initialize(client);
       assert.match(string(initialized.instructions, 'execution instructions'), /enabled by the host/);
       const catalog = await discover(client, true);
       ctx.measure('advertised_tools', [...catalog.keys()].sort());
-      const layerSchema = object(catalog.get('workspace_layer')?.inputSchema, 'layer schema');
-      const layerProperties = object(layerSchema.properties, 'layer schema properties');
-      const copyOption = object(layerProperties.copy, 'layer copy option');
-      assert.equal(copyOption.type, 'boolean');
-      assert.equal(copyOption.default, false);
-      assert(Array.isArray(layerSchema.required) && !layerSchema.required.includes('copy'));
       for (const name of executionTools) await invalidCall(client, name, {});
       const archive = prepareNpmFixture(ctx);
-      const doctor = await call(client, 'workspace_doctor');
+      const doctor = ctx.cli(['doctor']);
       const storage = object(doctor.source_storage, 'native storage evidence');
       assert(typeof storage.native_clone === 'boolean');
       const sourceBackend = string(storage.backend, 'probe backend');
       const source = await spawnWorkspace(client, 'packages');
       const owned = { name: 'packages', lease: source.lease };
 
-      const env = await call(client, 'workspace_env', { name: owned.name });
-      assert.deepEqual(env, ctx.cli(['env', owned.name]));
+      const env = ctx.cli(['status', owned.name, '--env']);
       assert.equal(realpathSync(workspacePath(env)), realpathSync(source.path));
       assert(!('worktree' in env));
       assert(!JSON.stringify(env).includes(source.lease));
@@ -974,15 +936,13 @@ export const cases: Scenario[] = [
       const cache = string(env.cache_dir, 'package cache path');
       const target = string(env.cargo_target_dir, 'private Cargo target path');
       assert.equal(dirname(target), env.runtime_dir);
-      ctx.coverTool('workspace_env');
 
       const script = `const fs=require('node:fs');fs.writeFileSync('exec-proof.txt','wire\\n');process.stdout.write(JSON.stringify({cwd:process.cwd(),port:process.env.PORT,target:process.env.CARGO_TARGET_DIR}));`;
       const argv = [process.execPath, '-e', script];
       const wrong = { ...owned, lease: randomUUID() };
       for (const [tool, args] of [
-        ['workspace_exec', { ...wrong, argv }],
-        ['workspace_add_dependency', { ...wrong, manager: 'npm', offline: true, packages: [] }],
-        ['workspace_layer', { ...wrong, action: 'save', key: 'wrong-lease' }],
+        ['graft_exec', { ...wrong, argv }],
+        ['graft_add_dependency', { ...wrong, manager: 'npm', offline: true, packages: [] }],
       ] as const) {
         const refusal = await call(client, tool, args, true);
         assert.equal(refusal.code, 'lease_mismatch');
@@ -990,7 +950,7 @@ export const cases: Scenario[] = [
       }
       assert(!existsSync(join(source.path, 'exec-proof.txt')));
       assert(!existsSync(join(source.path, 'node_modules')));
-      const executed = await call(client, 'workspace_exec', { ...owned, argv });
+      const executed = await call(client, 'graft_exec', { ...owned, argv });
       assert.equal(executed.success, true);
       assert.equal(executed.exit_code, 0);
       const output = object(JSON.parse(string(executed.stdout, 'exec stdout')), 'runtime output');
@@ -1002,7 +962,7 @@ export const cases: Scenario[] = [
       assert.deepEqual(executed, ctx.cli(['exec', owned.name, '--lease', source.lease, '--', ...argv]));
 
       const failingArgv = [process.execPath, '-e', "process.stderr.write('expected failure');process.exit(7)"];
-      const failed = await call(client, 'workspace_exec', { ...owned, argv: failingArgv }, true);
+      const failed = await call(client, 'graft_exec', { ...owned, argv: failingArgv }, true);
       assert.equal(failed.success, false);
       assert.equal(failed.exit_code, 7);
       assert.equal(failed.stderr, 'expected failure');
@@ -1010,14 +970,14 @@ export const cases: Scenario[] = [
       assert.ifError(failedCli.error);
       assert.equal(failedCli.status, 7);
       assert.deepEqual(JSON.parse(failedCli.stdout), failed);
-      ctx.coverTool('workspace_exec');
+      ctx.coverTool('graft_exec');
 
       const installArgs = { ...owned, manager: 'npm', offline: true, packages: [] };
-      const cold = await call(client, 'workspace_add_dependency', installArgs, true);
+      const cold = await call(client, 'graft_add_dependency', installArgs, true);
       assert.equal(cold.success, false);
       assert.match(string(cold.stderr, 'cold offline cache error'), /ENOTCACHED|only-if-cached/i);
       npm(ctx, ['cache', 'add', archive, '--offline', '--ignore-scripts', '--cache', join(cache, 'npm')], ctx.repo);
-      const installed = await call(client, 'workspace_add_dependency', installArgs);
+      const installed = await call(client, 'graft_add_dependency', installArgs);
       assert.equal(installed.success, true);
       assert.equal(installed.exit_code, 0);
       const moduleFile = join('node_modules', fixturePackage, 'index.js');
@@ -1025,11 +985,10 @@ export const cases: Scenario[] = [
       assert.equal(readFileSync(sourceModule, 'utf8'), fixtureContents);
       assert(!existsSync(join(ctx.repo, moduleFile)));
       assert.equal(ctx.git(['diff', 'HEAD', '--', 'package.json', 'package-lock.json'], source.path), '');
-      ctx.coverTool('workspace_add_dependency');
+      ctx.coverTool('graft_add_dependency');
 
       const layers = join(dirname(cache), 'layers');
       const keyPrefix = `node-${process.versions.node}-npm-ci-offline`;
-      await invalidCall(client, 'workspace_layer', { ...owned, action: 'save', key: keyPrefix, copy: 'true' });
       assert(storage.native_clone ? ['clonefile', 'reflink'].includes(sourceBackend) : sourceBackend === 'git');
       const defaultBackend = storage.native_clone ? 'copy-on-write' : 'refused';
       const initialBytes = readdirSync(join(source.path, 'node_modules'), { recursive: true, withFileTypes: true })
@@ -1038,7 +997,7 @@ export const cases: Scenario[] = [
       assert(initialBytes >= Buffer.byteLength(fixtureContents));
       const transfers: JsonObject = {};
       if (!storage.native_clone) {
-        const refusal = await call(client, 'workspace_layer', { ...owned, action: 'save', key: `${keyPrefix}-automatic` }, true);
+        const refusal = ctx.fail(layerArgs('save', owned.name, owned.lease, `${keyPrefix}-automatic`));
         assert.equal(refusal.code, 'cow_unavailable');
         transfers.automatic = refusal;
       }
@@ -1048,8 +1007,8 @@ export const cases: Scenario[] = [
       ]) {
         const key = `${keyPrefix}-${mode.name}`;
         writeFileSync(sourceModule, fixtureContents);
-        const saveArgs = { ...owned, action: 'save', key, ...mode.options };
-        const saved = await call(client, 'workspace_layer', saveArgs);
+        const copy = 'copy' in mode.options;
+        const saved = ctx.cli(layerArgs('save', owned.name, owned.lease, key, copy));
         const digest = string(saved.digest, 'layer digest');
         assert.match(digest, /^[a-f0-9]{64}$/);
         const transferReceipt = {
@@ -1067,20 +1026,20 @@ export const cases: Scenario[] = [
 
         const name = `restore-${mode.name}`;
         const consumer = await spawnWorkspace(client, name);
-        const restoreArgs = { name, lease: consumer.lease, action: 'restore', key, ...mode.options };
+        const restoreArgs = layerArgs('restore', name, consumer.lease, key, copy);
         assert(!existsSync(join(consumer.path, 'node_modules')));
-        const restored = await call(client, 'workspace_layer', restoreArgs);
+        const restored = ctx.cli(restoreArgs);
         assert.deepEqual(restored, { action: 'restore', ...transferReceipt });
         const restoredModule = join(consumer.path, moduleFile);
         assert.equal(readFileSync(restoredModule, 'utf8'), fixtureContents);
         assert.equal(statSync(restoredModule).nlink, 1);
-        assert.match(string((await call(client, 'workspace_layer', restoreArgs, true)).message, 'restore collision'), /node_modules already exists/);
+        assert.match(string(ctx.fail(restoreArgs).message, 'restore collision'), /node_modules already exists/);
         const consumerEdit = 'module.exports = 101;\n';
         writeFileSync(restoredModule, consumerEdit);
         assert.equal(readFileSync(savedModule, 'utf8'), fixtureContents);
         assert.equal(readFileSync(sourceModule, 'utf8'), producerEdit);
 
-        const forgotten = await call(client, 'workspace_layer', { name, lease: consumer.lease, action: 'forget', key });
+        const forgotten = ctx.cli(layerArgs('forget', name, consumer.lease, key));
         assert.deepEqual(forgotten, {
           action: 'forget', digest, backend: mode.backend, logical_bytes: 0, cloned_bytes: 0, copied_bytes: 0,
           ...(process.platform === 'win32' ? { retained: true } : {}),
@@ -1093,18 +1052,16 @@ export const cases: Scenario[] = [
         platform: process.platform, sourceBackend, layerBackend: defaultBackend,
         nativeClone: storage.native_clone, transfers,
       });
-      ctx.coverTool('workspace_layer');
       npm(ctx, ['ci', '--offline', '--ignore-scripts', '--cache', join(cache, 'npm')], ctx.repo);
       const key = keyPrefix + '-primary';
-      const primarySeed = await call(client, 'workspace_seed_layer', { key, copy: true });
+      const primarySeed = ctx.cli(['seed', '--key', key, '--copy']);
       const clean = await spawnWorkspace(client, 'primary-consumer');
-      const transfer = await call(client, 'workspace_layer', { name: 'primary-consumer', lease: clean.lease, action: 'restore', key, copy: true });
+      const transfer = ctx.cli(layerArgs('restore', 'primary-consumer', clean.lease, key, true));
       assert.equal(transfer.digest, primarySeed.digest);
       const file = join(clean.path, moduleFile);
       assert.equal(readFileSync(file, 'utf8'), fixtureContents);
       writeFileSync(file, 'private edit');
       assert.equal(readFileSync(join(ctx.repo, moduleFile), 'utf8'), fixtureContents);
-      ctx.coverTool('workspace_seed_layer');
     }),
   },
 ];

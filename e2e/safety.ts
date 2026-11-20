@@ -15,7 +15,7 @@ export const cases: Scenario[] = [
         for (const directory of ['cache', 'layers']) {
           assert(!existsSync(join(state, directory)), 'source-only project created a dependency cache during spawn');
         }
-        const env = ctx.cli(['env', 'private-roots']);
+        const env = ctx.cli(['status', 'private-roots', '--env']);
         assert.equal(env.path, workspace.path);
         assert.equal(typeof env.runtime_dir, 'string');
         const runtime = String(env.runtime_dir);
@@ -43,7 +43,7 @@ export const cases: Scenario[] = [
       chmodSync(state, 0o700);
 
       chmodSync(root, 0o755);
-      assert.match(String(ctx.fail(['spawn', 'new-workspace']).message), /chmod 700/i);
+      assert.match(String(ctx.fail(['new', 'new-workspace']).message), /chmod 700/i);
       assert.equal(statSync(root).mode & 0o777, 0o755);
       assert.equal(existsSync(join(root, 'new-workspace')), false);
       assert.equal(readFileSync(file, 'utf8'), 'initial\n');
@@ -71,8 +71,8 @@ export const cases: Scenario[] = [
         ctx.cli(['exec', ...owned, '--', process.execPath, '-e', '']);
         if (process.platform !== 'win32') symlinkSync(external, join(npm, 'linked'), 'dir');
         writeFileSync(note, 'disposable cache data\n');
-        ctx.cli(['drop', ...owned]);
-        const result = objectResult(ctx.cli(['gc', '--purge-cache', '--apply']).cache);
+        ctx.cli(['prune', ...owned]);
+        const result = objectResult(ctx.cli(['prune','--expired', '--purge-cache', '--apply']).cache);
         assert.equal(result.purged, true);
         assert(Array.isArray(result.removed) && result.removed.includes(npm));
         assert.equal(existsSync(note), false);
@@ -90,7 +90,7 @@ export const cases: Scenario[] = [
       mkdirSync(cache);
       const note = join(cache, 'keep.txt');
       writeFileSync(note, 'data from the existing directory\n');
-      const result = objectResult(ctx.cli(['gc', '--purge-cache', '--apply']).cache);
+      const result = objectResult(ctx.cli(['prune','--expired', '--purge-cache', '--apply']).cache);
       assert.equal(result.eligible, false);
       assert.equal(result.purged, false);
       assert.match(JSON.stringify(result.blocked), /cache ownership is unverified/i);
@@ -120,7 +120,7 @@ export const cases: Scenario[] = [
       const note = join(other, 'keep.txt');
       writeFileSync(note, 'keep this file\n');
       symlinkSync(other, cache, process.platform === 'win32' ? 'junction' : 'dir');
-      assert.match(String(ctx.fail(['gc', '--purge-cache', '--apply']).message), /ordinary directory/i);
+      assert.match(String(ctx.fail(['prune','--expired', '--purge-cache', '--apply']).message), /ordinary directory/i);
       assert.equal(readFileSync(note, 'utf8'), 'keep this file\n');
     },
   },
@@ -137,9 +137,9 @@ export const cases: Scenario[] = [
       const head = ctx.git(['rev-parse', 'HEAD'], nested);
       const note = join(state, 'layers', 'keep.txt');
       writeFileSync(note, 'keep while purge is blocked\n');
-      ctx.cli(['drop', ...owned]);
+      ctx.cli(['prune', ...owned]);
       for (const extra of [[], ['--apply']]) {
-        const cache = objectResult(ctx.cli(['gc', '--purge-cache', ...extra]).cache);
+        const cache = objectResult(ctx.cli(['prune','--expired', '--purge-cache', ...extra]).cache);
         assert(Array.isArray(cache.blocked));
         const blocked = cache.blocked.map(objectResult).find(entry => entry.path === npm);
         assert(blocked);
@@ -167,10 +167,10 @@ export const cases: Scenario[] = [
       writeFileSync(join(npm, marker), ownership, { mode: 0o600 });
       const replacement = join(npm, 'replacement.txt');
       writeFileSync(replacement, 'unrelated directory data');
-      ctx.cli(['drop', ...owned]);
+      ctx.cli(['prune', ...owned]);
 
       for (const extra of [[], ['--apply']]) {
-        const cache = objectResult(ctx.cli(['gc', '--purge-cache', ...extra]).cache);
+        const cache = objectResult(ctx.cli(['prune','--expired', '--purge-cache', ...extra]).cache);
         assert(Array.isArray(cache.blocked));
         const blocked = cache.blocked.map(objectResult).find(entry => entry.path === npm);
         assert(blocked);
@@ -191,9 +191,9 @@ export const cases: Scenario[] = [
       const note = join(unknown, 'keep.txt');
       writeFileSync(note, 'outside the source snapshot format\n');
       assert.equal(readFileSync(join(workspace.path, 'tracked.txt'), 'utf8'), 'initial\n');
-      ctx.cli(['drop', 'snapshot-fixture', '--lease', workspace.lease]);
+      ctx.cli(['prune', 'snapshot-fixture', '--lease', workspace.lease]);
       for (const extra of [[], ['--apply']]) {
-        const cache = objectResult(ctx.cli(['gc', '--purge-cache', ...extra]).cache);
+        const cache = objectResult(ctx.cli(['prune','--expired', '--purge-cache', ...extra]).cache);
         assert(Array.isArray(cache.blocked));
         assert(cache.blocked.map(objectResult).some(entry => entry.path === unknown));
         assert.equal(readFileSync(note, 'utf8'), 'outside the source snapshot format\n');
@@ -216,7 +216,7 @@ export const cases: Scenario[] = [
         const changed = JSON.stringify({ ...record, ...fields });
         writeFileSync(path, changed);
         assert.match(String(ctx.fail(['status', 'bad-record']).message), reason);
-        assert.match(String(ctx.fail(['drop', 'bad-record', '--lease', workspace.lease, '--discard']).message), reason);
+        assert.match(String(ctx.fail(['prune', 'bad-record', '--lease', workspace.lease, '--discard']).message), reason);
         assert.equal(readFileSync(path, 'utf8'), changed);
         assert.equal(ctx.git(['rev-parse', 'HEAD'], workspace.path), head);
         assert.equal(readFileSync(join(workspace.path, 'tracked.txt'), 'utf8'), 'initial\n');
@@ -351,16 +351,16 @@ export const cases: Scenario[] = [
       const foreignHead = ctx.git(['rev-parse', 'HEAD'], ws.path);
       const reject = () => {
         ctx.fail(owned('exec', ws, '--', process.execPath, '-e', 'process.exit(0)'));
-        ctx.fail(owned('drop', ws, '--discard'));
+        ctx.fail(owned('prune', ws, '--discard'));
         ctx.fail(owned('land', ws));
         ctx.fail(['move', ws.name, join(ctx.root, 'unexpected move'), '--lease', ws.lease]);
       };
       reject();
       ctx.fail(['repair', ws.name, ws.path, '--lease', ws.lease]);
-      const preview = ctx.cli(['gc']);
+      const preview = ctx.cli(['prune','--expired']);
       assert.equal(preview.applied, false);
       assert.equal(readFileSync(join(expired.path, 'tracked.txt'), 'utf8'), 'initial\n');
-      const applied = ctx.cli(['gc', '--apply']);
+      const applied = ctx.cli(['prune','--expired', '--apply']);
       assert.equal(applied.applied, true);
       for (const result of [preview, applied]) {
         assert(!JSON.stringify(result).includes(ws.lease));
@@ -418,7 +418,7 @@ export const cases: Scenario[] = [
         assert.equal(existsSync(destination), false);
       };
       for (const args of [
-        ['drop', ...owned, '--discard'],
+        ['prune', ...owned, '--discard'],
         ['land', ...owned],
         move,
       ]) {
@@ -431,7 +431,7 @@ export const cases: Scenario[] = [
       const expired = { ...objectResult(parseExact(readFileSync(record, 'utf8'))), heartbeat: 0 };
       writeFileSync(record, JSON.stringify(expired));
       for (const options of [[], ['--apply']]) {
-        const { retained } = ctx.cli(['gc', ...options]);
+        const { retained } = ctx.cli(['prune','--expired', ...options]);
         assert(Array.isArray(retained));
         const row = retained.map(objectResult).find(entry => entry.name === 'parent');
         assert(row);
@@ -449,7 +449,7 @@ export const cases: Scenario[] = [
       ctx.git(['worktree', 'remove', linked], ws.path);
       assert.equal(ctx.cli(move).path, destination);
       assert.equal(existsSync(ws.path), false);
-      ctx.cli(['drop', ...owned]);
+      ctx.cli(['prune', ...owned]);
       ctx.cli(['restore', ...owned]);
       ctx.git(['fsck', '--full'], destination);
     },
@@ -483,7 +483,7 @@ export const cases: Scenario[] = [
       const pointer = readFileSync(backpointer);
       const relocated = join(ctx.root, 'manually moved parent');
       for (const args of [
-        ['drop', ...owned, '--discard'],
+        ['prune', ...owned, '--discard'],
         ['land', ...owned],
         ['move', ...owned, relocated],
       ]) {
@@ -499,7 +499,7 @@ export const cases: Scenario[] = [
       const expired = { ...objectResult(parseExact(readFileSync(record, 'utf8'))), heartbeat: 0 };
       writeFileSync(record, JSON.stringify(expired));
       for (const options of [[], ['--apply']]) {
-        const { retained } = ctx.cli(['gc', ...options]);
+        const { retained } = ctx.cli(['prune','--expired', ...options]);
         assert(Array.isArray(retained));
         assert.equal(retained.map(objectResult).find(entry => entry.name === 'nested-native')?.reason,
           'nested_git_metadata');
@@ -523,7 +523,7 @@ export const cases: Scenario[] = [
       const externalMarker = readFileSync(join(external, '.git'));
       const externalPointer = readFileSync(backpointer);
       assert.equal(ctx.cli(repair).path, relocated);
-      ctx.cli(['drop', ...owned]);
+      ctx.cli(['prune', ...owned]);
       assertPreserved(external, externalMarker, externalPointer);
       ctx.git(['fsck', '--full']);
     },

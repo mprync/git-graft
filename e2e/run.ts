@@ -79,7 +79,7 @@ function spaceSummary(samples: Record<string, unknown>[], installed: boolean): s
     '| Method | Change in used space on the volume | Total time |',
     '| --- | ---: | ---: |',
     '| ' + (installed ? 'Git + npm ci' : 'git worktree add') + ' | ' + mib(native.freeBytesDelta) + ' MiB | ' + native.totalSeconds.toFixed(3) + ' s |',
-    '| ' + (installed ? 'Graft + installed layer' : 'git graft spawn') + ' | ' + mib(graft.freeBytesDelta) + ' MiB | ' + graft.totalSeconds.toFixed(3) + ' s |',
+    '| ' + (installed ? 'Graft + installed layer' : 'git graft new') + ' | ' + mib(graft.freeBytesDelta) + ' MiB | ' + graft.totalSeconds.toFixed(3) + ' s |',
     '',
     'The native volume change minus the Graft volume change was ' + mib(space.savedBytes) + ' MiB.',
     'These signed readings include other filesystem activity. For checkout storage, see the file-block measurements in docs/benchmarks.md.',
@@ -102,9 +102,10 @@ assert.equal(help.status, 0, help.stderr);
 const advertisedCli = [...help.stdout.matchAll(/^  ([a-z][a-z-]+)\s{2,}/gm)]
   .map(match => match[1]).filter(name => name !== 'help').sort();
 // Keep the advertised contract even when a regression removes a command from discovery.
-const publicCli = 'add-dep doctor drop env exec gc heartbeat land layer list list-managers lock mcp move register-manager repair restore seed-layer spawn status undo-land unregister-manager unlock'.split(' ');
-const publicTools = 'add_dependency discard doctor env exec gc heartbeat land_and_wipe layer list list_managers lock move register_manager repair restore seed_layer spawn status undo_land unregister_manager unlock'
-  .split(' ').map(name => 'workspace_' + name);
+// heartbeat is hidden from help, so it is not part of the advertised surface.
+const publicCli = 'deps doctor exec land list lock mcp move new prune repair restore seed status unlock'.split(' ');
+const publicTools = 'add_dependency exec land list new prune renew restore status'
+  .split(' ').map(name => 'graft_' + name);
 const coveredCli = new Set<string>();
 const coveredTools = new Set<string>();
 const advertisedTools = new Set<string>();

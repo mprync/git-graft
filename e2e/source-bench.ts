@@ -101,7 +101,7 @@ function run(arm: Arm, source: Source, measureApfs: boolean) {
       let path = join(ctx.root,name);
       const argv = arm === 'native' ? ['worktree','add','-b',branch,path,source.head] :
         ['graft','--repo',ctx.repo,'--json',
-          'spawn',name,'--history','local','--base',source.head,'--no-deps'];
+          'new',name,'--history','local','--base',source.head,'--no-deps'];
       const start = performance.now();
       const result = ctx.command('git',argv);
       const seconds = (performance.now()-start)/1000;

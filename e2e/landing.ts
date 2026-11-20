@@ -206,7 +206,7 @@ export const cases: Scenario[] = [
       assert.equal(ctx.git(['rev-parse', 'HEAD']), result.commit);
       assert.equal(ctx.cli(['status', name]).id, replacement.result.id);
       assert.equal(read(replacement.path, 'local.txt'), 'replacement data\n');
-      ctx.cli(['drop', name, '--lease', replacement.lease, '--discard']);
+      ctx.cli(['prune', name, '--lease', replacement.lease, '--discard']);
       ctx.git(['gc', '--prune=now']);
       ctx.git(['fsck', '--full']);
       const restored = ctx.cli(['restore', name, '--lease', workspace.lease]);
@@ -582,7 +582,7 @@ export const cases: Scenario[] = [
       write(workspace.path, 'feature.txt', 'edit after failure\n');
 
       assert.match(String(ctx.fail(land).message), /local changes/);
-      const drop = owned('drop');
+      const drop = owned('prune');
       assert.match(String(ctx.fail(drop).message), /landing is pending/);
       assert.equal(read(workspace.path, 'feature.txt'), 'edit after failure\n');
       const retired = ctx.cli([...drop, '--discard']);
@@ -593,7 +593,7 @@ export const cases: Scenario[] = [
       assert.deepEqual(ctx.cli([...drop, '--discard']), retired);
 
       ctx.cli(owned('restore'));
-      const undone = ctx.cli(owned('undo-land'));
+      const undone = ctx.cli([...owned('land'), '--undo']);
       assert.equal(ctx.git(['rev-parse', 'HEAD']), undone.commit);
       assert.equal(ctx.git(['rev-parse', 'HEAD^']), tip);
       assert.equal(ctx.git(['rev-parse', 'HEAD^{tree}']), initialTree);
@@ -645,7 +645,7 @@ export const cases: Scenario[] = [
       };
 
       const owned = ['indexed-land', '--lease', workspace.lease];
-      assert.match(String(ctx.fail(['drop', ...owned]).message), /landing is pending/i);
+      assert.match(String(ctx.fail(['prune', ...owned]).message), /landing is pending/i);
       assert(existsSync(journal.path));
       if (!advanced) {
         assert.match(String(ctx.fail(land).message), /local changes/i);
@@ -654,7 +654,7 @@ export const cases: Scenario[] = [
       assertPrimary();
       assertWorkspace();
 
-      const retired = ctx.cli(['drop', ...owned, '--discard']);
+      const retired = ctx.cli(['prune', ...owned, '--discard']);
       assert.equal(retired.action, 'land');
       assert.equal(retired.commit, tip);
       assert.equal(retired.previous, base);
