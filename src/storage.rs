@@ -1952,9 +1952,27 @@ mod tests {
         independent(&repo, &workspace);
         let target = temp.path().join("redirected-root\r");
         fs::create_dir(&target).unwrap();
-        command(
-            &workspace,
-            &["config", "core.worktree", target.to_str().unwrap()],
+        // Git before 2.47 writes a trailing CR unquoted and strips it again on
+        // read, so quote the value to redirect the checkout on every version.
+        let mut config = fs::OpenOptions::new()
+            .append(true)
+            .open(workspace.join(".git/config"))
+            .unwrap();
+        writeln!(
+            config,
+            "[core]\n\tworktree = \"{}\"",
+            target.to_str().unwrap()
+        )
+        .unwrap();
+        drop(config);
+        let configured = git_command(&workspace)
+            .args(["config", "--get", "core.worktree"])
+            .output()
+            .unwrap()
+            .stdout;
+        assert_eq!(
+            configured,
+            format!("{}\n", target.to_str().unwrap()).into_bytes()
         );
         assert!(materialize(&workspace, &state, &oid, &[], &repo).is_err());
         assert!(!target.join("sub").exists());
