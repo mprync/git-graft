@@ -64,16 +64,22 @@ fn prepare(primary: &Path, root: &Path, format: &str, base: &str) -> Result<Opti
     let mut cat = transfer_git(root);
     cat.env("GIT_OBJECT_DIRECTORY", &objects)
         .args(["cat-file", "-t", base]);
-    ensure!(
-        output_text(&checked(cat)?)? == "commit",
-        "the selected commit is missing from the independent object snapshot"
-    );
-
     // Reopen Git's path from the filesystem root. A stable detached directory
     // inode is insufficient if the donor has replaced it at its original name.
-    let current = Source::open(primary)?;
-    current.verify_layout()?;
-    if before != current.inventory(width)? {
+    // The donor recheck reads only the primary, so it overlaps the snapshot check.
+    let (kind, current) = std::thread::scope(|scope| {
+        let current = scope.spawn(|| -> Result<Inventory> {
+            let current = Source::open(primary)?;
+            current.verify_layout()?;
+            current.inventory(width)
+        });
+        (checked(cat), crate::workspace::joined(current))
+    });
+    ensure!(
+        output_text(&kind?)? == "commit",
+        "the selected commit is missing from the independent object snapshot"
+    );
+    if before != current? {
         return Ok(None);
     }
     Ok(Some(Snapshot {
@@ -225,19 +231,30 @@ impl Source {
     fn verify_layout(&self) -> Result<()> {
         let admin = self.path.join(".git");
         let objects = admin.join("objects");
-        let paths = run(
-            &self.path,
-            &[
-                "rev-parse",
-                "--path-format=absolute",
-                "--show-toplevel",
-                "--absolute-git-dir",
-                "--git-common-dir",
-                "--git-path",
-                "objects",
-                "--is-shallow-repository",
-            ],
-        )?;
+        // Both reads are independent; run their Git processes concurrently.
+        let (paths, partial) = std::thread::scope(|scope| {
+            let partial = scope.spawn(|| {
+                crate::git::raw(
+                    &self.path,
+                    &["config", "--includes", "--get-regexp", PARTIAL_CONFIG],
+                )
+            });
+            let paths = run(
+                &self.path,
+                &[
+                    "rev-parse",
+                    "--path-format=absolute",
+                    "--show-toplevel",
+                    "--absolute-git-dir",
+                    "--git-common-dir",
+                    "--git-path",
+                    "objects",
+                    "--is-shallow-repository",
+                ],
+            );
+            (paths, crate::workspace::joined(partial))
+        });
+        let paths = paths?;
         ensure!(
             output_text(&paths)?.split('\n').map(Some).eq([
                 self.path.to_str(),
@@ -249,11 +266,7 @@ impl Source {
             "snapshot requires an ordinary full Git repository"
         );
         ensure!(
-            optional_config(crate::git::raw(
-                &self.path,
-                &["config", "--includes", "--get-regexp", PARTIAL_CONFIG],
-            )?)?
-            .is_empty(),
+            optional_config(partial?)?.is_empty(),
             "snapshot requires a complete native Git object database"
         );
         Ok(())

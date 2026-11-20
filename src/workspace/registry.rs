@@ -1242,6 +1242,7 @@ pub fn reserve(
         .transpose()?
         .map(|id| id.to_string());
     let known = records(p)?;
+    crate::trace::mark("reserve: read records");
     if let Some(mut r) = current(&known, name).cloned() {
         if requested.as_ref() == Some(&r.lease)
             && r.base.as_deref() == base
@@ -1284,8 +1285,11 @@ pub fn reserve(
     if !exists(&p.state.join(NAMESPACE))? {
         validate_fresh_root(p)?;
     }
+    crate::trace::mark("reserve: validate fresh root");
     let directory = record_directory(p, true)?;
+    crate::trace::mark("reserve: record directory");
     let root = workspaces(p, true)?;
+    crate::trace::mark("reserve: workspace root");
     let path = root.join(name);
     ensure_unoccupied(&path)?;
     let namespace = directory.parent().context("missing workspace namespace")?;
@@ -1301,7 +1305,9 @@ pub fn reserve(
     )?;
     sync_directory(stage.path())?;
     sync_directory(&root)?;
+    crate::trace::mark("reserve: stage marker");
     let identity = Identity::read(stage.path())?;
+    crate::trace::mark("reserve: identity");
     let port = port_for(&known, name)?;
     let started = now();
     let mut r = Record {
@@ -1328,11 +1334,13 @@ pub fn reserve(
     };
     let result = (|| {
         write_record(&directory, &r)?;
+        crate::trace::mark("reserve: write placement");
         let Some(Transition::Place { from }) = &r.transition else {
             unreachable!("new reservations begin in placement");
         };
         // The private stage was just created with only our .git marker.
         relocate(p, &r, from, &r.path, true)?;
+        crate::trace::mark("reserve: relocate");
         r.transition = None;
         write_record(&directory, &r)
     })();

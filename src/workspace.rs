@@ -118,6 +118,13 @@ fn project_history(project: &Project) -> Result<api::History> {
     }
 }
 
+/// Join a scoped worker, re-raising its panic on the caller's thread.
+pub(crate) fn joined<T>(handle: std::thread::ScopedJoinHandle<'_, T>) -> T {
+    handle
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
 fn spawn(p: &Project, origin: &Path, mut args: Spawn) -> Result<Value> {
     if let Some(id) = &mut args.request_id {
         *id = uuid::Uuid::parse_str(id)
@@ -131,6 +138,31 @@ fn spawn(p: &Project, origin: &Path, mut args: Spawn) -> Result<Value> {
         .as_ref()
         .and_then(|id| registry::authenticate(p, &args.name, id).ok())
         .filter(|record| !record.request.is_null());
+    // Each Git query below costs a process launch. Run the read-only ones
+    // concurrently, then report their results in the original order.
+    let custom_branch = args.orphan.as_ref().or(args.branch.as_ref());
+    let resolve_base =
+        args.orphan.is_none() && previous.as_ref().is_none_or(|record| record.base.is_none());
+    let (configured, branch_format, resolved, source) = std::thread::scope(|scope| {
+        let configured = (args.history.is_none() && previous.is_none())
+            .then(|| scope.spawn(|| project_history(p)));
+        let branch_format = custom_branch.map(|name| {
+            scope.spawn(move || {
+                git::bytes(
+                    &p.repo,
+                    &["check-ref-format", &format!("refs/heads/{name}")],
+                )
+            })
+        });
+        let resolved = resolve_base.then(|| scope.spawn(|| git::oid(origin, &args.base)));
+        let source = objects::preflight(origin);
+        (
+            configured.map(joined),
+            branch_format.map(joined),
+            resolved.map(joined),
+            source,
+        )
+    });
     let history = match args.history {
         Some(mode) => mode,
         None => {
@@ -142,7 +174,7 @@ fn spawn(p: &Project, origin: &Path, mut args: Spawn) -> Result<Value> {
                 }
                 Some(record) if record.request["project_history"] == "tip" => api::History::Tip,
                 Some(_) => api::History::Isolated,
-                None => project_history(p)?,
+                None => configured.context("project history was not read")??,
             };
             match history {
                 api::History::Local => request["project_local_history"] = Value::Bool(true),
@@ -176,27 +208,25 @@ fn spawn(p: &Project, origin: &Path, mut args: Spawn) -> Result<Value> {
     };
     // The generated graft/<name> uses the portable name validated above.
     // Reject invalid caller-supplied branches before reserving a workspace.
-    if let Some(name) = args.orphan.as_ref().or(args.branch.as_ref()) {
+    if let Some(name) = custom_branch {
         ensure!(
             !name.starts_with('-') && !name.starts_with("refs/") && name != "HEAD",
             "invalid branch name"
         );
-        git::bytes(
-            &p.repo,
-            &["check-ref-format", &format!("refs/heads/{name}")],
-        )?;
+        branch_format.context("branch name was not checked")??;
     }
     let base = if args.orphan.is_some() {
         None
     } else {
         let oid = match reserved_base {
             Some(base) => base,
-            None => git::oid(origin, &args.base)?,
+            None => resolved.context("base was not resolved")??,
         };
         storage::validate_sparse(origin, &oid, &args.sparse)?;
         Some(oid)
     };
-    let source = objects::preflight(origin)?;
+    let source = source?;
+    crate::trace::mark("preflight");
     let local = history == api::History::Local && cfg!(target_os = "macos");
     let proof = base
         .as_deref()
@@ -207,6 +237,7 @@ fn spawn(p: &Project, origin: &Path, mut args: Spawn) -> Result<Value> {
                     || history == api::History::Tip && objects::needs_tip_proof(&p.state, oid))
         })
         .and_then(|oid| objects::CheckoutDiscovery::start(origin, oid, local));
+    crate::trace::mark("start discovery");
     let mut r = registry::reserve(
         p,
         &args.name,
@@ -219,8 +250,10 @@ fn spawn(p: &Project, origin: &Path, mut args: Spawn) -> Result<Value> {
         registry::verify(p, &r)?;
         return Ok(with_lease(&r));
     }
+    crate::trace::mark("reserve");
     let build = (|| -> Result<()> {
         registry::verify(p, &r)?;
+        crate::trace::mark("verify reservation");
         let (objects, prepared_checkout) = objects::initialize(
             &source,
             &r.path,
@@ -230,6 +263,7 @@ fn spawn(p: &Project, origin: &Path, mut args: Spawn) -> Result<Value> {
             history,
             proof,
         )?;
+        crate::trace::mark("initialize objects");
         let mut checkout = match (prepared_checkout, &base) {
             (Some(checkout), _) => checkout,
             (None, Some(oid)) if !args.no_checkout => {
@@ -243,6 +277,7 @@ fn spawn(p: &Project, origin: &Path, mut args: Spawn) -> Result<Value> {
             _ => json!({"backend":"empty","files":0,"logical_bytes":0}),
         };
         checkout["objects"] = objects;
+        crate::trace::mark("checkout");
         if base.is_some() && !args.no_checkout && args.sparse.is_empty() && !args.no_deps {
             if let Some(deps) = layer::inherit_shared(&r.path, &p.state, &p.repo)? {
                 checkout["dependencies"] = deps;
@@ -256,7 +291,9 @@ fn spawn(p: &Project, origin: &Path, mut args: Spawn) -> Result<Value> {
         if args.lock {
             r.locked = Some(args.reason.unwrap_or_default());
         }
-        registry::finish(p, &mut r)
+        let finished = registry::finish(p, &mut r);
+        crate::trace::mark("finish");
+        finished
     })();
     if let Err(error) = build {
         return Err(api::fault(
@@ -501,6 +538,7 @@ fn report_status(p: &Project, name: &str) -> Result<Value> {
 
 pub fn run(repo: &Path, command: Command) -> Result<Value> {
     let version = git::text(repo, &["--version"])?;
+    crate::trace::mark("git version");
     let supported = git::supported_version(&version);
     if !supported && !matches!(command, Command::Doctor) {
         return Err(api::fault(
@@ -513,6 +551,7 @@ pub fn run(repo: &Path, command: Command) -> Result<Value> {
         ));
     }
     let location = registry::discover(repo)?;
+    crate::trace::mark("discover");
     let primary = location
         .as_ref()
         .map_or(repo, |where_| where_.project.as_path());
@@ -528,6 +567,7 @@ pub fn run(repo: &Path, command: Command) -> Result<Value> {
         Project::open(primary)?
     };
     let p = &p;
+    crate::trace::mark("open project");
     match &command {
         Command::Doctor
         | Command::List

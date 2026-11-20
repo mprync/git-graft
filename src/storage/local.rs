@@ -81,6 +81,7 @@ fn materialize<F: FnOnce() -> Result<()>>(
     let oid = checkout_identity_with_objects(workspace, oid, proof_objects)?;
     validate_sparse(workspace, &oid, sparse)?;
     let mut checkout = LocalCheckout::reserve(workspace, proof_objects)?;
+    crate::trace::mark("checkout: identity and reserve");
     let listed;
     let files = if let Some(manifest) = metadata.index {
         if manifest.prepare(&checkout).is_err() {
@@ -89,6 +90,7 @@ fn materialize<F: FnOnce() -> Result<()>>(
             return materialize_local(workspace, state, &oid, sparse, primary);
         }
         checkout.planned = true;
+        crate::trace::mark("checkout: prepare index");
         &manifest.entries
     } else {
         listed = entries_with_objects(workspace, &oid, proof_objects)?;
@@ -96,7 +98,9 @@ fn materialize<F: FnOnce() -> Result<()>>(
     };
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
-    let receipt = match direct::plan(&checkout, &oid, sparse, files, state, primary)? {
+    let planned = direct::plan(&checkout, &oid, sparse, files, state, primary)?;
+    crate::trace::mark("checkout: plan donors");
+    let receipt = match planned {
         Ok(plan) => direct::install(
             &checkout,
             &oid,
@@ -453,11 +457,20 @@ pub(super) mod direct {
     }
 
     fn donor_index(primary: &Path) -> Result<Option<Vec<u8>>> {
-        let location = donor_prefix(primary).output()?;
+        // The listing is only used once the prefix proves it belongs to this
+        // checkout root, so both read-only queries can run at once.
+        let (location, output) = std::thread::scope(|scope| {
+            let output = scope.spawn(|| donor_listing(primary).output());
+            (
+                donor_prefix(primary).output(),
+                crate::workspace::joined(output),
+            )
+        });
+        let location = location?;
         if !location.status.success() || location.stdout != b"\n" {
             return Ok(None);
         }
-        let output = donor_listing(primary).output()?;
+        let output = output?;
         Ok(output.status.success().then_some(output.stdout))
     }
 
@@ -700,6 +713,7 @@ pub(super) mod direct {
         }
         // Like Git's own checkout, record each cloned file's stat as captured
         // immediately after installation; no later refresh blesses an edit.
+        crate::trace::mark("checkout: clone files");
         index_stat::record(&checkout.index, &installed)?;
         receipt.primary.files = receipt.cloned.files;
         receipt.primary.bytes = receipt.cloned.bytes;

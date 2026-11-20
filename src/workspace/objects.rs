@@ -153,22 +153,39 @@ pub(super) struct Primary<'a> {
 }
 
 pub(super) fn preflight(primary: &Path) -> Result<Primary<'_>> {
-    let discovery = git::text(
-        primary,
-        &[
-            "rev-parse",
-            "--show-object-format",
-            "--path-format=absolute",
-            "--git-path",
-            "info/grafts",
-        ],
-    )?;
+    // Three independent read-only queries; each launches its own Git process.
+    let (discovery, replacements, filters) = std::thread::scope(|scope| {
+        let replacements =
+            scope.spawn(|| run(primary, &["for-each-ref", "--count=1", "refs/replace/"]));
+        let filters = scope.spawn(|| {
+            git::raw(
+                primary,
+                &["config", "--null", "--show-scope", "--get-regexp", FILTERS],
+            )
+        });
+        let discovery = git::text(
+            primary,
+            &[
+                "rev-parse",
+                "--show-object-format",
+                "--path-format=absolute",
+                "--git-path",
+                "info/grafts",
+            ],
+        );
+        (
+            discovery,
+            crate::workspace::joined(replacements),
+            crate::workspace::joined(filters),
+        )
+    });
+    let discovery = discovery?;
     let (format, grafts) = discovery
         .split_once('\n')
         .context("missing legacy grafts location")?;
     let format = parse_format(format.trim_end_matches('\r'))?;
     ensure!(
-        run(primary, &["for-each-ref", "--count=1", "refs/replace/"])?.is_empty(),
+        replacements?.is_empty(),
         "independent workspaces do not support Git replacement refs"
     );
     match fs::metadata(grafts) {
@@ -179,10 +196,7 @@ pub(super) fn preflight(primary: &Path) -> Result<Primary<'_>> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         Err(error) => return Err(error.into()),
     }
-    let scoped = optional_config(git::raw(
-        primary,
-        &["config", "--null", "--show-scope", "--get-regexp", FILTERS],
-    )?)?;
+    let scoped = optional_config(filters?)?;
     ensure!(
         !scoped
             .split(|b| *b == 0)
@@ -233,8 +247,12 @@ fn checkout_config(path: &Path) -> Result<CheckoutConfig> {
     Ok(values)
 }
 
-fn copy_config(primary: &Path, root: &Path) -> Result<()> {
-    let source = checkout_config(primary)?;
+/// Give the workspace a private copy of the primary's checkout settings.
+fn apply_config(primary: &Path, root: &Path, source: PrimaryConfig) -> Result<()> {
+    let PrimaryConfig {
+        checkout: source,
+        attributes,
+    } = source;
     let destination = checkout_config(root)?;
     ensure!(
         source.filters == destination.filters,
@@ -275,9 +293,33 @@ fn copy_config(primary: &Path, root: &Path) -> Result<()> {
             ],
         )?;
     }
-    let attrs = repository_path(primary, "info/attributes")?;
-    copy_attributes(&attrs, &root.join(".git/info/attributes"))?;
+    copy_attributes(&attributes, &root.join(".git/info/attributes"))?;
     Ok(())
+}
+
+/// The primary's checkout settings and its `info/attributes` path.
+struct PrimaryConfig {
+    checkout: CheckoutConfig,
+    attributes: PathBuf,
+}
+
+/// Read both primary-side inputs of [`apply_config`] concurrently.
+fn read_primary_config(primary: &Path) -> Result<PrimaryConfig> {
+    let (checkout, attributes) = std::thread::scope(|scope| {
+        let attributes = scope.spawn(|| repository_path(primary, "info/attributes"));
+        (
+            checkout_config(primary),
+            crate::workspace::joined(attributes),
+        )
+    });
+    Ok(PrimaryConfig {
+        checkout: checkout?,
+        attributes: attributes?,
+    })
+}
+
+fn copy_config(primary: &Path, root: &Path) -> Result<()> {
+    apply_config(primary, root, read_primary_config(primary)?)
 }
 
 fn repository_path(repo: &Path, path: &str) -> Result<PathBuf> {
@@ -348,7 +390,6 @@ pub(super) fn initialize(
         path: primary,
         format,
     } = *source;
-    let base = base.map(|oid| exact_commit(primary, oid)).transpose()?;
     let branch_ref = branch.map(|branch| format!("refs/heads/{branch}"));
     if let Some(name) = branch {
         // Git init validates the full refname when it creates HEAD.
@@ -362,16 +403,24 @@ pub(super) fn initialize(
         "an unborn workspace requires a branch"
     );
     let initial = branch.unwrap_or("graft-unborn");
-    run(
-        root,
-        &[
-            "init",
-            "--quiet",
-            "--template=",
-            &format!("--object-format={format}"),
-            &format!("--initial-branch={initial}"),
-        ],
-    )?;
+    // Confirming the base in the primary does not depend on the new repository.
+    let (base, initialized) = std::thread::scope(|scope| {
+        let exact = base.map(|oid| scope.spawn(move || exact_commit(primary, oid)));
+        let initialized = run(
+            root,
+            &[
+                "init",
+                "--quiet",
+                "--template=",
+                &format!("--object-format={format}"),
+                &format!("--initial-branch={initial}"),
+            ],
+        );
+        (exact.map(crate::workspace::joined), initialized)
+    });
+    let base = base.transpose()?;
+    initialized?;
+    crate::trace::mark("init: git init");
     let Some(base) = base else {
         copy_config(primary, root)?;
         return Ok((
@@ -416,6 +465,7 @@ pub(super) fn initialize(
         );
     }
     let receipt = transfer()?;
+    crate::trace::mark("init: transfer objects");
     #[cfg(target_os = "macos")]
     if history == History::Local
         && let Some(plan) = discovery.and_then(CheckoutDiscovery::finish)
@@ -430,6 +480,7 @@ pub(super) fn initialize(
                 &base,
                 None,
             )?;
+            crate::trace::mark("init: head and config");
             crate::storage::materialize_planned(
                 root,
                 state,
@@ -468,9 +519,14 @@ fn finish_head(
         head.env("GIT_OBJECT_DIRECTORY", objects);
     }
     head.args(["update-ref", "--no-deref", reference, base]);
-    checked(head)?;
+    // The primary's settings do not depend on the workspace HEAD.
+    let (updated, source) = std::thread::scope(|scope| {
+        let source = scope.spawn(|| read_primary_config(primary));
+        (checked(head), crate::workspace::joined(source))
+    });
+    updated?;
     // includeIf.onbranch must observe the final branch or detached HEAD.
-    copy_config(primary, root)
+    apply_config(primary, root, source?)
 }
 
 pub(super) fn open_regular(path: &Path) -> io::Result<File> {
