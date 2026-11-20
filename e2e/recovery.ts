@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { objectResult, type Context, type Scenario } from './harness.ts';
+import { objectResult, parseExact, type Context, type Scenario } from './harness.ts';
 
 function drop(ctx: Context, name: string, lease: string) {
   return ctx.cli(['drop', name, '--lease', lease, '--discard']);
@@ -137,7 +137,7 @@ export const cases: Scenario[] = [
       const path = recordPath(ctx, id);
       const archive = join(dirname(archivePath(ctx, seed.result.id)), String(id));
       writeFileSync(join(ws.path, 'local.txt'), 'preserve');
-      const active = objectResult(JSON.parse(readFileSync(path, 'utf8')));
+      const active = objectResult(parseExact(readFileSync(path, 'utf8')));
       const command = ['drop', 'retry', '--lease', ws.lease, '--discard'];
       writeFileSync(path, JSON.stringify({
         ...active, archive, transition: { action: 'retire', status: 'dropped' },
@@ -162,7 +162,7 @@ export const cases: Scenario[] = [
       renameSync(ws.path, join(ctx.root, 'foreign endpoint'));
       ctx.git(['fsck', '--full'], archive);
 
-      const dropped = objectResult(JSON.parse(readFileSync(path, 'utf8')));
+      const dropped = objectResult(parseExact(readFileSync(path, 'utf8')));
       const lease = randomUUID();
       writeFileSync(path, JSON.stringify({
         ...dropped, transition: { action: 'restore', lease, port: ws.result.port },

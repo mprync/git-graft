@@ -25,6 +25,19 @@ export function objectResult(value: unknown): ObjectResult {
   return Object.fromEntries(Object.entries(value));
 }
 
+type RawJson = { rawJSON(text: string): unknown };
+type Reviver = (key: string, value: unknown, context?: { source?: string }) => unknown;
+
+/** Parse JSON keeping integers beyond 2^53 exact, so a registry record
+ * survives being rewritten. NTFS file IDs, for one, exceed that range. */
+export function parseExact(text: string): unknown {
+  const reviver: Reviver = (_key, value, context) =>
+    typeof value === 'number' && !Number.isSafeInteger(value) && context?.source !== undefined
+      ? (JSON as unknown as RawJson).rawJSON(context.source)
+      : value;
+  return JSON.parse(text, reviver as (key: string, value: unknown) => unknown);
+}
+
 export function execute(exe: string, args: string[], cwd: string, env: NodeJS.ProcessEnv) {
   const out = spawnSync(exe, args, { cwd, env, encoding: 'utf8', windowsHide: true,
     timeout: 120_000, maxBuffer: 24 * 1024 * 1024 });

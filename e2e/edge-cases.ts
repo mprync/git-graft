@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
-import type { Scenario } from './harness.ts';
+import { parseExact, type Scenario } from './harness.ts';
 
 type Context = Parameters<Scenario['run']>[0];
 type Workspace = ReturnType<Context['spawn']>;
@@ -77,7 +77,7 @@ export const cases: Scenario[] = [
       assert(typeof ws.result.id === 'string');
       const path = join(ctx.repo, '.git', 'graft', 'workspaces', 'records', ws.result.id + '.json');
       const record = readFileSync(path, 'utf8');
-      writeFileSync(path, JSON.stringify({ ...object(JSON.parse(record)), status: 'pending', initialized: false }));
+      writeFileSync(path, JSON.stringify({ ...object(parseExact(record)), status: 'pending', initialized: false }));
       for (const command of [
         ['heartbeat', 'pending', '--lease', ws.lease],
         ['exec', 'pending', '--lease', ws.lease, '--', process.execPath, '-e', 'process.exit(0)'],
@@ -148,7 +148,7 @@ export const cases: Scenario[] = [
       assert.equal(typeof env.cache_dir, 'string');
       const provenance = join(dirname(String(env.cache_dir)), 'layers', String(saved.digest), 'provenance.json');
       const valid = readFileSync(provenance, 'utf8');
-      const broken = object(JSON.parse(valid));
+      const broken = object(parseExact(valid));
       broken.compatibility = 'wrong';
       writeFileSync(provenance, JSON.stringify(broken));
       for (const action of ['restore', 'forget']) {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { objectResult, type Scenario } from './harness.ts';
+import { objectResult, parseExact, type Scenario } from './harness.ts';
 
 export const cases: Scenario[] = [
   {
@@ -206,7 +206,7 @@ export const cases: Scenario[] = [
       const workspace = ctx.spawn('bad-record');
       assert(typeof workspace.result.id === 'string');
       const path = join(ctx.repo, '.git', 'graft', 'workspaces', 'records', workspace.result.id + '.json');
-      const record = objectResult(JSON.parse(readFileSync(path, 'utf8')));
+      const record = objectResult(parseExact(readFileSync(path, 'utf8')));
       const head = ctx.git(['rev-parse', 'HEAD'], workspace.path);
       for (const [fields, reason] of [
         [{ id: 'different-id' }, /record ID mismatch/i],
@@ -341,7 +341,7 @@ export const cases: Scenario[] = [
         const id = workspace.id;
         assert(typeof id === 'string' && /^[a-f0-9-]{36}$/i.test(id));
         const path = join(ctx.repo, '.git', 'graft', 'workspaces', 'records', `${id}.json`);
-        const record = objectResult(JSON.parse(readFileSync(path, 'utf8')));
+        const record = objectResult(parseExact(readFileSync(path, 'utf8')));
         writeFileSync(path, JSON.stringify({ ...record, heartbeat: 0 }));
       }
       const original = join(ctx.root, 'original workspace');
@@ -428,7 +428,7 @@ export const cases: Scenario[] = [
 
       assert(typeof ws.result.id === 'string');
       const record = join(ctx.repo, '.git', 'graft', 'workspaces', 'records', ws.result.id + '.json');
-      const expired = { ...objectResult(JSON.parse(readFileSync(record, 'utf8'))), heartbeat: 0 };
+      const expired = { ...objectResult(parseExact(readFileSync(record, 'utf8'))), heartbeat: 0 };
       writeFileSync(record, JSON.stringify(expired));
       for (const options of [[], ['--apply']]) {
         const { retained } = ctx.cli(['gc', ...options]);
@@ -496,7 +496,7 @@ export const cases: Scenario[] = [
 
       assert(typeof ws.result.id === 'string');
       const record = join(ctx.repo, '.git', 'graft', 'workspaces', 'records', ws.result.id + '.json');
-      const expired = { ...objectResult(JSON.parse(readFileSync(record, 'utf8'))), heartbeat: 0 };
+      const expired = { ...objectResult(parseExact(readFileSync(record, 'utf8'))), heartbeat: 0 };
       writeFileSync(record, JSON.stringify(expired));
       for (const options of [[], ['--apply']]) {
         const { retained } = ctx.cli(['gc', ...options]);

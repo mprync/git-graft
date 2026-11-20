@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameS
 import { delimiter, dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { clearTimeout, setTimeout } from 'node:timers';
-import type { Scenario } from './harness.ts';
+import { parseExact, type Scenario } from './harness.ts';
 
 type Context = Parameters<Scenario['run']>[0];
 type JsonObject = Record<string, unknown>;
@@ -585,7 +585,7 @@ export const cases: Scenario[] = [
       for (const workspace of [stale, dirty]) {
         const id = string(workspace.result.id, 'fixture workspace id');
         const file = join(ctx.repo, '.git', 'graft', 'workspaces', 'records', `${id}.json`);
-        const saved = object(JSON.parse(readFileSync(file, 'utf8')), 'fixture record');
+        const saved = object(parseExact(readFileSync(file, 'utf8')), 'fixture record');
         writeJson(file, { ...saved, heartbeat: 0 });
       }
       await invalidCall(client, 'workspace_gc', { apply: 'true' });
