@@ -23,8 +23,8 @@ A faster, lighter replacement for `git worktree`. Each graft is a full Git repos
 - **99% less disk.** A graft shares every unchanged file with your checkout and stores only the files you edit. A hundred grafts cost less than one worktree.
 - **No copied dependencies.** Install `node_modules` once; every graft gets a writable copy that takes almost no extra space and skips `npm ci`.
 - **Faster than a worktree.** A graft is ready to work 17% sooner, and ready to run tests 3.1× sooner when dependencies are involved.
-- **Built for agents.** A built-in MCP server lets agents create, work in and land their own grafts, each in a private repository that can't touch yours.
-- **Nothing gets lost.** Landing and pruning archive a graft instead of deleting it, so any graft can be restored.
+- **Built for agents.** A built-in MCP server lets agents create, work in and merge their own grafts, each in a private repository that can't touch yours.
+- **Nothing gets lost.** Merging and removing archive a graft instead of deleting it, so any graft can be restored.
 
 ## Install
 
@@ -56,19 +56,19 @@ Graft needs Git 2.46 or newer. The install scripts check every download against 
 ## Quick start
 
 ```sh
-git graft new fix-parser                 # prints the graft's path and its lease
-cd ../myrepo.graft/fix-parser            # a normal Git repository: edit, test, commit
-git graft land fix-parser --lease <lease>  # bring the commits back to main
+git graft add fix-parser                  # prints the graft's path and its lease
+cd ../myrepo.graft/fix-parser             # a normal Git repository: edit, test, commit
+git graft merge fix-parser --lease <lease> # merge the commits into main
 ```
 
-That's it. `git graft list` shows your grafts, and `git graft restore` brings back any graft you landed or pruned.
+That's it. `git graft list` shows your grafts, `git graft merge --into <branch>` merges somewhere other than `main`, and `git graft restore` brings back any graft you merged or removed.
 
 **Share dependencies once, use them everywhere:**
 
 ```sh
 npm ci                                   # in your checkout, as usual
-git graft seed --shared --key node24     # register this install for new grafts
-git graft new add-tests                  # node_modules is already there
+git graft deps share --key node24           # share this install with new grafts
+git graft add add-tests                     # node_modules is already there
 ```
 
 ## The numbers
@@ -84,7 +84,7 @@ git graft new add-tests                  # node_modules is already there
   </tr>
 </table>
 
-Medians from the release build on macOS with APFS, comparing `git worktree add` (plus `npm ci` where dependencies are involved) with `git graft new` on the same repositories. In very small repositories, under about two thousand files, a worktree is still quicker to create; the disk savings hold at every size. [Method, raw data and how to rerun every benchmark](docs/benchmarks.md)
+Medians from the release build on macOS with APFS, comparing `git worktree add` (plus `npm ci` where dependencies are involved) with `git graft add` on the same repositories. In very small repositories, under about two thousand files, a worktree is still quicker to create; the disk savings hold at every size. [Method, raw data and how to rerun every benchmark](docs/benchmarks.md)
 
 ## Use it with coding agents
 
@@ -101,7 +101,7 @@ Graft includes an MCP server. Add it to your agent's MCP configuration:
 }
 ```
 
-Agents get nine tools: `graft_new`, `graft_status`, `graft_exec`, `graft_land`, `graft_prune`, `graft_restore`, `graft_list`, `graft_renew` and `graft_add_dependency`. Each agent works in its own graft and proves ownership with a secret lease, so agents can't interfere with each other or with your checkout. [Agent guide](skills/git-graft/SKILL.md)
+Agents get nine tools: `graft_add`, `graft_status`, `graft_exec`, `graft_merge`, `graft_remove`, `graft_restore`, `graft_list`, `graft_renew` and `graft_add_dependency`. Each agent works in its own graft and proves ownership with a secret lease, so agents can't interfere with each other or with your checkout. [Agent guide](skills/git-graft/SKILL.md)
 
 ## Graft vs worktree
 
@@ -118,12 +118,13 @@ Agents get nine tools: `graft_new`, `graft_status`, `graft_exec`, `graft_land`, 
 
 | Command | What it does |
 | --- | --- |
-| `git graft new <name>` | Create a graft from a commit (default: your current `HEAD`) |
+| `git graft add <name>` | Create a graft from a commit (default: your current `HEAD`) |
 | `git graft list` / `status` | Show grafts, or one graft's branch and changed files |
-| `git graft land <name>` | Merge a graft's commits into a branch and archive it; `--undo` reverts a landing |
-| `git graft prune <name>` | Archive a graft; `--expired` archives grafts whose lease ran out |
+| `git graft merge <name>` | Merge a graft's commits into `main` (or `--into <branch>`) and archive it; `--undo` reverts it |
+| `git graft remove <name>` | Archive a graft |
+| `git graft prune` | Archive grafts whose lease ran out |
 | `git graft restore <name>` | Reopen an archived graft |
-| `git graft seed` / `deps` | Share installed dependencies; add packages or register other package managers |
+| `git graft deps` | Share installed dependencies, add packages or register other package managers |
 | `git graft exec` | Run a command inside a graft |
 | `git graft lock` / `unlock` / `move` / `repair` | Protect, relocate or reconnect a graft |
 | `git graft doctor` | Check that Git and your filesystem support sharing |
@@ -132,7 +133,7 @@ Every command prints JSON and accepts `--help`. [Full reference](docs/operations
 
 ## How it works
 
-`git graft new` creates a standalone Git repository next to your checkout. Instead of writing every file, it asks the filesystem to clone them: the graft's files point at the same data blocks as your checkout's, and only a file you edit gets blocks of its own. Graft proves each reused file holds exactly the bytes `git checkout` would write, using Git's own index check or a hash, and falls back to Git for anything it cannot prove. It records file metadata in the new index, so the first `git status` reads no file contents. [Workspaces and dependency sharing](docs/workspaces.md)
+`git graft add` creates a standalone Git repository next to your checkout. Instead of writing every file, it asks the filesystem to clone them: the graft's files point at the same data blocks as your checkout's, and only a file you edit gets blocks of its own. Graft proves each reused file holds exactly the bytes `git checkout` would write, using Git's own index check or a hash, and falls back to Git for anything it cannot prove. It records file metadata in the new index, so the first `git status` reads no file contents. [Workspaces and dependency sharing](docs/workspaces.md)
 
 | Platform | Disk savings |
 | --- | --- |
@@ -143,7 +144,7 @@ Every command prints JSON and accepts `--help`. [Full reference](docs/operations
 ## Safety
 
 - Creating a graft never changes your checkout's files, index or branches, and never copies untracked or ignored files.
-- Landing reports conflicts before changing anything, and every destructive step archives first, so it can be undone.
+- Merging reports conflicts before changing anything, and every destructive step archives first, so it can be undone.
 - Graft runs Git hooks and package scripts with your permissions; use it with repositories and agents you trust.
 
 [Safety model](docs/safety.md) · [Security policy](SECURITY.md)
