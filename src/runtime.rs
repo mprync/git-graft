@@ -66,13 +66,18 @@ impl Runtime {
             .env("npm_config_cache", self.cache.join("npm"))
             .env("npm_config_store_dir", self.cache.join("pnpm"))
             .env("PNPM_CONFIG_STORE_DIR", self.cache.join("pnpm"))
-            .env("PNPM_CONFIG_PACKAGE_IMPORT_METHOD", "clone-or-copy")
-            .env("npm_config_package_import_method", "clone-or-copy")
             .env("BUN_INSTALL_CACHE_DIR", self.cache.join("bun"))
             .env("UV_CACHE_DIR", self.cache.join("uv"))
             // uv can fall back from clone to hardlinks on non-CoW volumes.
             .env("UV_LINK_MODE", "copy")
             .env("UV_PROJECT_ENVIRONMENT", venv);
+        // Without copy-on-write, pnpm hardlinks packages from its shared store,
+        // so editing one graft's node_modules would change every graft. Its
+        // environment honours only an explicit `copy` for this setting.
+        // Probe beside the working tree, in its Git directory on the same volume.
+        if !crate::storage::clones_between(&self.cache, &self.workspace.join(".git")) {
+            command.env("PNPM_CONFIG_PACKAGE_IMPORT_METHOD", "copy");
+        }
         // Respect an explicitly configured wrapper. sccache's cache is shared,
         // while Cargo's mutable target artifacts remain workspace-private.
         if std::env::var_os("RUSTC_WRAPPER").is_none() && on_path("sccache") {
@@ -279,7 +284,10 @@ impl Runtime {
             bail!("package names must be nonempty and cannot begin with '-'");
         }
         managers::validate(self, manager)?;
-        let pnpm_import = "--package-import-method=clone-or-copy";
+        // pnpm 9 to 11 ignore `--package-import-method` and the matching
+        // environment variables and hardlink from the shared store when the
+        // filesystem cannot clone, so one graft's edit would change them all.
+        let pnpm_import = "--config.package-import-method=clone-or-copy";
         let subcommand: &[&str] = match (manager, !packages.is_empty()) {
             ("npm", false) => &["ci"],
             ("npm", true) => &["install"],

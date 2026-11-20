@@ -1370,6 +1370,12 @@ fn probe(src_dir: &Path, dst_dir: &Path) -> Result<bool> {
     Ok(fs::read(source.path())? == b"git-graft clone probe")
 }
 
+/// Whether files under `source` can be cloned into `destination` with
+/// independent copy-on-write data. Any failure counts as no.
+pub(crate) fn clones_between(source: &Path, destination: &Path) -> bool {
+    fs::create_dir_all(source).is_ok() && probe(source, destination).unwrap_or(false)
+}
+
 /// Probe native cloning on the state filesystem. A worktree on another volume
 /// can still require the Git fallback; materialize checks the actual pair.
 pub fn doctor(state: &Path) -> Result<Value> {
