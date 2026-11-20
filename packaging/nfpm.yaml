@@ -17,7 +17,7 @@ section: vcs
 priority: optional
 maintainer: mprync <mprync@users.noreply.github.com>
 description: |
-  Copy-on-write Git grafts for people and coding agents.
+  Faster, lighter replacement for git worktree, built for coding agents.
   Run as `git graft`. Requires Git 2.46 or newer at runtime.
 vendor: mprync
 homepage: https://github.com/mprync/git-graft
