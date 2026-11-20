@@ -63,6 +63,7 @@ export const cases: Scenario[] = [
   {
     name: 'landing uses the available history backend without duplicate objects and survives recovery',
     run(ctx) {
+      ctx.git(['config', '--local', 'graft.history', 'isolated']);
       writeFileSync(join(ctx.repo, 'history.bin'), randomBytes(1024 * 1024));
       ctx.git(['add', 'history.bin']);
       ctx.git(['commit', '-qm', 'history']);

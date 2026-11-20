@@ -18,6 +18,9 @@ use std::{
 #[cfg(target_os = "macos")]
 use std::{fs, os::unix::fs::PermissionsExt};
 
+#[cfg(target_os = "macos")]
+pub(super) mod parents;
+
 fn invalid(message: &'static str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
 }
@@ -42,6 +45,8 @@ pub(crate) struct Root {
     directory: File,
     device: u64,
     parent: RefCell<Option<(PathBuf, File)>>,
+    #[cfg(target_os = "macos")]
+    ancestors: Option<RefCell<parents::Ancestors>>,
 }
 
 impl Root {
@@ -64,6 +69,8 @@ impl Root {
             directory,
             device,
             parent: RefCell::new(None),
+            #[cfg(target_os = "macos")]
+            ancestors: None,
         })
     }
 
@@ -73,7 +80,21 @@ impl Root {
             directory: self.directory.try_clone()?,
             device: self.device,
             parent: RefCell::new(None),
+            #[cfg(target_os = "macos")]
+            ancestors: None,
         })
+    }
+
+    pub(super) fn checkout_worker(&self, reuse_ancestors: bool) -> io::Result<Self> {
+        let worker = self.fork()?;
+        #[cfg(target_os = "macos")]
+        let worker = Self {
+            ancestors: reuse_ancestors.then(RefCell::default),
+            ..worker
+        };
+        #[cfg(not(target_os = "macos"))]
+        let _ = reuse_ancestors;
+        Ok(worker)
     }
 
     pub(super) fn same_device(&self, other: &Self) -> bool {
@@ -94,31 +115,20 @@ impl Root {
         {
             return Ok(());
         }
-        let mut current = self.directory.try_clone()?;
-        for part in directory.components() {
-            let Component::Normal(name) = part else {
-                return Err(invalid("unexpected relative path"));
-            };
-            current = match open_at(&current, name, libc::O_RDONLY | libc::O_DIRECTORY) {
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                    let filename = CString::new(name.as_bytes())?;
-                    if unsafe { libc::mkdirat(current.as_raw_fd(), filename.as_ptr(), 0o777) } != 0
-                    {
-                        let error = io::Error::last_os_error();
-                        if error.kind() != io::ErrorKind::AlreadyExists {
-                            return Err(error);
-                        }
-                    }
-                    open_at(&current, name, libc::O_RDONLY | libc::O_DIRECTORY)?
-                }
-                result => result?,
-            };
-            if current.metadata()?.dev() != self.device {
-                return Err(invalid("mounted destination directory"));
-            }
-        }
+        let current = self.walk(directory, true)?;
         *parent = Some((directory.to_path_buf(), current));
         Ok(())
+    }
+
+    pub(super) fn create_empty_directory(&self, path: &Path) -> io::Result<()> {
+        self.create_parent(path)?;
+        self.with_parent(path, |parent, name| {
+            let name = CString::new(name.as_bytes())?;
+            if unsafe { libc::mkdirat(parent.as_raw_fd(), name.as_ptr(), 0o777) } != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        })
     }
 
     #[cfg(target_os = "linux")]
@@ -172,28 +182,64 @@ impl Root {
             directory: self.subdirectory(path)?,
             device: self.device,
             parent: RefCell::new(None),
+            #[cfg(target_os = "macos")]
+            ancestors: None,
         })
     }
 
     fn subdirectory(&self, path: &Path) -> io::Result<File> {
+        self.walk(path, false)
+    }
+
+    fn walk(&self, path: &Path, create: bool) -> io::Result<File> {
+        #[cfg(target_os = "macos")]
+        let prefix = self
+            .ancestors
+            .as_ref()
+            .map(|cache| {
+                cache
+                    .borrow_mut()
+                    .prefix(&self.directory, self.device, path)
+            })
+            .transpose()?
+            .flatten();
+        #[cfg(not(target_os = "macos"))]
+        let prefix: Option<(File, &Path)> = None;
+        let (start, path) = prefix
+            .as_ref()
+            .map_or((&self.directory, path), |(fd, rest)| (fd, *rest));
         let mut directory = None;
         for part in path.components() {
             let Component::Normal(component) = part else {
                 return Err(invalid("unexpected relative path"));
             };
-            let child = open_at(
-                directory.as_ref().unwrap_or(&self.directory),
-                component,
-                libc::O_RDONLY | libc::O_DIRECTORY,
-            )?;
+            let parent = directory.as_ref().unwrap_or(start);
+            let flags = libc::O_RDONLY | libc::O_DIRECTORY;
+            let child = match open_at(parent, component, flags) {
+                Err(error) if create && error.kind() == io::ErrorKind::NotFound => {
+                    let name = CString::new(component.as_bytes())?;
+                    if unsafe { libc::mkdirat(parent.as_raw_fd(), name.as_ptr(), 0o777) } != 0 {
+                        let error = io::Error::last_os_error();
+                        if error.kind() != io::ErrorKind::AlreadyExists {
+                            return Err(error);
+                        }
+                    }
+                    open_at(parent, component, flags)?
+                }
+                result => result?,
+            };
             if child.metadata()?.dev() != self.device {
-                return Err(invalid("mounted donor directory"));
+                return Err(invalid(if create {
+                    "mounted destination directory"
+                } else {
+                    "mounted donor directory"
+                }));
             }
             directory = Some(child);
         }
         match directory {
             Some(directory) => Ok(directory),
-            None => self.directory.try_clone(),
+            None => start.try_clone(),
         }
     }
 

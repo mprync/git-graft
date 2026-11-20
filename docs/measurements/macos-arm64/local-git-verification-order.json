@@ -1,0 +1,3289 @@
+{
+  "fixture": "Fresh populated Homebrew/brew clones on macOS arm64/APFS. Git 2.56.0. Ordinary CLI spawn with omitted history. First status timed separately.",
+  "base": "bc63375ac3a4d6debb1ceb441ae6e22854f0909a",
+  "tree": "ee570b9dbb122c6b6f0f609b83402c1f8eaca195",
+  "reachableObjects": 371804,
+  "commits": 53716,
+  "executables": {
+    "git-graft": {
+      "sha256": "6ffd18bf52a6a0433d6450367d4ae53c323b952a8b401f63e1edfa5fb956400a",
+      "bytes": 4451040
+    },
+    "session-cli": {
+      "sha256": "999dc057296698f66f4a6243b2f9a874d207c6bdef57051e6e389eddadd91dee",
+      "bytes": 4451072
+    },
+    "walk-cli": {
+      "sha256": "4a9501a739c66657c6c029eaa594839cba4b1ba98f40d2e670295ec950e371bd",
+      "bytes": 4451088
+    },
+    "offset-cli": {
+      "sha256": "fc7ec3cedc72ab91bd4e4c55280b19365daf9f2ea2df2eff9d24836b878eef87",
+      "bytes": 4451424
+    },
+    "critical-cli": {
+      "sha256": "69333ccce993676beb38c1b27efb46d58a9556ba472aeacee61aa4730625af31",
+      "bytes": 4451424
+    }
+  },
+  "methods": {
+    "forwardAndReverse": "Six rotating fresh triples in each order: current release, one buffered Git process validating metadata sizes, exact commit/tree/attribute bytes and all blob types, linked worktree.",
+    "phases": "Six rotating triples in one executable: existing concurrent checks (release), one persistent verifier (candidate), persistent commit/attribute and blob checks alongside a native tree walk (walk).",
+    "offsetForwardAndReverse": "Six rotating triples in each order: current release, pack-offset ordering hints for the same native blob requests, linked worktree. All requests including duplicates and loose objects retained.",
+    "offsetConfirm": "Same executable with and without ordering hints, plus linked worktree. Candidate emits optional planning and type-check durations.",
+    "critical": "Six alternating groups of four fresh clones: ordinary, ordered, ordered, ordinary or the reverse. Each pair compares the mean of two samples per arm. Readiness, link checkout and file-worker completion recorded relative to launching file workers. Each per-run files_done summary uses the last worker.",
+    "gitOnly": "Each query gets its own freshly installed store after no-checkout local spawn. Native Git response compared byte-for-byte with expected output. Pack offsets for the ordering microbenchmark were computed outside its query timer."
+  },
+  "columns": [
+    "round",
+    "arm",
+    "spawnMs",
+    "firstStatusMs",
+    "userSeconds",
+    "systemSeconds",
+    "peakRssBytes",
+    "clonedFiles",
+    "privateFiles",
+    "privateWorkingFileBytes",
+    "sharedObjectBytes",
+    "phaseMs"
+  ],
+  "releaseComparisons": {
+    "forward": {
+      "release": "6ffd18bf52a6a0433d6450367d4ae53c323b952a8b401f63e1edfa5fb956400a",
+      "candidate": "999dc057296698f66f4a6243b2f9a874d207c6bdef57051e6e389eddadd91dee",
+      "summary": {
+        "candidate": {
+          "medianSpawnMs": 458.772,
+          "medianFirstStatusMs": 381.005,
+          "pairedMedianChangeMs": 11.937,
+          "fasterPairs": 2,
+          "observedPhaseMediansMs": {}
+        },
+        "release": {
+          "medianSpawnMs": 432.932,
+          "medianFirstStatusMs": 383.931,
+          "pairedMedianChangeMs": 0,
+          "fasterPairs": 0,
+          "observedPhaseMediansMs": {}
+        },
+        "worktree": {
+          "medianSpawnMs": 338.014,
+          "medianFirstStatusMs": 116.599,
+          "pairedMedianChangeMs": -96.005,
+          "fasterPairs": 6,
+          "observedPhaseMediansMs": {}
+        }
+      },
+      "samples": [
+        [
+          1,
+          "release",
+          424.321,
+          341.509,
+          0.12,
+          0.82,
+          28819456,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          1,
+          "candidate",
+          418.464,
+          311.451,
+          0.12,
+          0.82,
+          31227904,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          1,
+          "worktree",
+          357.027,
+          148.766,
+          0.05,
+          0.26,
+          52232192,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          2,
+          "candidate",
+          468.175,
+          379.758,
+          0.12,
+          0.88,
+          31277056,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          2,
+          "worktree",
+          328.373,
+          116.506,
+          0.05,
+          0.25,
+          52461568,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          2,
+          "release",
+          3384.869,
+          736.462,
+          0.15,
+          2.83,
+          28868608,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          3,
+          "worktree",
+          360.818,
+          79.375,
+          0.05,
+          0.25,
+          52822016,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          3,
+          "release",
+          450.627,
+          371.267,
+          0.13,
+          0.84,
+          28819456,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          3,
+          "candidate",
+          453.751,
+          384.519,
+          0.12,
+          0.88,
+          31178752,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          4,
+          "worktree",
+          306.694,
+          114.225,
+          0.05,
+          0.24,
+          52051968,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          4,
+          "candidate",
+          463.793,
+          379.182,
+          0.12,
+          0.84,
+          31195136,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          4,
+          "release",
+          408.434,
+          362.682,
+          0.12,
+          0.79,
+          28819456,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          5,
+          "release",
+          437.924,
+          409.663,
+          0.13,
+          0.89,
+          28803072,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          5,
+          "worktree",
+          347.655,
+          118.874,
+          0.05,
+          0.25,
+          52363264,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          5,
+          "candidate",
+          554.871,
+          385.162,
+          0.13,
+          1.06,
+          31211520,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          6,
+          "candidate",
+          448.69,
+          382.251,
+          0.12,
+          0.83,
+          31195136,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          6,
+          "release",
+          427.939,
+          396.595,
+          0.12,
+          0.81,
+          28803072,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          6,
+          "worktree",
+          314.875,
+          116.691,
+          0.05,
+          0.25,
+          52346880,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      ]
+    },
+    "reverse": {
+      "release": "6ffd18bf52a6a0433d6450367d4ae53c323b952a8b401f63e1edfa5fb956400a",
+      "candidate": "999dc057296698f66f4a6243b2f9a874d207c6bdef57051e6e389eddadd91dee",
+      "summary": {
+        "candidate": {
+          "medianSpawnMs": 460.439,
+          "medianFirstStatusMs": 411.3,
+          "pairedMedianChangeMs": -13.1,
+          "fasterPairs": 3,
+          "observedPhaseMediansMs": {}
+        },
+        "release": {
+          "medianSpawnMs": 442.451,
+          "medianFirstStatusMs": 395.831,
+          "pairedMedianChangeMs": 0,
+          "fasterPairs": 0,
+          "observedPhaseMediansMs": {}
+        },
+        "worktree": {
+          "medianSpawnMs": 330.08,
+          "medianFirstStatusMs": 102.115,
+          "pairedMedianChangeMs": -126.898,
+          "fasterPairs": 6,
+          "observedPhaseMediansMs": {}
+        }
+      },
+      "samples": [
+        [
+          1,
+          "worktree",
+          338.431,
+          63.624,
+          0.05,
+          0.26,
+          52314112,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          1,
+          "candidate",
+          477.686,
+          392.772,
+          0.12,
+          0.96,
+          31195136,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          1,
+          "release",
+          2706.883,
+          1324.153,
+          0.17,
+          1.24,
+          28131328,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          2,
+          "release",
+          408.528,
+          357.289,
+          0.12,
+          0.83,
+          28819456,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          2,
+          "worktree",
+          395.124,
+          136.514,
+          0.05,
+          0.27,
+          52248576,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          2,
+          "candidate",
+          956.908,
+          2576.43,
+          0.14,
+          0.9,
+          31244288,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          3,
+          "candidate",
+          632.122,
+          530.53,
+          0.13,
+          0.92,
+          31260672,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          3,
+          "release",
+          423.664,
+          393.551,
+          0.12,
+          0.81,
+          28868608,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          3,
+          "worktree",
+          321.729,
+          110.524,
+          0.05,
+          0.25,
+          52199424,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          4,
+          "release",
+          442.665,
+          401.777,
+          0.13,
+          0.84,
+          28803072,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          4,
+          "candidate",
+          443.193,
+          376.787,
+          0.11,
+          0.84,
+          31178752,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          4,
+          "worktree",
+          349.153,
+          117.704,
+          0.05,
+          0.27,
+          52248576,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          5,
+          "candidate",
+          415.509,
+          429.829,
+          0.12,
+          0.86,
+          31211520,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          5,
+          "worktree",
+          290.375,
+          92.779,
+          0.05,
+          0.23,
+          52150272,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          5,
+          "release",
+          442.236,
+          319.708,
+          0.12,
+          0.85,
+          28803072,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          6,
+          "worktree",
+          301.643,
+          93.706,
+          0.05,
+          0.23,
+          52445184,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          6,
+          "release",
+          578.454,
+          398.111,
+          0.13,
+          0.84,
+          28868608,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          6,
+          "candidate",
+          432.566,
+          375.72,
+          0.12,
+          0.83,
+          31195136,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ]
+      ]
+    },
+    "phases": {
+      "release": "4a9501a739c66657c6c029eaa594839cba4b1ba98f40d2e670295ec950e371bd",
+      "candidate": "4a9501a739c66657c6c029eaa594839cba4b1ba98f40d2e670295ec950e371bd",
+      "summary": {
+        "candidate": {
+          "medianSpawnMs": 442.709,
+          "medianFirstStatusMs": 342.157,
+          "pairedMedianChangeMs": -28.172,
+          "fasterPairs": 4,
+          "observedPhaseMediansMs": {
+            "session_verify": 127.999
+          }
+        },
+        "release": {
+          "medianSpawnMs": 453.89,
+          "medianFirstStatusMs": 349.058,
+          "pairedMedianChangeMs": 0,
+          "fasterPairs": 0,
+          "observedPhaseMediansMs": {
+            "standard_verify": 97.951
+          }
+        },
+        "walk": {
+          "medianSpawnMs": 469.686,
+          "medianFirstStatusMs": 352.752,
+          "pairedMedianChangeMs": 1.944,
+          "fasterPairs": 3,
+          "observedPhaseMediansMs": {
+            "session_verify": 104.489
+          }
+        }
+      },
+      "samples": [
+        [
+          1,
+          "release",
+          465.086,
+          338.514,
+          0.13,
+          0.89,
+          28835840,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "standard_verify": [
+              98.173
+            ]
+          }
+        ],
+        [
+          1,
+          "candidate",
+          443.419,
+          337.194,
+          0.12,
+          0.87,
+          31178752,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "session_verify": [
+              123.997
+            ]
+          }
+        ],
+        [
+          1,
+          "walk",
+          422.958,
+          455.749,
+          0.12,
+          0.79,
+          29343744,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "session_verify": [
+              109.239
+            ]
+          }
+        ],
+        [
+          2,
+          "candidate",
+          466.77,
+          342.376,
+          0.12,
+          0.94,
+          31211520,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "session_verify": [
+              131.695
+            ]
+          }
+        ],
+        [
+          2,
+          "walk",
+          522.46,
+          353.279,
+          0.13,
+          1.04,
+          29360128,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "session_verify": [
+              110.277
+            ]
+          }
+        ],
+        [
+          2,
+          "release",
+          439.471,
+          334.271,
+          0.12,
+          0.83,
+          28803072,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "standard_verify": [
+              95.59
+            ]
+          }
+        ],
+        [
+          3,
+          "walk",
+          480.714,
+          374.465,
+          0.13,
+          0.89,
+          29392896,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "session_verify": [
+              106.468
+            ]
+          }
+        ],
+        [
+          3,
+          "release",
+          442.694,
+          334.194,
+          0.12,
+          0.84,
+          28819456,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "standard_verify": [
+              96.384
+            ]
+          }
+        ],
+        [
+          3,
+          "candidate",
+          408.017,
+          359.649,
+          0.12,
+          0.82,
+          31195136,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "session_verify": [
+              119.231
+            ]
+          }
+        ],
+        [
+          4,
+          "walk",
+          458.658,
+          345.722,
+          0.13,
+          0.93,
+          29392896,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "session_verify": [
+              98.11
+            ]
+          }
+        ],
+        [
+          4,
+          "candidate",
+          449.418,
+          404.969,
+          0.12,
+          0.91,
+          31178752,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "session_verify": [
+              124.304
+            ]
+          }
+        ],
+        [
+          4,
+          "release",
+          510.746,
+          426.505,
+          0.13,
+          1.04,
+          28835840,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "standard_verify": [
+              104.455
+            ]
+          }
+        ],
+        [
+          5,
+          "release",
+          435.16,
+          359.602,
+          0.13,
+          0.92,
+          28803072,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "standard_verify": [
+              97.728
+            ]
+          }
+        ],
+        [
+          5,
+          "walk",
+          532.271,
+          352.225,
+          0.13,
+          0.89,
+          29343744,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "session_verify": [
+              101.839
+            ]
+          }
+        ],
+        [
+          5,
+          "candidate",
+          441.999,
+          341.938,
+          0.12,
+          0.87,
+          31195136,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "session_verify": [
+              137.77
+            ]
+          }
+        ],
+        [
+          6,
+          "candidate",
+          410.597,
+          331.139,
+          0.12,
+          0.79,
+          31244288,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "session_verify": [
+              134.485
+            ]
+          }
+        ],
+        [
+          6,
+          "release",
+          480.06,
+          366.85,
+          0.13,
+          0.92,
+          28835840,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "standard_verify": [
+              106.745
+            ]
+          }
+        ],
+        [
+          6,
+          "walk",
+          445.929,
+          350.876,
+          0.12,
+          0.87,
+          29360128,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "session_verify": [
+              102.51
+            ]
+          }
+        ]
+      ]
+    },
+    "offset-forward": {
+      "release": "6ffd18bf52a6a0433d6450367d4ae53c323b952a8b401f63e1edfa5fb956400a",
+      "candidate": "fc7ec3cedc72ab91bd4e4c55280b19365daf9f2ea2df2eff9d24836b878eef87",
+      "summary": {
+        "candidate": {
+          "medianSpawnMs": 481.487,
+          "medianFirstStatusMs": 390.665,
+          "pairedMedianChangeMs": -80.683,
+          "fasterPairs": 6,
+          "observedPhaseMediansMs": {}
+        },
+        "release": {
+          "medianSpawnMs": 629.71,
+          "medianFirstStatusMs": 435.595,
+          "pairedMedianChangeMs": 0,
+          "fasterPairs": 0,
+          "observedPhaseMediansMs": {}
+        },
+        "worktree": {
+          "medianSpawnMs": 341.271,
+          "medianFirstStatusMs": 111.714,
+          "pairedMedianChangeMs": -287.691,
+          "fasterPairs": 6,
+          "observedPhaseMediansMs": {}
+        }
+      },
+      "samples": [
+        [
+          1,
+          "release",
+          542.82,
+          348.147,
+          0.13,
+          0.95,
+          28835840,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          1,
+          "candidate",
+          477.076,
+          317.531,
+          0.12,
+          0.95,
+          28622848,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          1,
+          "worktree",
+          356.482,
+          122.822,
+          0.05,
+          0.25,
+          52527104,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          2,
+          "candidate",
+          467.419,
+          365.105,
+          0.13,
+          0.97,
+          28639232,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          2,
+          "worktree",
+          325.244,
+          100.605,
+          0.05,
+          0.25,
+          52396032,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          2,
+          "release",
+          533.702,
+          555.915,
+          0.13,
+          1,
+          28835840,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          3,
+          "worktree",
+          349.119,
+          128.089,
+          0.06,
+          0.23,
+          52445184,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          3,
+          "release",
+          716.6,
+          478.504,
+          0.16,
+          0.91,
+          28819456,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          3,
+          "candidate",
+          587.648,
+          466.5,
+          0.15,
+          0.89,
+          28622848,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          4,
+          "worktree",
+          362.085,
+          64.217,
+          0.05,
+          0.25,
+          52297728,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          4,
+          "candidate",
+          633.926,
+          416.225,
+          0.14,
+          0.89,
+          28639232,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          4,
+          "release",
+          729.008,
+          462.596,
+          0.15,
+          0.92,
+          28803072,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          5,
+          "release",
+          1161.678,
+          408.594,
+          0.16,
+          1.74,
+          28803072,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          5,
+          "worktree",
+          333.423,
+          128.433,
+          0.05,
+          0.25,
+          52461568,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          5,
+          "candidate",
+          485.898,
+          362.772,
+          0.13,
+          0.98,
+          28639232,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          6,
+          "candidate",
+          466.128,
+          459.544,
+          0.13,
+          0.93,
+          28639232,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          6,
+          "release",
+          471.169,
+          384.713,
+          0.13,
+          0.9,
+          28803072,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          6,
+          "worktree",
+          305.978,
+          47.515,
+          0.05,
+          0.24,
+          52199424,
+          null,
+          null,
+          null,
+          null,
+          null
+        ]
+      ]
+    },
+    "offset-reverse": {
+      "release": "6ffd18bf52a6a0433d6450367d4ae53c323b952a8b401f63e1edfa5fb956400a",
+      "candidate": "fc7ec3cedc72ab91bd4e4c55280b19365daf9f2ea2df2eff9d24836b878eef87",
+      "summary": {
+        "candidate": {
+          "medianSpawnMs": 456.394,
+          "medianFirstStatusMs": 387.913,
+          "pairedMedianChangeMs": -25.145,
+          "fasterPairs": 4,
+          "observedPhaseMediansMs": {}
+        },
+        "release": {
+          "medianSpawnMs": 459.475,
+          "medianFirstStatusMs": 374.681,
+          "pairedMedianChangeMs": 0,
+          "fasterPairs": 0,
+          "observedPhaseMediansMs": {}
+        },
+        "worktree": {
+          "medianSpawnMs": 315.024,
+          "medianFirstStatusMs": 116.15,
+          "pairedMedianChangeMs": -156.432,
+          "fasterPairs": 6,
+          "observedPhaseMediansMs": {}
+        }
+      },
+      "samples": [
+        [
+          1,
+          "worktree",
+          365.04,
+          84.912,
+          0.06,
+          0.26,
+          52609024,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          1,
+          "candidate",
+          428.362,
+          384.312,
+          0.13,
+          0.89,
+          28622848,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          1,
+          "release",
+          460.705,
+          368.127,
+          0.13,
+          0.93,
+          28803072,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          2,
+          "release",
+          446.578,
+          374.051,
+          0.13,
+          0.88,
+          28868608,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          2,
+          "worktree",
+          316.785,
+          119.598,
+          0.05,
+          0.25,
+          52412416,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          2,
+          "candidate",
+          476.93,
+          410.285,
+          0.13,
+          0.89,
+          28688384,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          3,
+          "candidate",
+          467.044,
+          398.343,
+          0.13,
+          0.91,
+          28704768,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          3,
+          "release",
+          531.325,
+          414.146,
+          0.13,
+          1.08,
+          28803072,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          3,
+          "worktree",
+          316.686,
+          117.341,
+          0.05,
+          0.24,
+          52314112,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          4,
+          "release",
+          458.245,
+          351.362,
+          0.13,
+          0.91,
+          28835840,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          4,
+          "candidate",
+          440.298,
+          391.513,
+          0.13,
+          0.85,
+          28622848,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          4,
+          "worktree",
+          301.798,
+          117.04,
+          0.05,
+          0.23,
+          52215808,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          5,
+          "candidate",
+          450.023,
+          382.357,
+          0.13,
+          0.9,
+          28622848,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          5,
+          "worktree",
+          313.363,
+          63.047,
+          0.05,
+          0.23,
+          52477952,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          5,
+          "release",
+          499.094,
+          375.311,
+          0.14,
+          0.91,
+          28835840,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          6,
+          "worktree",
+          294.823,
+          115.259,
+          0.05,
+          0.23,
+          52199424,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          6,
+          "release",
+          451.24,
+          389.711,
+          0.13,
+          0.85,
+          28835840,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          6,
+          "candidate",
+          462.765,
+          373.793,
+          0.13,
+          0.87,
+          28639232,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ]
+      ]
+    },
+    "offset-confirm": {
+      "release": "fc7ec3cedc72ab91bd4e4c55280b19365daf9f2ea2df2eff9d24836b878eef87",
+      "candidate": "fc7ec3cedc72ab91bd4e4c55280b19365daf9f2ea2df2eff9d24836b878eef87",
+      "summary": {
+        "candidate": {
+          "medianSpawnMs": 453.103,
+          "medianFirstStatusMs": 362.06,
+          "pairedMedianChangeMs": 8.973,
+          "fasterPairs": 2,
+          "observedPhaseMediansMs": {
+            "order_plan": 1.93,
+            "ordered_types": 71.385
+          }
+        },
+        "release": {
+          "medianSpawnMs": 434.618,
+          "medianFirstStatusMs": 351.648,
+          "pairedMedianChangeMs": 0,
+          "fasterPairs": 0,
+          "observedPhaseMediansMs": {}
+        },
+        "worktree": {
+          "medianSpawnMs": 294.647,
+          "medianFirstStatusMs": 110.019,
+          "pairedMedianChangeMs": -126.965,
+          "fasterPairs": 6,
+          "observedPhaseMediansMs": {}
+        }
+      },
+      "samples": [
+        [
+          1,
+          "worktree",
+          307.763,
+          116.081,
+          0.05,
+          0.23,
+          52330496,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          1,
+          "candidate",
+          462.072,
+          370.481,
+          0.13,
+          0.9,
+          28622848,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "order_plan": [
+              2.039
+            ],
+            "ordered_types": [
+              71.985
+            ]
+          }
+        ],
+        [
+          1,
+          "release",
+          496.118,
+          372.92,
+          0.13,
+          0.88,
+          28803072,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          2,
+          "release",
+          440.314,
+          357.689,
+          0.12,
+          0.83,
+          28819456,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          2,
+          "worktree",
+          333.612,
+          121.386,
+          0.05,
+          0.24,
+          52625408,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          2,
+          "candidate",
+          444.134,
+          367.45,
+          0.12,
+          0.78,
+          28639232,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "order_plan": [
+              1.975
+            ],
+            "ordered_types": [
+              69.492
+            ]
+          }
+        ],
+        [
+          3,
+          "candidate",
+          495.636,
+          356.67,
+          0.12,
+          0.81,
+          28622848,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "order_plan": [
+              1.886
+            ],
+            "ordered_types": [
+              70.785
+            ]
+          }
+        ],
+        [
+          3,
+          "release",
+          408.75,
+          337.074,
+          0.12,
+          0.79,
+          28819456,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          3,
+          "worktree",
+          291.482,
+          107.025,
+          0.05,
+          0.22,
+          52051968,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          4,
+          "release",
+          428.921,
+          345.607,
+          0.12,
+          0.8,
+          28803072,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          4,
+          "candidate",
+          516.494,
+          390.01,
+          0.13,
+          1.14,
+          28672000,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "order_plan": [
+              2.324
+            ],
+            "ordered_types": [
+              80.6
+            ]
+          }
+        ],
+        [
+          4,
+          "worktree",
+          292.49,
+          113.014,
+          0.05,
+          0.23,
+          52445184,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          5,
+          "candidate",
+          415.474,
+          310.422,
+          0.12,
+          0.84,
+          28622848,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "order_plan": [
+              1.849
+            ],
+            "ordered_types": [
+              68.36
+            ]
+          }
+        ],
+        [
+          5,
+          "worktree",
+          283.849,
+          106.975,
+          0.05,
+          0.22,
+          52297728,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          5,
+          "release",
+          401.348,
+          361.449,
+          0.12,
+          0.82,
+          28835840,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          6,
+          "worktree",
+          296.803,
+          106.249,
+          0.05,
+          0.23,
+          52215808,
+          null,
+          null,
+          null,
+          null,
+          null
+        ],
+        [
+          6,
+          "release",
+          575.428,
+          338.729,
+          0.12,
+          0.81,
+          28819456,
+          3318,
+          0,
+          0,
+          141371918,
+          null
+        ],
+        [
+          6,
+          "candidate",
+          435.671,
+          348.64,
+          0.12,
+          0.86,
+          28688384,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "order_plan": [
+              1.762
+            ],
+            "ordered_types": [
+              72.393
+            ]
+          }
+        ]
+      ]
+    },
+    "critical": {
+      "release": "69333ccce993676beb38c1b27efb46d58a9556ba472aeacee61aa4730625af31",
+      "candidate": "69333ccce993676beb38c1b27efb46d58a9556ba472aeacee61aa4730625af31",
+      "summary": {
+        "candidate": {
+          "medianSpawnMs": 414.271,
+          "medianFirstStatusMs": 334.99,
+          "pairedMedianChangeMs": 7.839,
+          "fasterPairs": 2,
+          "observedPhaseMediansMs": {
+            "files_done": 158.185,
+            "links_done": 36.555,
+            "order_plan": 1.894,
+            "ordered_types": 67.666,
+            "ready_done": 15.391
+          }
+        },
+        "release": {
+          "medianSpawnMs": 419.255,
+          "medianFirstStatusMs": 335.773,
+          "pairedMedianChangeMs": 0,
+          "fasterPairs": 0,
+          "observedPhaseMediansMs": {
+            "files_done": 157.911,
+            "links_done": 63.802,
+            "normal_types": 97.364,
+            "ready_done": 43.282
+          }
+        }
+      },
+      "samples": [
+        [
+          1,
+          "release",
+          455.565,
+          326.03,
+          0.12,
+          0.86,
+          28835840,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "normal_types": [
+              102.093
+            ],
+            "ready_done": [
+              47.827
+            ],
+            "links_done": [
+              67.635
+            ],
+            "files_done": [
+              130.748,
+              150.094,
+              152.037,
+              162.943
+            ]
+          }
+        ],
+        [
+          1,
+          "candidate",
+          409.555,
+          335.245,
+          0.12,
+          0.81,
+          28622848,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "order_plan": [
+              2.334
+            ],
+            "ordered_types": [
+              66.887
+            ],
+            "ready_done": [
+              16.567
+            ],
+            "links_done": [
+              37.121
+            ],
+            "files_done": [
+              129.424,
+              146.101,
+              147.231,
+              157.683
+            ]
+          }
+        ],
+        [
+          1,
+          "candidate",
+          427.845,
+          325.266,
+          0.12,
+          0.87,
+          28639232,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "order_plan": [
+              1.789
+            ],
+            "ordered_types": [
+              74.209
+            ],
+            "ready_done": [
+              16.101
+            ],
+            "links_done": [
+              36.321
+            ],
+            "files_done": [
+              138.51,
+              155.844,
+              157.204,
+              167.474
+            ]
+          }
+        ],
+        [
+          1,
+          "release",
+          456.542,
+          355.185,
+          0.12,
+          0.94,
+          28819456,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "normal_types": [
+              91.416
+            ],
+            "ready_done": [
+              38.914
+            ],
+            "links_done": [
+              63.577
+            ],
+            "files_done": [
+              155.939,
+              176.806,
+              177.372,
+              191.279
+            ]
+          }
+        ],
+        [
+          2,
+          "candidate",
+          393.692,
+          310.997,
+          0.12,
+          0.8,
+          28639232,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "order_plan": [
+              1.898
+            ],
+            "ordered_types": [
+              67.712
+            ],
+            "ready_done": [
+              16.369
+            ],
+            "links_done": [
+              37.414
+            ],
+            "files_done": [
+              126.921,
+              143.984,
+              145.289,
+              155.768
+            ]
+          }
+        ],
+        [
+          2,
+          "release",
+          415.623,
+          323.899,
+          0.12,
+          0.78,
+          28803072,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "normal_types": [
+              99.611
+            ],
+            "ready_done": [
+              44.405
+            ],
+            "links_done": [
+              63.936
+            ],
+            "files_done": [
+              122.627,
+              138.047,
+              138.853,
+              148.193
+            ]
+          }
+        ],
+        [
+          2,
+          "release",
+          375.381,
+          311.955,
+          0.11,
+          0.78,
+          28803072,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "normal_types": [
+              92.396
+            ],
+            "ready_done": [
+              43.529
+            ],
+            "links_done": [
+              62.878
+            ],
+            "files_done": [
+              125.247,
+              141.109,
+              142.931,
+              154.369
+            ]
+          }
+        ],
+        [
+          2,
+          "candidate",
+          414.409,
+          306.598,
+          0.12,
+          0.84,
+          28639232,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "order_plan": [
+              1.818
+            ],
+            "ordered_types": [
+              66.565
+            ],
+            "ready_done": [
+              15.201
+            ],
+            "links_done": [
+              36.972
+            ],
+            "files_done": [
+              137.077,
+              155.539,
+              155.651,
+              167.485
+            ]
+          }
+        ],
+        [
+          3,
+          "release",
+          410.099,
+          366.417,
+          0.12,
+          0.82,
+          28819456,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "normal_types": [
+              96.582
+            ],
+            "ready_done": [
+              47.186
+            ],
+            "links_done": [
+              70.139
+            ],
+            "files_done": [
+              133.831,
+              149.264,
+              150.793,
+              160.885
+            ]
+          }
+        ],
+        [
+          3,
+          "candidate",
+          421.493,
+          345.353,
+          0.12,
+          0.86,
+          28639232,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "order_plan": [
+              2.097
+            ],
+            "ordered_types": [
+              72.916
+            ],
+            "ready_done": [
+              18.234
+            ],
+            "links_done": [
+              39.777
+            ],
+            "files_done": [
+              137.65,
+              157.434,
+              157.854,
+              169.69
+            ]
+          }
+        ],
+        [
+          3,
+          "candidate",
+          409.346,
+          307.152,
+          0.11,
+          0.78,
+          28639232,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "order_plan": [
+              1.891
+            ],
+            "ordered_types": [
+              66.254
+            ],
+            "ready_done": [
+              15.696
+            ],
+            "links_done": [
+              36.127
+            ],
+            "files_done": [
+              124.413,
+              140.415,
+              142.335,
+              151.866
+            ]
+          }
+        ],
+        [
+          3,
+          "release",
+          381.678,
+          319.882,
+          0.11,
+          0.77,
+          28803072,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "normal_types": [
+              97.385
+            ],
+            "ready_done": [
+              47.654
+            ],
+            "links_done": [
+              67.198
+            ],
+            "files_done": [
+              121.576,
+              137.481,
+              138.921,
+              147.213
+            ]
+          }
+        ],
+        [
+          4,
+          "candidate",
+          414.133,
+          326.287,
+          0.11,
+          0.78,
+          28639232,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "order_plan": [
+              2.056
+            ],
+            "ordered_types": [
+              66.635
+            ],
+            "ready_done": [
+              14.339
+            ],
+            "links_done": [
+              35.204
+            ],
+            "files_done": [
+              123.685,
+              139.821,
+              140.614,
+              149.539
+            ]
+          }
+        ],
+        [
+          4,
+          "release",
+          451.568,
+          359.251,
+          0.12,
+          0.83,
+          28803072,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "normal_types": [
+              99.991
+            ],
+            "ready_done": [
+              43.035
+            ],
+            "links_done": [
+              63.667
+            ],
+            "files_done": [
+              132.349,
+              146.115,
+              147.556,
+              158.781
+            ]
+          }
+        ],
+        [
+          4,
+          "release",
+          433.556,
+          329.502,
+          0.12,
+          0.83,
+          28803072,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "normal_types": [
+              101.698
+            ],
+            "ready_done": [
+              44.91
+            ],
+            "links_done": [
+              66.72
+            ],
+            "files_done": [
+              128.767,
+              145.139,
+              145.837,
+              157.041
+            ]
+          }
+        ],
+        [
+          4,
+          "candidate",
+          551.511,
+          347.78,
+          0.13,
+          1.11,
+          28672000,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "order_plan": [
+              2.147
+            ],
+            "ordered_types": [
+              72.208
+            ],
+            "ready_done": [
+              9.954
+            ],
+            "links_done": [
+              33.447
+            ],
+            "files_done": [
+              239.681,
+              254.016,
+              260.342,
+              267.551
+            ]
+          }
+        ],
+        [
+          5,
+          "release",
+          495.205,
+          355.311,
+          0.13,
+          1,
+          28852224,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "normal_types": [
+              97.342
+            ],
+            "ready_done": [
+              35.196
+            ],
+            "links_done": [
+              59.778
+            ],
+            "files_done": [
+              142.026,
+              155.581,
+              157.601,
+              165.787
+            ]
+          }
+        ],
+        [
+          5,
+          "candidate",
+          429.871,
+          334.734,
+          0.12,
+          0.81,
+          28622848,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "order_plan": [
+              1.86
+            ],
+            "ordered_types": [
+              66.443
+            ],
+            "ready_done": [
+              14.845
+            ],
+            "links_done": [
+              36.789
+            ],
+            "files_done": [
+              129.347,
+              146.472,
+              146.746,
+              157.942
+            ]
+          }
+        ],
+        [
+          5,
+          "candidate",
+          413.306,
+          381.634,
+          0.12,
+          0.81,
+          28639232,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "order_plan": [
+              1.92
+            ],
+            "ordered_types": [
+              67.825
+            ],
+            "ready_done": [
+              13.83
+            ],
+            "links_done": [
+              35.057
+            ],
+            "files_done": [
+              127.563,
+              145.205,
+              145.79,
+              155.373
+            ]
+          }
+        ],
+        [
+          5,
+          "release",
+          422.888,
+          342.043,
+          0.12,
+          0.84,
+          28852224,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "normal_types": [
+              98.661
+            ],
+            "ready_done": [
+              37.91
+            ],
+            "links_done": [
+              62.069
+            ],
+            "files_done": [
+              131.249,
+              148.354,
+              151.077,
+              159.454
+            ]
+          }
+        ],
+        [
+          6,
+          "candidate",
+          417.813,
+          351.406,
+          0.12,
+          0.81,
+          28622848,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "order_plan": [
+              1.818
+            ],
+            "ordered_types": [
+              67.62
+            ],
+            "ready_done": [
+              9.466
+            ],
+            "links_done": [
+              30.632
+            ],
+            "files_done": [
+              129.658,
+              145.933,
+              147.491,
+              160.032
+            ]
+          }
+        ],
+        [
+          6,
+          "release",
+          399.008,
+          326.778,
+          0.12,
+          0.8,
+          28803072,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "normal_types": [
+              94.19
+            ],
+            "ready_done": [
+              42.864
+            ],
+            "links_done": [
+              64.543
+            ],
+            "files_done": [
+              127.406,
+              142.106,
+              142.937,
+              153.943
+            ]
+          }
+        ],
+        [
+          6,
+          "release",
+          403.665,
+          343.362,
+          0.12,
+          0.78,
+          28803072,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "normal_types": [
+              91.706
+            ],
+            "ready_done": [
+              40.016
+            ],
+            "links_done": [
+              61.005
+            ],
+            "files_done": [
+              125.461,
+              141.943,
+              142.576,
+              154.11
+            ]
+          }
+        ],
+        [
+          6,
+          "candidate",
+          399.117,
+          345.753,
+          0.12,
+          0.82,
+          28655616,
+          3318,
+          0,
+          0,
+          141371918,
+          {
+            "order_plan": [
+              1.835
+            ],
+            "ordered_types": [
+              67.906
+            ],
+            "ready_done": [
+              15.581
+            ],
+            "links_done": [
+              38.33
+            ],
+            "files_done": [
+              129.131,
+              146.264,
+              148.121,
+              158.427
+            ]
+          }
+        ]
+      ]
+    }
+  },
+  "nativeGitQueries": {
+    "rows": [
+      {
+        "round": 1,
+        "arm": "type",
+        "ms": 108.294,
+        "replyBytes": 17420
+      },
+      {
+        "round": 1,
+        "arm": "command",
+        "ms": 103.875,
+        "replyBytes": 17420
+      },
+      {
+        "round": 1,
+        "arm": "size",
+        "ms": 106.889,
+        "replyBytes": 33500
+      },
+      {
+        "round": 2,
+        "arm": "command",
+        "ms": 104.261,
+        "replyBytes": 17420
+      },
+      {
+        "round": 2,
+        "arm": "size",
+        "ms": 108.808,
+        "replyBytes": 33500
+      },
+      {
+        "round": 2,
+        "arm": "type",
+        "ms": 108.891,
+        "replyBytes": 17420
+      },
+      {
+        "round": 3,
+        "arm": "size",
+        "ms": 112.83,
+        "replyBytes": 33500
+      },
+      {
+        "round": 3,
+        "arm": "type",
+        "ms": 107.271,
+        "replyBytes": 17420
+      },
+      {
+        "round": 3,
+        "arm": "command",
+        "ms": 104.976,
+        "replyBytes": 17420
+      },
+      {
+        "round": 4,
+        "arm": "size",
+        "ms": 104.523,
+        "replyBytes": 33500
+      },
+      {
+        "round": 4,
+        "arm": "command",
+        "ms": 106.142,
+        "replyBytes": 17420
+      },
+      {
+        "round": 4,
+        "arm": "type",
+        "ms": 108.351,
+        "replyBytes": 17420
+      },
+      {
+        "round": 5,
+        "arm": "type",
+        "ms": 106.865,
+        "replyBytes": 17420
+      },
+      {
+        "round": 5,
+        "arm": "size",
+        "ms": 112.407,
+        "replyBytes": 33500
+      },
+      {
+        "round": 5,
+        "arm": "command",
+        "ms": 103.055,
+        "replyBytes": 17420
+      },
+      {
+        "round": 6,
+        "arm": "command",
+        "ms": 103.354,
+        "replyBytes": 17420
+      },
+      {
+        "round": 6,
+        "arm": "type",
+        "ms": 102.374,
+        "replyBytes": 17420
+      },
+      {
+        "round": 6,
+        "arm": "size",
+        "ms": 110.771,
+        "replyBytes": 33500
+      }
+    ],
+    "blobPaths": 3484,
+    "distinct": 3328
+  },
+  "nativeGitLookupOrder": {
+    "rows": [
+      {
+        "round": 1,
+        "arm": "tree",
+        "ms": 110.863,
+        "replyBytes": 17420
+      },
+      {
+        "round": 1,
+        "arm": "hex",
+        "ms": 101.317,
+        "replyBytes": 17420
+      },
+      {
+        "round": 1,
+        "arm": "offset",
+        "ms": 69.77,
+        "replyBytes": 17420
+      },
+      {
+        "round": 2,
+        "arm": "hex",
+        "ms": 100.112,
+        "replyBytes": 17420
+      },
+      {
+        "round": 2,
+        "arm": "offset",
+        "ms": 70.118,
+        "replyBytes": 17420
+      },
+      {
+        "round": 2,
+        "arm": "tree",
+        "ms": 105.583,
+        "replyBytes": 17420
+      },
+      {
+        "round": 3,
+        "arm": "offset",
+        "ms": 67.764,
+        "replyBytes": 17420
+      },
+      {
+        "round": 3,
+        "arm": "tree",
+        "ms": 103.278,
+        "replyBytes": 17420
+      },
+      {
+        "round": 3,
+        "arm": "hex",
+        "ms": 100.879,
+        "replyBytes": 17420
+      },
+      {
+        "round": 4,
+        "arm": "offset",
+        "ms": 73.964,
+        "replyBytes": 17420
+      },
+      {
+        "round": 4,
+        "arm": "hex",
+        "ms": 103.62,
+        "replyBytes": 17420
+      },
+      {
+        "round": 4,
+        "arm": "tree",
+        "ms": 110.824,
+        "replyBytes": 17420
+      },
+      {
+        "round": 5,
+        "arm": "tree",
+        "ms": 108.608,
+        "replyBytes": 17420
+      },
+      {
+        "round": 5,
+        "arm": "offset",
+        "ms": 71.202,
+        "replyBytes": 17420
+      },
+      {
+        "round": 5,
+        "arm": "hex",
+        "ms": 106.789,
+        "replyBytes": 17420
+      },
+      {
+        "round": 6,
+        "arm": "hex",
+        "ms": 102.074,
+        "replyBytes": 17420
+      },
+      {
+        "round": 6,
+        "arm": "tree",
+        "ms": 105.055,
+        "replyBytes": 17420
+      },
+      {
+        "round": 6,
+        "arm": "offset",
+        "ms": 71.372,
+        "replyBytes": 17420
+      }
+    ],
+    "blobPaths": 3484,
+    "distinct": 3328,
+    "prepareMs": 22.729709
+  },
+  "persistentVerificationAndRecovery": [
+    {
+      "format": "sha1",
+      "git": "git version 2.56.0",
+      "case": "missing-tree",
+      "status": "pending",
+      "exit": 1,
+      "index": false,
+      "persistentVerifier": true,
+      "liveTreeReadable": false
+    },
+    {
+      "format": "sha1",
+      "git": "git version 2.56.0",
+      "case": "missing-subtree",
+      "status": "pending",
+      "exit": 1,
+      "index": false,
+      "persistentVerifier": true,
+      "liveTreeReadable": false
+    },
+    {
+      "format": "sha1",
+      "git": "git version 2.56.0",
+      "case": "swapped-subtree",
+      "status": "pending",
+      "exit": 1,
+      "index": false,
+      "persistentVerifier": true,
+      "liveTreeReadable": true
+    },
+    {
+      "format": "sha1",
+      "git": "git version 2.56.0",
+      "case": "missing-blob",
+      "status": "pending",
+      "exit": 1,
+      "index": false,
+      "persistentVerifier": true,
+      "liveTreeReadable": true
+    },
+    {
+      "format": "sha1",
+      "git": "git version 2.56.0",
+      "case": "wrong-blob-type",
+      "status": "pending",
+      "exit": 1,
+      "index": false,
+      "persistentVerifier": true,
+      "liveTreeReadable": true
+    },
+    {
+      "format": "sha1",
+      "git": "git version 2.56.0",
+      "case": "corrupt-attributes",
+      "status": "pending",
+      "exit": 1,
+      "index": false,
+      "persistentVerifier": true,
+      "liveTreeReadable": true
+    },
+    {
+      "format": "sha1",
+      "git": "git version 2.56.0",
+      "case": "interrupt",
+      "status": "pending",
+      "exit": -9,
+      "index": false,
+      "persistentVerifier": false,
+      "headBeforeSnapshot": false,
+      "checkoutFilesBeforeSnapshot": false,
+      "archived": true,
+      "restored": true
+    },
+    {
+      "format": "sha1",
+      "git": "git version 2.56.0",
+      "case": "stalled-read",
+      "status": "active",
+      "exit": 0,
+      "index": true,
+      "persistentVerifier": false,
+      "optionalChildReaped": true
+    },
+    {
+      "format": "sha256",
+      "git": "git version 2.56.0",
+      "case": "missing-tree",
+      "status": "pending",
+      "exit": 1,
+      "index": false,
+      "persistentVerifier": true,
+      "liveTreeReadable": false
+    },
+    {
+      "format": "sha256",
+      "git": "git version 2.56.0",
+      "case": "missing-subtree",
+      "status": "pending",
+      "exit": 1,
+      "index": false,
+      "persistentVerifier": true,
+      "liveTreeReadable": false
+    },
+    {
+      "format": "sha256",
+      "git": "git version 2.56.0",
+      "case": "swapped-subtree",
+      "status": "pending",
+      "exit": 1,
+      "index": false,
+      "persistentVerifier": true,
+      "liveTreeReadable": true
+    },
+    {
+      "format": "sha256",
+      "git": "git version 2.56.0",
+      "case": "missing-blob",
+      "status": "pending",
+      "exit": 1,
+      "index": false,
+      "persistentVerifier": true,
+      "liveTreeReadable": true
+    },
+    {
+      "format": "sha256",
+      "git": "git version 2.56.0",
+      "case": "wrong-blob-type",
+      "status": "pending",
+      "exit": 1,
+      "index": false,
+      "persistentVerifier": true,
+      "liveTreeReadable": true
+    },
+    {
+      "format": "sha256",
+      "git": "git version 2.56.0",
+      "case": "corrupt-attributes",
+      "status": "pending",
+      "exit": 1,
+      "index": false,
+      "persistentVerifier": true,
+      "liveTreeReadable": true
+    },
+    {
+      "format": "sha256",
+      "git": "git version 2.56.0",
+      "case": "interrupt",
+      "status": "pending",
+      "exit": -9,
+      "index": false,
+      "persistentVerifier": false,
+      "headBeforeSnapshot": false,
+      "checkoutFilesBeforeSnapshot": false,
+      "archived": true,
+      "restored": true
+    },
+    {
+      "format": "sha256",
+      "git": "git version 2.56.0",
+      "case": "stalled-read",
+      "status": "active",
+      "exit": 0,
+      "index": true,
+      "persistentVerifier": false,
+      "optionalChildReaped": true
+    },
+    {
+      "format": "sha1",
+      "git": "git version 2.46.0",
+      "case": "missing-tree",
+      "status": "pending",
+      "exit": 1,
+      "index": false,
+      "persistentVerifier": true,
+      "liveTreeReadable": false
+    },
+    {
+      "format": "sha1",
+      "git": "git version 2.46.0",
+      "case": "missing-subtree",
+      "status": "pending",
+      "exit": 1,
+      "index": false,
+      "persistentVerifier": true,
+      "liveTreeReadable": false
+    },
+    {
+      "format": "sha1",
+      "git": "git version 2.46.0",
+      "case": "swapped-subtree",
+      "status": "pending",
+      "exit": 1,
+      "index": false,
+      "persistentVerifier": true,
+      "liveTreeReadable": true
+    },
+    {
+      "format": "sha1",
+      "git": "git version 2.46.0",
+      "case": "missing-blob",
+      "status": "pending",
+      "exit": 1,
+      "index": false,
+      "persistentVerifier": true,
+      "liveTreeReadable": true
+    },
+    {
+      "format": "sha1",
+      "git": "git version 2.46.0",
+      "case": "wrong-blob-type",
+      "status": "pending",
+      "exit": 1,
+      "index": false,
+      "persistentVerifier": true,
+      "liveTreeReadable": true
+    },
+    {
+      "format": "sha1",
+      "git": "git version 2.46.0",
+      "case": "corrupt-attributes",
+      "status": "pending",
+      "exit": 1,
+      "index": false,
+      "persistentVerifier": true,
+      "liveTreeReadable": true
+    },
+    {
+      "format": "sha1",
+      "git": "git version 2.46.0",
+      "case": "interrupt",
+      "status": "pending",
+      "exit": -9,
+      "index": false,
+      "persistentVerifier": false,
+      "headBeforeSnapshot": false,
+      "checkoutFilesBeforeSnapshot": false,
+      "archived": true,
+      "restored": true
+    },
+    {
+      "format": "sha1",
+      "git": "git version 2.46.0",
+      "case": "stalled-read",
+      "status": "active",
+      "exit": 0,
+      "index": true,
+      "persistentVerifier": false,
+      "optionalChildReaped": true
+    },
+    {
+      "format": "sha256",
+      "git": "git version 2.46.0",
+      "case": "missing-tree",
+      "status": "pending",
+      "exit": 1,
+      "index": false,
+      "persistentVerifier": true,
+      "liveTreeReadable": false
+    },
+    {
+      "format": "sha256",
+      "git": "git version 2.46.0",
+      "case": "missing-subtree",
+      "status": "pending",
+      "exit": 1,
+      "index": false,
+      "persistentVerifier": true,
+      "liveTreeReadable": false
+    },
+    {
+      "format": "sha256",
+      "git": "git version 2.46.0",
+      "case": "swapped-subtree",
+      "status": "pending",
+      "exit": 1,
+      "index": false,
+      "persistentVerifier": true,
+      "liveTreeReadable": true
+    },
+    {
+      "format": "sha256",
+      "git": "git version 2.46.0",
+      "case": "missing-blob",
+      "status": "pending",
+      "exit": 1,
+      "index": false,
+      "persistentVerifier": true,
+      "liveTreeReadable": true
+    },
+    {
+      "format": "sha256",
+      "git": "git version 2.46.0",
+      "case": "wrong-blob-type",
+      "status": "pending",
+      "exit": 1,
+      "index": false,
+      "persistentVerifier": true,
+      "liveTreeReadable": true
+    },
+    {
+      "format": "sha256",
+      "git": "git version 2.46.0",
+      "case": "corrupt-attributes",
+      "status": "pending",
+      "exit": 1,
+      "index": false,
+      "persistentVerifier": true,
+      "liveTreeReadable": true
+    },
+    {
+      "format": "sha256",
+      "git": "git version 2.46.0",
+      "case": "interrupt",
+      "status": "pending",
+      "exit": -9,
+      "index": false,
+      "persistentVerifier": false,
+      "headBeforeSnapshot": false,
+      "checkoutFilesBeforeSnapshot": false,
+      "archived": true,
+      "restored": true
+    },
+    {
+      "format": "sha256",
+      "git": "git version 2.46.0",
+      "case": "stalled-read",
+      "status": "active",
+      "exit": 0,
+      "index": true,
+      "persistentVerifier": false,
+      "optionalChildReaped": true
+    }
+  ],
+  "orderedRequestAndRecovery": [
+    {
+      "git": "git version 2.56.0",
+      "format": "sha1",
+      "missingLooseBlob": false,
+      "allRequestsRetained": 262,
+      "unique": 155,
+      "reordered": true,
+      "status": "active"
+    },
+    {
+      "git": "git version 2.56.0",
+      "format": "sha1",
+      "missingLooseBlob": true,
+      "allRequestsRetained": 262,
+      "unique": 155,
+      "reordered": true,
+      "status": "pending"
+    },
+    {
+      "git": "git version 2.56.0",
+      "format": "sha256",
+      "missingLooseBlob": false,
+      "allRequestsRetained": 262,
+      "unique": 155,
+      "reordered": true,
+      "status": "active"
+    },
+    {
+      "git": "git version 2.56.0",
+      "format": "sha256",
+      "missingLooseBlob": true,
+      "allRequestsRetained": 262,
+      "unique": 155,
+      "reordered": true,
+      "status": "pending"
+    },
+    {
+      "git": "git version 2.46.0",
+      "format": "sha1",
+      "missingLooseBlob": false,
+      "allRequestsRetained": 262,
+      "unique": 155,
+      "reordered": true,
+      "status": "active"
+    },
+    {
+      "git": "git version 2.46.0",
+      "format": "sha1",
+      "missingLooseBlob": true,
+      "allRequestsRetained": 262,
+      "unique": 155,
+      "reordered": true,
+      "status": "pending"
+    },
+    {
+      "git": "git version 2.46.0",
+      "format": "sha256",
+      "missingLooseBlob": false,
+      "allRequestsRetained": 262,
+      "unique": 155,
+      "reordered": true,
+      "status": "active"
+    },
+    {
+      "git": "git version 2.46.0",
+      "format": "sha256",
+      "missingLooseBlob": true,
+      "allRequestsRetained": 262,
+      "unique": 155,
+      "reordered": true,
+      "status": "pending"
+    }
+  ],
+  "decision": "Retain the existing verifier and request ordering. In the bracketed comparison Git finished checking blob types about 30 ms sooner in pack-offset order, and link checkout finished 27 ms sooner. The last regular-file worker still finished at 158 ms in both arms. Four of six full-spawn groups took longer."
+}

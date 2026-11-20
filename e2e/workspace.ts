@@ -127,7 +127,8 @@ export const cases: Scenario[] = [
       write(ctx.repo, 'tracked.txt', 'primary unstaged\n');
       write(ctx.repo, 'ignored/primary', 'primary ignored\n');
 
-      const ws = traceCli(ctx, () => spawn(ctx, 'ordinary'), true);
+      // The transfer trace checks Git's selected-history export.
+      const ws = traceCli(ctx, () => spawn(ctx, 'ordinary', ['--history', 'isolated']), true);
       traceCli(ctx, () => {
         const peer = spawn(ctx, 'peer', ['--branch', 'custom/peer']);
         assertRepository(ctx, ws.path);

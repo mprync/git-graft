@@ -43,17 +43,17 @@ A successful land updates the destination and archives the workspace. Keep the r
 
 | Resource | Behavior |
 | --- | --- |
-| Git history | The selected commit and its locally available ancestry. Private branches and stashes created in the graft stay there. |
+| Git history | With local history (the default unless the project config says otherwise), the graft can read the invoking clone's objects outside the selected commit's ancestry. Private branches and stashes created in the graft stay there. |
 | Source files | Files from the selected commit. Edits, staged changes and untracked files in the original checkout stay in place. |
 | Storage | Graft reuses verified Git packs and eligible files through filesystem copy-on-write. It also supports native Git checkout and private copies. |
 | Dependencies | Package downloads can be shared across grafts. Supported filesystems can also share the disk blocks of a trusted installation while giving each graft its own writable files. |
 | Recovery | Land and drop archive the complete workspace, including its local Git state and ignored files. `git graft gc` previews eligible cleanup. |
 
-For a trusted local clone, `git graft spawn fix-parser --history local` can reuse the existing Git packs, their indexes and eligible source files through copy-on-write. Each graft still owns its files and can commit independently. The local snapshot includes other branches’ objects, staged blobs and dangling objects. Use `--history isolated` to limit readable objects to the selected history. The JSON field `storage.objects.source` reports `local-snapshot` when the filesystem and repository support it. [History and recovery](docs/safety.md#workspace-contents)
+For normal work in a trusted clone, omit `--history`. Graft defaults to local history and can reuse the clone’s Git packs, indexes and eligible source files through copy-on-write. The snapshot can expose objects from other branches, staged blobs and dangling objects, while the checkout still comes from the selected commit. Use `--history isolated` when unrelated objects must be excluded and only the selected commit's reachable history should be readable. The JSON field `storage.objects.source` reports `local-snapshot` when the filesystem and repository support it. [History and recovery](docs/safety.md#workspace-contents)
 
 For just one commit and its files, use `git graft spawn fix-parser --base main --history tip`. A branch name or commit ID also works. The graft owns its index and can stage, commit and land changes. Its Git history starts at the selected commit.
 
-Set `git config --local graft.history tip` or `git config --local graft.history local` once in the primary repository to select the policy for ordinary CLI and MCP spawns. Use `git config --local --unset graft.history` to restore the isolated default.
+To keep the previous isolated default for a project, run `git config --local graft.history isolated` in the primary repository. CLI and MCP spawns honor that setting unless the caller explicitly chooses a history mode.
 
 For an installed npm project with a committed, supported lockfile, register the installation once. Choose a compatibility key that identifies the Node and npm versions, install options and environment used to create it.
 
@@ -75,9 +75,9 @@ Managers can also register a relocatable installed directory, its tracked inputs
 
 ## Performance
 
-On macOS/APFS, a first graft from a clean Homebrew clone configured for local history took **0.55 s** and added **0.33 MB** of unique file data. A native worktree took **0.34 s** and added **29.94 MB**. Two grafts together added **0.64 MB**, a **98.93%** saving. Source files and Git history added zero unique file blocks in this fixture. The measurement excludes filesystem metadata.
+On macOS/APFS, the median first checkout from a clean Homebrew clone took **0.461 s** for default Graft and **0.351 s** for a linked worktree across 18 comparisons. Graft reused all four Git packs and all 3,318 regular working files. Its first workspace added **0.31 MB** of unique file data, compared with **29.94 MB** for the worktree. These figures exclude filesystem metadata. [Release measurements](docs/measurements/macos-arm64/local-checkout-buffered-verification.json)
 
-Including the first `git status`, the clean checkout took **0.97 s** for Graft and **0.46 s** for a native worktree. On the Homebrew fixture with staged, unstaged and untracked changes, the earlier isolated-history release took **6.06 s** for its first spawn. The local-history release took **0.55 s**. [Benchmarks and raw measurements](docs/benchmarks.md)
+In six additional comparisons, checkout plus the first `git status` took **0.786 s** for Graft and **0.397 s** for a linked worktree. [Benchmarks and raw measurements](docs/benchmarks.md)
 
 ## Use with an MCP client
 
@@ -93,6 +93,8 @@ Configure a local stdio server with the installed binary and an absolute path to
   }
 }
 ```
+
+For a routine task, call `workspace_spawn` with `{"name":"fix-parser"}`. If a task should receive only the history reachable from `main`, use `{"name":"review-main","base":"main","history":"isolated"}`.
 
 The host can grant command execution, dependency tools and npm lockfile reconciliation with `--allow-exec`. For retryable spawns, supply a cryptographically random UUIDv4 as `request_id`. It also acts as the workspace lease. Keep leases out of logs and issue reports. [Agent workflow](skills/git-graft/SKILL.md)
 

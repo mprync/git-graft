@@ -1,20 +1,21 @@
-//! Prepare checkout from a small independently indexed store while Git builds
-//! the complete single-commit pack. Only the complete pack is installed.
+//! Plan verified file checkout while Git installs the complete selected pack.
 use super::{
-    Boundary, DonorReuse, ObjectId, Pack, Source, bootstrap, cache, checked, output_text,
-    pack_with_donors, rename_exclusive, transfer_git, verify_membership,
+    DonorReuse, ObjectId, Pack, Source, cache, checked, output_text, pack_with_donors,
+    rename_exclusive, transfer_git, verify_membership,
 };
 use crate::workspace::objects::{Primary, finish_head};
 use anyhow::{Context, Result, ensure};
 use serde_json::Value;
 use std::{
-    collections::HashSet,
     fs,
-    io::{Seek, Write},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
     thread,
 };
+mod metadata;
+pub(in crate::workspace) use metadata::CheckoutDiscovery;
+use metadata::LoosePlan;
+#[cfg(test)]
+use metadata::prepare_checkout_proof;
 
 // Larger manifests or attribute files take the ordinary verified checkout.
 const PROOF_LIMIT: u64 = 16 * 1024 * 1024;
@@ -78,6 +79,7 @@ pub(super) fn stage_parent(
         expected,
         width,
         Some(original.path()),
+        None,
     )?;
     verify_membership(&packs, expected, width)?;
     let objects = stage.join("parent-selection");
@@ -106,20 +108,11 @@ pub(in crate::workspace::objects) fn checkout(
     state: &Path,
     base: &str,
     reference: &str,
-    boundary: &Boundary<'_>,
-    bytes: Vec<u8>,
+    plan: LoosePlan,
+    transfer: impl FnOnce() -> Result<Value> + Send,
 ) -> Result<(Value, Option<Value>)> {
     thread::scope(|scope| {
-        let worker = thread::Builder::new().spawn_scoped(scope, || {
-            bootstrap(
-                source.path,
-                root,
-                state,
-                source.format,
-                base,
-                Some(*boundary),
-            )
-        })?;
+        let worker = thread::Builder::new().spawn_scoped(scope, transfer)?;
         let wait = || {
             worker
                 .join()
@@ -127,18 +120,25 @@ pub(in crate::workspace::objects) fn checkout(
         };
         // This optional proof may miss when the primary is repacked. A full
         // verified pack is sufficient to use the normal checkout in that case.
-        let Ok(proof) = checkout_proof(root, base, &bytes) else {
+        let Ok(proof) = plan.install(root, base) else {
             let receipt = wait()?;
             finish_head(source.path, root, reference, base, None)?;
             return Ok((receipt, None));
         };
         finish_head(source.path, root, reference, base, Some(proof.path()))?;
         let mut receipt = None;
-        let checkout =
-            crate::storage::materialize_tip(root, state, base, source.path, proof.path(), || {
+        let checkout = crate::storage::materialize_planned(
+            root,
+            state,
+            base,
+            source.path,
+            Some(proof.path()),
+            Some(&plan.index),
+            || {
                 receipt = Some(wait()?);
                 Ok(())
-            })?;
+            },
+        )?;
         Ok((
             receipt.context("checkout did not verify the complete Git history")?,
             Some(checkout),
@@ -146,129 +146,13 @@ pub(in crate::workspace::objects) fn checkout(
     })
 }
 
-fn git_objects(repo: &Path, objects: Option<&Path>) -> Command {
-    let mut command = transfer_git(repo);
-    if let Some(objects) = objects {
-        command.env("GIT_OBJECT_DIRECTORY", objects);
-    }
-    command
-}
-
-// Trees authenticate the mapping from path to blob. Attribute blobs are the
-// only file contents Git needs before it decides which files can be cloned.
-fn metadata_ids(repo: &Path, objects: Option<&Path>, base: &str) -> Result<Vec<ObjectId>> {
-    let width = base.len() / 2;
-    let mut root = git_objects(repo, objects);
-    root.args(["rev-parse", "--verify", &format!("{base}^{{tree}}")]);
-    let tree = checked(root)?;
-    let mut ids = HashSet::from([
-        ObjectId::from_hex(base.as_bytes(), width)?,
-        ObjectId::from_hex(output_text(&tree)?.as_bytes(), width)?,
-    ]);
-    let rows = crate::git::bounded_stdout(
-        git_objects(repo, objects).args(["ls-tree", "-r", "-t", "-z", base]),
-        PROOF_LIMIT,
-    )?;
-    for row in rows.split(|&b| b == 0).filter(|row| !row.is_empty()) {
-        let tab = row
-            .iter()
-            .position(|&b| b == b'\t')
-            .context("invalid Git tree entry")?;
-        let name = row[tab + 1..]
-            .rsplit(|&b| b == b'/')
-            .next()
-            .unwrap_or_default();
-        let header = &row[..tab];
-        if header.starts_with(b"040000 ") || name.eq_ignore_ascii_case(b".gitattributes") {
-            let id = header
-                .rsplit(|&b| b == b' ')
-                .next()
-                .context("missing tree object")?;
-            ids.insert(ObjectId::from_hex(id, width)?);
-        }
-    }
-    Ok(ids.into_iter().collect())
-}
-
-/// Read from the selected donor during reservation. The only named proof
-/// files are created later, under the recorded pending workspace.
-pub(in crate::workspace) fn prepare_tip_proof(primary: &Path, base: &str) -> Result<Vec<u8>> {
-    let width = base.len() / 2;
-    let hints = metadata_ids(primary, None, base)?;
-    let mut ids = Vec::with_capacity(hints.len() * (2 * width + 1));
-    for id in &hints {
-        id.write_hex(width, &mut ids);
-    }
-    let mut input = tempfile::tempfile()?;
-    input.write_all(&ids)?;
-    input.rewind()?;
-    let mut size = transfer_git(primary);
-    size.arg("cat-file")
-        .arg("--batch-check=%(objectsize)")
-        .stdin(input.try_clone()?);
-    let sizes = checked(size)?;
-    let mut total = 0u64;
-    for line in output_text(&sizes)?.lines() {
-        total = total.saturating_add(line.parse::<u64>()?);
-        ensure!(
-            total <= PROOF_LIMIT,
-            "checkout metadata exceeds proof limit"
-        );
-    }
-    input.rewind()?;
-    crate::git::bounded_stdout(
-        transfer_git(primary)
-            .args([
-                "pack-objects",
-                "--quiet",
-                "--stdout",
-                "--delta-base-offset",
-                "--window=0",
-            ])
-            .stdin(input),
-        PROOF_LIMIT,
-    )
-}
-
-fn checkout_proof(root: &Path, base: &str, bytes: &[u8]) -> Result<tempfile::TempDir> {
-    let width = base.len() / 2;
-    let stage = cache::private_tempdir_in(&root.join(".git"))?;
-    let dir = stage.path().join("pack");
-    fs::create_dir(&dir)?;
-    let mut index = git_objects(root, Some(stage.path()))
-        .args(["index-pack", "--stdin", "--index-version=2", "--threads=2"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()?;
-    let write = index
-        .stdin
-        .take()
-        .context("missing metadata pack input")?
-        .write_all(bytes);
-    let output = index.wait_with_output()?;
-    write?;
-    ensure!(output.status.success(), "cannot index metadata pack");
-    let hash = output_text(&output.stdout)?
-        .strip_prefix("pack\t")
-        .context("invalid index-pack receipt")?;
-    let pack = Pack::at(&dir, hash, width)?;
-    // Git's index-pack rehashed the objects. Walk the pinned commit in that
-    // isolated store, so a dishonest donor index cannot introduce arbitrary
-    // path associations or omit a committed attributes file.
-    let expected = metadata_ids(root, Some(stage.path()), base)?;
-    verify_membership(&[pack], &expected, width)?;
-    Ok(stage)
-}
-
 #[cfg(test)]
 mod tests {
-    use super::super::{PackInput, export_pack};
     use super::*;
     use crate::workspace::objects::run;
 
     #[test]
-    fn a_readable_tree_does_not_prove_its_attributes_are_present() -> Result<()> {
+    fn checkout_plan_verifies_attribute_bytes_and_binds_the_selected_commit() -> Result<()> {
         let tmp = tempfile::tempdir()?;
         let repo = tmp.path();
         run(
@@ -276,8 +160,18 @@ mod tests {
             &["init", "--quiet", "--template=", "--object-format=sha1"],
         )?;
         fs::write(repo.join("source"), b"committed bytes\n")?;
+        fs::create_dir(repo.join("part"))?;
+        for path in ["part.ext", "part/entrée", "part0"] {
+            fs::write(repo.join(path), path)?;
+        }
+        // Exercise the concurrent installed-store checks when a selected
+        // subtree or blob disappears. These entries share one Git blob.
+        #[cfg(target_os = "macos")]
+        for n in 0..128 {
+            fs::write(repo.join("part").join(n.to_string()), b"repeated")?;
+        }
         fs::write(repo.join(".gitattributes"), b"source text eol=crlf\n")?;
-        run(repo, &["add", "--", "source", ".gitattributes"])?;
+        run(repo, &["add", "--", "."])?;
         run(
             repo,
             &[
@@ -292,35 +186,36 @@ mod tests {
         )?;
         let base = run(repo, &["rev-parse", "HEAD"])?;
         let base = output_text(&base)?;
-        let id = |name| -> Result<_> {
-            let bytes = run(repo, &["rev-parse", name])?;
-            ObjectId::from_hex(output_text(&bytes)?.as_bytes(), 20)
-        };
-        let attr = id("HEAD:.gitattributes")?;
-        let source = id("HEAD:source")?;
-        let mut bytes = prepare_tip_proof(repo, base)?;
-        let proof = checkout_proof(repo, base, &bytes)?;
-        let expected = metadata_ids(repo, Some(proof.path()), base)?;
-        assert!(expected.contains(&attr) && !expected.contains(&source));
-        // Both malformed packs have a readable selected commit and root tree.
-        // One omits a conversion rule; the other adds ordinary file content.
-        for extra in [false, true] {
-            let stage = tempfile::tempdir_in(repo.join(".git"))?;
-            let dir = stage.path().join("pack");
-            fs::create_dir(&dir)?;
-            let ids: Vec<_> = if extra {
-                expected.iter().copied().chain([source]).collect()
-            } else {
-                expected.iter().copied().filter(|id| *id != attr).collect()
-            };
-            let pack = export_pack(repo, repo, &dir, 20, 0, PackInput::Ids(&ids), true)?;
-            let from_tree = metadata_ids(repo, Some(stage.path()), base)?;
-            assert!(verify_membership(&[pack], &from_tree, 20).is_err());
+        let attr = run(repo, &["rev-parse", "HEAD:.gitattributes"])?;
+        let id = output_text(&attr)?;
+        let plan = prepare_checkout_proof(repo, base, None)?;
+        let proof = plan.install(repo, base)?;
+        assert!(proof.path().join(&id[..2]).join(&id[2..]).is_file());
+        assert!(plan.install(repo, &"0".repeat(base.len())).is_err());
+        let other = run(repo, &["rev-parse", "HEAD:source"])?;
+        let other = output_text(&other)?;
+        let objects = repo.join(".git/objects");
+        #[cfg(target_os = "macos")]
+        {
+            plan.verify_local(repo)?;
+            let subtree = run(repo, &["rev-parse", "HEAD:part"])?;
+            for object in [other, output_text(&subtree)?] {
+                let source = objects.join(&object[..2]).join(&object[2..]);
+                let held = tmp.path().join("held-object");
+                fs::rename(&source, &held)?;
+                assert!(plan.verify_local(repo).is_err());
+                fs::rename(held, source)?;
+            }
         }
-        // Reservation and indexing are separate phases. A truncated export
-        // must never become the object store used for a checkout.
-        bytes.pop();
-        assert!(checkout_proof(repo, base, &bytes).is_err());
+        let attribute_object = objects.join(&id[..2]).join(&id[2..]);
+        fs::remove_file(&attribute_object)?;
+        fs::copy(
+            objects.join(&other[..2]).join(&other[2..]),
+            attribute_object,
+        )?;
+        assert!(prepare_checkout_proof(repo, base, None).is_err());
+        #[cfg(target_os = "macos")]
+        assert!(plan.verify_local(repo).is_err());
         Ok(())
     }
 }

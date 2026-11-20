@@ -1,0 +1,146 @@
+{
+  "platform": "darwin",
+  "architecture": "arm64",
+  "git": "git version 2.56.0",
+  "release": {
+    "bytes": 4417920,
+    "sha256": "c197b54d9c1d1e0f3eeb0c37492dcaeab8847dc7a202af2b7a44412e265a6cd5"
+  },
+  "previousRelease": {
+    "bytes": 4417920,
+    "sha256": "704ff1b8713def169ea78a24432ad6df4094a769a1643716eb17345c8306b8e2"
+  },
+  "fixture": {
+    "head": "bc63375ac3a4d6debb1ceb441ae6e22854f0909a",
+    "tree": "ee570b9dbb122c6b6f0f609b83402c1f8eaca195",
+    "objects": 371804,
+    "commits": 53716
+  },
+  "method": "Six rotating rounds, one fresh populated local clone per arm. No project history setting and no history argument. Each primary has an unrelated loose object. CLI wall time includes first-use setup and dependency discovery. Preparation, status and object checks run outside the timer. CPU and RSS come from macOS /usr/bin/time -l.",
+  "commands": {
+    "previous": "previous git-graft --repo PRIMARY --json spawn agent --base HEAD_OID",
+    "current": "current git-graft --repo PRIMARY --json spawn agent --base HEAD_OID",
+    "linked": "git worktree add -qb graft/agent DEST HEAD_OID"
+  },
+  "sampleColumns": [
+    "round",
+    "command",
+    "wallMs",
+    "userCpuS",
+    "systemCpuS",
+    "peakRssBytes"
+  ],
+  "series": {
+    "cold": {
+      "medianMs": {
+        "previous": 3619.647,
+        "current": 473.749,
+        "linked": 291.673
+      },
+      "samples": [
+        [1, "previous", 3736.899, 7.26, 3.77, 288882688],
+        [1, "current", 475.084, 0.09, 0.77, 17022976],
+        [1, "linked", 311.726, 0.05, 0.24, 52576256],
+        [2, "current", 461.464, 0.09, 0.74, 16875520],
+        [2, "linked", 291.482, 0.05, 0.22, 52199424],
+        [2, "previous", 3615.269, 7.14, 3.59, 288899072],
+        [3, "linked", 307.309, 0.05, 0.23, 52199424],
+        [3, "previous", 3602.982, 7.14, 3.61, 288800768],
+        [3, "current", 561.656, 0.09, 0.96, 17039360],
+        [4, "linked", 286.868, 0.05, 0.22, 52363264],
+        [4, "current", 452.324, 0.08, 0.72, 16990208],
+        [4, "previous", 3622.827, 7.12, 3.63, 288899072],
+        [5, "previous", 3713.079, 7.14, 3.75, 288849920],
+        [5, "linked", 291.865, 0.05, 0.23, 52232192],
+        [5, "current", 472.413, 0.09, 0.74, 16875520],
+        [6, "current", 481.284, 0.09, 0.76, 17006592],
+        [6, "previous", 3616.467, 7.16, 3.56, 288882688],
+        [6, "linked", 289.753, 0.05, 0.23, 52051968]
+      ]
+    },
+    "noCheckout": {
+      "medianMs": {
+        "current": 164.175,
+        "linked": 14.561
+      },
+      "samples": [
+        [1, "current", 153.163, 0.03, 0.03, 8781824],
+        [1, "linked", 16.164, 0, 0, 9371648],
+        [2, "linked", 14.567, 0, 0, 9338880],
+        [2, "current", 160.951, 0.03, 0.04, 8765440],
+        [3, "current", 153.116, 0.03, 0.03, 8781824],
+        [3, "linked", 14.554, 0, 0, 9306112],
+        [4, "linked", 14.477, 0, 0, 9355264],
+        [4, "current", 171.038, 0.03, 0.04, 8781824],
+        [5, "current", 167.399, 0.03, 0.04, 8814592],
+        [5, "linked", 14.13, 0, 0, 9420800],
+        [6, "linked", 17.395, 0, 0, 9322496],
+        [6, "current", 178.415, 0.03, 0.04, 8765440]
+      ]
+    }
+  },
+  "sourceStorage": {
+    "backend": "clonefile",
+    "cloned_files": 3318,
+    "cloned_bytes": 20536136,
+    "private_files": 0,
+    "private_bytes": 0,
+    "primary_reused_files": 3318,
+    "primary_reused_bytes": 20536136,
+    "snapshot_reused": false
+  },
+  "gitObjects": {
+    "method": "clonefile",
+    "source": "local-snapshot",
+    "object_format": "sha1",
+    "bytes": 141372050,
+    "pack_bytes": 130939998,
+    "index_bytes": 10431880,
+    "loose_bytes": 172,
+    "shared_bytes": 141372050,
+    "cache_bytes": 0,
+    "pack_count": 4,
+    "loose_count": 1
+  },
+  "apfsUniqueFileDataBytes": {
+    "current": {
+      "first": 327680,
+      "repeat": 315392,
+      "oneFileAdvance": 315392
+    },
+    "linked": {
+      "first": 29941760,
+      "repeat": 29941760,
+      "oneFileAdvance": 29945856
+    }
+  },
+  "firstGraftFileDataByPurpose": {
+    "primaryChange": "0",
+    "historyPacks": "0",
+    "historyIndexes": "0",
+    "checkoutIndexes": "286720",
+    "sourceFiles": "0",
+    "records": "40960"
+  },
+  "validation": {
+    "suites": {
+      "git version 2.46.0": {
+        "passed": 149,
+        "failed": 0,
+        "unavailable": 0,
+        "total": 149
+      },
+      "git version 2.56.0": {
+        "passed": 149,
+        "failed": 0,
+        "unavailable": 0,
+        "total": 149
+      }
+    },
+    "checks": [
+      "Selected commit and tree, clean status, independent object database and no alternates.",
+      "Previous default excludes unrelated object. New local snapshot includes it without copying unrelated branch refs.",
+      "Explicit isolated mode excludes unrelated objects. Project settings, explicit overrides and retry compatibility checked via CLI and MCP."
+    ]
+  }
+}

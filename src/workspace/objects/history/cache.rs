@@ -5,9 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::{
     cmp::Reverse,
     collections::HashSet,
-    ffi::OsStr,
+    ffi::{OsStr, OsString},
     fs::{self, File},
-    io::{Read, Write},
+    io::{Read, Seek, Write},
     path::{Path, PathBuf},
     thread,
 };
@@ -57,8 +57,8 @@ struct Artifact {
     digest: String,
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct Stamp {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct Stamp {
     device: u64,
     inode: u64,
     size: u64,
@@ -67,12 +67,16 @@ struct Stamp {
 }
 
 impl Stamp {
+    pub(super) fn read(file: &File) -> Result<Self> {
+        Self::read_with_links(file, 1)
+    }
+
     #[cfg(unix)]
-    fn read(file: &File) -> Result<Self> {
+    pub(super) fn read_with_links(file: &File, links: u64) -> Result<Self> {
         use std::os::unix::fs::MetadataExt;
         let m = file.metadata()?;
         ensure!(
-            m.is_file() && m.nlink() == 1 && m.mode() & 0o222 == 0,
+            m.is_file() && m.nlink() == links && m.mode() & 0o222 == 0,
             "expected an immutable regular Git pack file"
         );
         Ok(Self {
@@ -85,8 +89,94 @@ impl Stamp {
     }
 
     #[cfg(not(unix))]
-    fn read(_file: &File) -> Result<Self> {
+    pub(super) fn read_with_links(_file: &File, _links: u64) -> Result<Self> {
         anyhow::bail!("immutable Git pack cloning is unsupported on this platform")
+    }
+
+    pub(super) fn size(self) -> u64 {
+        self.size
+    }
+}
+
+/// Keep the authenticated inode alive until the final name has been checked.
+pub(super) struct PublishedFile {
+    file: File,
+    stamp: Stamp,
+}
+
+impl PublishedFile {
+    pub(super) fn verify(file: File, expected: &str) -> Result<Self> {
+        let stamp = Stamp::read(&file)?;
+        ensure!(
+            digest(&file)? == expected,
+            "published Git file has unexpected bytes"
+        );
+        file.sync_all().context("sync verified Git file")?;
+        ensure!(Stamp::read(&file)? == stamp, "published Git file changed");
+        Ok(Self { file, stamp })
+    }
+
+    pub(super) fn stamp(&self) -> Stamp {
+        self.stamp
+    }
+
+    pub(super) fn check(&self, path: &Path) -> Result<()> {
+        ensure!(
+            Stamp::read(&open_regular(path)?)? == self.stamp
+                && Stamp::read(&self.file)? == self.stamp,
+            "published Git file changed at {}",
+            path.display()
+        );
+        Ok(())
+    }
+}
+
+pub(super) struct PublishedDirectory(File);
+
+impl PublishedDirectory {
+    #[cfg(unix)]
+    pub(super) fn open(path: &Path) -> Result<Self> {
+        use std::os::unix::fs::OpenOptionsExt;
+        let file = File::options()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+            .open(path)?;
+        Ok(Self(file))
+    }
+
+    #[cfg(not(unix))]
+    pub(super) fn open(_path: &Path) -> Result<Self> {
+        anyhow::bail!("verified Git publication is unsupported on this platform")
+    }
+
+    pub(super) fn sync(&self) -> Result<()> {
+        self.0.sync_all()?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    pub(super) fn check(&self, path: &Path, files: &[(OsString, PublishedFile)]) -> Result<()> {
+        use std::os::unix::fs::MetadataExt;
+        let identity = |m: &fs::Metadata| (m.dev(), m.ino());
+        let times = |m: &fs::Metadata| (m.mtime(), m.mtime_nsec(), m.ctime(), m.ctime_nsec());
+        let pinned = self.0.metadata()?;
+        for (name, file) in files {
+            file.check(&path.join(name))?;
+        }
+        let named = fs::symlink_metadata(path)?;
+        ensure!(
+            named.is_dir()
+                && identity(&named) == identity(&pinned)
+                && times(&named) == times(&pinned),
+            "published Git directory changed at {}",
+            path.display()
+        );
+        Ok(())
+    }
+
+    #[cfg(not(unix))]
+    pub(super) fn check(&self, _path: &Path, _files: &[(OsString, PublishedFile)]) -> Result<()> {
+        anyhow::bail!("verified Git publication is unsupported on this platform")
     }
 }
 
@@ -211,7 +301,11 @@ impl<'a> Cache<'a> {
         Ok(Some(restored.into_iter().map(|(_, pack)| pack).collect()))
     }
 
-    pub(super) fn publish(&self, packs: &[Pack]) -> Result<u64> {
+    pub(super) fn publish(
+        &self,
+        packs: &[Pack],
+        inputs: Option<&super::VerifiedInputs>,
+    ) -> Result<u64> {
         if !reflinks_available() {
             return Ok(0);
         }
@@ -222,12 +316,32 @@ impl<'a> Cache<'a> {
             Ok(_) => return Ok(0),
         }
         let stage = private_tempdir_in(&self.root)?;
+        let directories = inputs
+            .map(|_| {
+                Ok::<_, anyhow::Error>((
+                    PublishedDirectory::open(stage.path())?,
+                    PublishedDirectory::open(&self.root)?,
+                ))
+            })
+            .transpose()?;
+        let mut published = Vec::new();
         let mut receipt = Verification {
             format: self.format.into(),
             base: self.base.into(),
             packs: Vec::with_capacity(packs.len()),
         };
         let mut bytes = 0;
+        let mut publish = |source: &Path| -> Result<Artifact> {
+            let name = source.file_name().context("missing Git pack filename")?;
+            let cloned = stage.path().join(name);
+            if let Some(inputs) = inputs {
+                let (file, digest) = inputs.clone_to(source, &cloned)?;
+                let stamp = file.stamp();
+                published.push((name.to_owned(), file));
+                return Ok(Artifact { stamp, digest });
+            }
+            publish_file(source, &cloned)
+        };
         for pack in packs {
             let hash = pack
                 .pack
@@ -235,8 +349,8 @@ impl<'a> Cache<'a> {
                 .and_then(|name| name.to_str())
                 .and_then(|name| name.strip_prefix("pack-"))
                 .context("missing verified Git pack hash")?;
-            let packed = publish_file(&pack.pack, stage.path())?;
-            let index = publish_file(&pack.index, stage.path())?;
+            let packed = publish(&pack.pack)?;
+            let index = publish(&pack.index)?;
             bytes += packed.stamp.size + index.stamp.size;
             receipt.packs.push(VerifiedPack {
                 hash: hash.into(),
@@ -249,13 +363,43 @@ impl<'a> Cache<'a> {
             data.len() as u64 <= RECEIPT_LIMIT,
             "pack cache receipt is too large"
         );
-        write_synced(&stage.path().join(RECEIPT), &data)?;
-        sync_directory(stage.path())?;
-        // Publishing the directory atomically binds the receipt and both
-        // verified files of each pair. An existing entry always wins.
-        rename_exclusive(stage.path(), &self.key)?;
-        let _ = stage.keep();
-        sync_directory(&self.root)?;
+        if let Some((directory, root)) = directories {
+            let path = stage.path().join(RECEIPT);
+            let mut file = File::options()
+                .read(true)
+                .write(true)
+                .create_new(true)
+                .open(&path)?;
+            file.write_all(&data)?;
+            let mut permissions = file.metadata()?.permissions();
+            permissions.set_readonly(true);
+            file.set_permissions(permissions)?;
+            let digest = blake3::hash(&data).to_hex().to_string();
+            published.push((RECEIPT.into(), PublishedFile::verify(file, &digest)?));
+            let check = |path: &Path| -> Result<()> {
+                ensure!(
+                    fs::read_dir(path)?.count() == published.len(),
+                    "unexpected Git pack cache generation entries"
+                );
+                directory.check(path, &published)?;
+                root.check(&self.root, &[])?;
+                Ok(())
+            };
+            directory.sync()?;
+            check(stage.path())?;
+            // An existing generation always wins. Check the actual winning
+            // directory as well, since rename accepts a name, not an fd.
+            rename_exclusive(stage.path(), &self.key)?;
+            let _ = stage.keep();
+            root.sync()?;
+            check(&self.key)?;
+        } else {
+            write_synced(&stage.path().join(RECEIPT), &data)?;
+            sync_directory(stage.path())?;
+            rename_exclusive(stage.path(), &self.key)?;
+            let _ = stage.keep();
+            sync_directory(&self.root)?;
+        }
         Ok(bytes)
     }
 }
@@ -454,7 +598,8 @@ pub(super) fn clone_checked(source: &File, destination: &Path) -> Result<()> {
     Ok(())
 }
 
-fn digest(file: &File) -> Result<String> {
+pub(super) fn digest(file: &File) -> Result<String> {
+    (&mut &*file).rewind()?;
     Ok(blake3::Hasher::new()
         .update_reader(file)?
         .finalize()
@@ -462,11 +607,9 @@ fn digest(file: &File) -> Result<String> {
         .to_string())
 }
 
-fn publish_file(source: &Path, directory: &Path) -> Result<Artifact> {
-    let name = source.file_name().context("missing Git pack filename")?;
-    let cloned = directory.join(name);
-    clone_checked(&open_regular(source)?, &cloned)?;
-    let file = open_regular(&cloned)?;
+fn publish_file(source: &Path, destination: &Path) -> Result<Artifact> {
+    clone_checked(&open_regular(source)?, destination)?;
+    let file = open_regular(destination)?;
     #[cfg(unix)]
     file.sync_all()
         .context("sync verified Git pack cache file")?;
@@ -490,4 +633,36 @@ fn restore_file(expected: &Artifact, source: &Path, destination: &Path) -> Resul
         "cached Git pack file failed verification"
     );
     Ok(())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn publication_rejects_wrong_bytes_and_replaced_inode() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let destination = dir.path().join("pack");
+        let replacement = dir.path().join("replacement");
+        let seal = |path: &Path, bytes: &[u8]| -> Result<File> {
+            fs::write(path, bytes)?;
+            let file = open_regular(path)?;
+            let mut permissions = file.metadata()?.permissions();
+            permissions.set_readonly(true);
+            file.set_permissions(permissions)?;
+            Ok(file)
+        };
+        let expected = blake3::hash(b"good").to_hex().to_string();
+        assert!(PublishedFile::verify(seal(&replacement, b"evil")?, &expected).is_err());
+        fs::remove_file(&replacement)?;
+        let file = PublishedFile::verify(seal(&destination, b"good")?, &expected)?;
+        let directory = PublishedDirectory::open(dir.path())?;
+        let files = [("pack".into(), file)];
+        directory.check(dir.path(), &files)?;
+
+        seal(&replacement, b"good")?;
+        fs::rename(&replacement, &destination)?;
+        assert!(directory.check(dir.path(), &files).is_err());
+        Ok(())
+    }
 }

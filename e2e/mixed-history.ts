@@ -58,7 +58,7 @@ function run(ctx: Context, format: 'sha1' | 'sha256') {
   const donor = readFileSync(index.replace(/\.idx$/, '.pack'));
   const probe = objectResult(ctx.cli(['doctor']).source_storage).native_clone;
   assert.equal(typeof probe, 'boolean');
-  const first = ctx.spawn(`mixed-${format}`);
+  const first = ctx.spawn(`mixed-${format}`, ['--history', 'isolated']);
   const objects = objectResult(objectResult(first.result.storage).objects);
   if (probe) {
     assert.ok(typeof objects.filtered_primary_packs === 'number' && objects.filtered_primary_packs > 0, JSON.stringify(objects));
@@ -67,7 +67,7 @@ function run(ctx: Context, format: 'sha1' | 'sha256') {
     assert.equal(objects.filtered_primary_packs ?? 0, 0);
     assert.equal(objects.source, 'local-export');
   }
-  const sibling = ctx.spawn(`mixed-${format}-sibling`);
+  const sibling = ctx.spawn(`mixed-${format}-sibling`, ['--history', 'isolated']);
   const excludedRecord = packRecords(ctx, index).find(record => record.id === extra[0]);
   assert(excludedRecord);
   const excludedBytes = donor.subarray(excludedRecord.offset, excludedRecord.offset + excludedRecord.size);
@@ -161,7 +161,7 @@ function defensiveFixture(ctx: Context, mode: 'delta' | 'compact') {
   }
   const packPath = index.replace(/\.idx$/, '.pack');
   const donor = readFileSync(packPath);
-  const ws = ctx.spawn(`defensive-${mode}`);
+  const ws = ctx.spawn(`defensive-${mode}`, ['--history', 'isolated']);
   const receipt = objectResult(objectResult(ws.result.storage).objects);
   if (mode === 'compact') {
     assert.equal(receipt.filtered_primary_packs ?? 0, 0, JSON.stringify(receipt));

@@ -1,0 +1,301 @@
+{
+  "platform": "macOS arm64, APFS",
+  "git": "git version 2.56.0",
+  "head": "bc63375ac3a4d6debb1ceb441ae6e22854f0909a",
+  "tree": "ee570b9dbb122c6b6f0f609b83402c1f8eaca195",
+  "method": "Separate fresh, populated local Homebrew clones for every arm. Rotate previous release, candidate and git worktree add. Command exit precedes status, exact HEAD/tree, strict fsck and single-commit visibility checks. Each Graft reused 3,318 regular files (20,536,136 bytes).",
+  "series": {
+    "first": {
+      "hashes": {
+        "release": "7d994aac408f6d75069ac92d566344d4501ced6908c2740428ac2a1ff0a46bf4",
+        "candidate": "adb0006216a825bf457e60c902c4532b0f248c402250f64cb26effe29142c1c5"
+      },
+      "columns": ["order", "previousMs", "candidateMs", "worktreeMs", "previousStatusMs", "candidateStatusMs", "worktreeStatusMs"],
+      "rows": [
+        ["release/candidate/native", 476.055, 451.451, 309.75, 307.663, 326.287, 117.074],
+        ["candidate/native/release", 473.01, 467.582, 304.784, 324.784, 376.08, 142.975],
+        ["native/release/candidate", 471.734, 464.972, 301.017, 352.361, 367.271, 129.101],
+        ["release/native/candidate", 481.03, 463.287, 305.336, 349.535, 373.071, 80.275],
+        ["candidate/release/native", 460.373, 467.648, 300.39, 324.72, 359.199, 121.372],
+        ["native/candidate/release", 454.331, 471.509, 301.299, 336.685, 372.241, 133.844],
+        ["release/candidate/native", 469.83, 445.683, 300.94, 380.638, 378.216, 119.689],
+        ["candidate/native/release", 470.727, 448.213, 294.176, 367.593, 355.711, 140.992],
+        ["native/release/candidate", 462.952, 441.963, 295.321, 367.918, 345.747, 131.458],
+        ["release/native/candidate", 486.034, 465.054, 295.702, 377.876, 386.071, 101.276],
+        ["candidate/release/native", 457.371, 453.722, 305.576, 351.29, 322.522, 117.73],
+        ["native/candidate/release", 468.719, 466.255, 300.16, 367.522, 371.624, 128.111]
+      ]
+    },
+    "reverse": {
+      "hashes": {
+        "release": "7d994aac408f6d75069ac92d566344d4501ced6908c2740428ac2a1ff0a46bf4",
+        "candidate": "adb0006216a825bf457e60c902c4532b0f248c402250f64cb26effe29142c1c5"
+      },
+      "columns": ["order", "previousMs", "candidateMs", "worktreeMs", "previousStatusMs", "candidateStatusMs", "worktreeStatusMs"],
+      "rows": [
+        ["native/candidate/release", 447.254, 453.522, 297.148, 346.332, 353.437, 122.292],
+        ["release/native/candidate", 484.82, 448.604, 297.33, 361.164, 359.353, 39.303],
+        ["candidate/release/native", 471.602, 453.05, 293.395, 318.778, 361.682, 137.245],
+        ["candidate/native/release", 476.247, 451.314, 297.665, 368.95, 345.432, 140.925],
+        ["native/release/candidate", 464.124, 443.004, 284.811, 350.89, 345.272, 148.875],
+        ["release/candidate/native", 467.177, 441.58, 300.325, 362.24, 392.112, 145.318],
+        ["native/candidate/release", 478.395, 504.472, 305.007, 362.126, 369.275, 109.321],
+        ["release/native/candidate", 486.348, 475.606, 299.538, 363.224, 379.414, 112.319],
+        ["candidate/release/native", 456.032, 480.335, 282.709, 344.314, 372.94, 34.974],
+        ["candidate/native/release", 466.53, 485.754, 314.167, 423.42, 346.03, 138.658],
+        ["native/release/candidate", 527.484, 511.235, 319.573, 376.188, 361.79, 29.66],
+        ["release/candidate/native", 467.911, 441.803, 294.229, 355.721, 350.281, 118.598]
+      ]
+    },
+    "checked-first": {
+      "hashes": {
+        "release": "7d994aac408f6d75069ac92d566344d4501ced6908c2740428ac2a1ff0a46bf4",
+        "candidate": "ee9c0cad482803708665baaa0fb285e6c54107c3e0495e6d1773d9a081d3ac28"
+      },
+      "columns": ["order", "previousMs", "candidateMs", "worktreeMs", "previousStatusMs", "candidateStatusMs", "worktreeStatusMs"],
+      "rows": [
+        ["release/candidate/native", 472.162, 448.011, 299.445, 336.453, 356.861, 138.262],
+        ["candidate/native/release", 476.209, 453.536, 302.767, 391.238, 377.184, 107.729],
+        ["native/release/candidate", 474.11, 440.044, 317.776, 324.938, 376.646, 103.502],
+        ["release/native/candidate", 513.976, 451.743, 306.643, 341.012, 372.278, 141.541],
+        ["candidate/release/native", 462.206, 465.957, 302.679, 393.663, 382.585, 119.613],
+        ["native/candidate/release", 459.191, 476.556, 305.466, 321.337, 381.911, 138.747],
+        ["release/candidate/native", 469.118, 449.047, 288.123, 340.415, 381.578, 142.604],
+        ["candidate/native/release", 473.973, 463.56, 292.855, 384.656, 384.598, 143.477],
+        ["native/release/candidate", 456.465, 459.362, 329.701, 378.573, 361.238, 146.099],
+        ["release/native/candidate", 483.86, 462.805, 293.937, 394.476, 369.98, 143.289],
+        ["candidate/release/native", 476.189, 481.125, 299.136, 378.382, 417.33, 120.551],
+        ["native/candidate/release", 474.22, 466.831, 308.635, 360.993, 388.344, 70.732]
+      ]
+    },
+    "checked-reverse": {
+      "hashes": {
+        "release": "7d994aac408f6d75069ac92d566344d4501ced6908c2740428ac2a1ff0a46bf4",
+        "candidate": "ee9c0cad482803708665baaa0fb285e6c54107c3e0495e6d1773d9a081d3ac28"
+      },
+      "columns": ["order", "previousMs", "candidateMs", "worktreeMs", "previousStatusMs", "candidateStatusMs", "worktreeStatusMs"],
+      "rows": [
+        ["native/candidate/release", 454.466, 470.624, 308.921, 385.579, 409.949, 84.004],
+        ["release/native/candidate", 491.964, 474.28, 344.462, 427.902, 464.879, 121.433],
+        ["candidate/release/native", 496.377, 463.095, 319.46, 386.558, 365.886, 119.839],
+        ["candidate/native/release", 470.949, 451.519, 302.217, 417.302, 374.117, 143.615],
+        ["native/release/candidate", 477.329, 454.145, 289.214, 343.083, 374.971, 139.755],
+        ["release/candidate/native", 502.092, 458.342, 310.014, 367.47, 375.879, 120.284],
+        ["native/candidate/release", 487.328, 442.801, 329.734, 478.809, 465.024, 141.126],
+        ["release/native/candidate", 482.769, 450.063, 302.221, 363.457, 348.843, 143.155],
+        ["candidate/release/native", 452.841, 461.741, 305.988, 397.951, 393.369, 117.016],
+        ["candidate/native/release", 471.731, 468.856, 297.026, 354.442, 463.412, 140.905],
+        ["native/release/candidate", 467.068, 484.133, 301.265, 344.682, 357.561, 140.788],
+        ["release/candidate/native", 474.686, 451.208, 286.441, 328.69, 359.251, 119.477]
+      ]
+    },
+    "standard-first": {
+      "hashes": {
+        "release": "7d994aac408f6d75069ac92d566344d4501ced6908c2740428ac2a1ff0a46bf4",
+        "candidate": "65c83287a8db96849d1f9f81469e67c6bbb62d8f5608e148541358d5f8a65b79"
+      },
+      "columns": ["order", "previousMs", "candidateMs", "worktreeMs", "previousStatusMs", "candidateStatusMs", "worktreeStatusMs"],
+      "rows": [
+        ["release/candidate/native", 465.964, 447.821, 287.593, 319.727, 324.229, 114.206],
+        ["candidate/native/release", 463.273, 721.121, 294.067, 309.157, 314.698, 94.737],
+        ["native/release/candidate", 463.203, 457.771, 303.514, 327.445, 322.958, 136.486],
+        ["release/native/candidate", 463.068, 447.042, 282.815, 348.777, 343.637, 130.699],
+        ["candidate/release/native", 466.698, 459.672, 300.22, 389.53, 379.448, 70.389],
+        ["native/candidate/release", 458.917, 465.707, 287.035, 345.583, 355.026, 137.576],
+        ["release/candidate/native", 463.507, 489.07, 302.507, 391.233, 354.6, 130.642],
+        ["candidate/native/release", 469.226, 466.885, 290.489, 325.689, 338.934, 134.408],
+        ["native/release/candidate", 470, 483.73, 357.011, 371.857, 323.05, 133.342],
+        ["release/native/candidate", 503.655, 515.795, 316.478, 416.01, 345.253, 152.269],
+        ["candidate/release/native", 490.956, 490.809, 298.835, 368.973, 368.772, 97.43],
+        ["native/candidate/release", 489.332, 513.59, 298.34, 426.62, 497.327, 176.729]
+      ]
+    },
+    "standard-reverse": {
+      "hashes": {
+        "release": "7d994aac408f6d75069ac92d566344d4501ced6908c2740428ac2a1ff0a46bf4",
+        "candidate": "65c83287a8db96849d1f9f81469e67c6bbb62d8f5608e148541358d5f8a65b79"
+      },
+      "columns": ["order", "previousMs", "candidateMs", "worktreeMs", "previousStatusMs", "candidateStatusMs", "worktreeStatusMs"],
+      "rows": [
+        ["native/candidate/release", 479.049, 477.254, 298.827, 356.735, 377.823, 93.427],
+        ["release/native/candidate", 496.195, 467.236, 294.841, 364.678, 409.993, 39.504],
+        ["candidate/release/native", 493.72, 480.568, 300.58, 362.994, 368.386, 137.425],
+        ["candidate/native/release", 506.082, 480.438, 291.242, 354.059, 377.409, 140.06],
+        ["native/release/candidate", 525.36, 473.999, 298.835, 381.79, 361.36, 135.72],
+        ["release/candidate/native", 549.346, 602.509, 361.293, 378.653, 357.82, 139.232],
+        ["native/candidate/release", 455.536, 472.07, 281.867, 368.099, 332.394, 134.756],
+        ["release/native/candidate", 480.121, 455.024, 281.88, 320.23, 339.686, 129.376],
+        ["candidate/release/native", 465.06, 452.547, 282.554, 357.706, 338.647, 116.585],
+        ["candidate/native/release", 469.952, 443.774, 282.023, 436.589, 424.421, 169.624],
+        ["native/release/candidate", 547.967, 472.588, 289.299, 464.122, 357.343, 135.64],
+        ["release/candidate/native", 535.81, 469.24, 290.921, 345.728, 361.415, 112.128]
+      ]
+    },
+    "standard-confirm": {
+      "hashes": {
+        "release": "7d994aac408f6d75069ac92d566344d4501ced6908c2740428ac2a1ff0a46bf4",
+        "candidate": "65c83287a8db96849d1f9f81469e67c6bbb62d8f5608e148541358d5f8a65b79"
+      },
+      "columns": ["order", "previousMs", "candidateMs", "worktreeMs", "previousStatusMs", "candidateStatusMs", "worktreeStatusMs"],
+      "rows": [
+        ["release/candidate/native", 475.341, 445.925, 286.611, 360.61, 334.242, 62.512],
+        ["candidate/native/release", 473.151, 492.014, 279.181, 342.494, 349.568, 129.122],
+        ["native/release/candidate", 483.228, 455.347, 297.007, 395.768, 437.341, 135.19],
+        ["release/native/candidate", 480.907, 474.621, 284.189, 447.143, 387.865, 130.82],
+        ["candidate/release/native", 468.192, 462.278, 294.221, 377.18, 399.277, 113.238],
+        ["native/candidate/release", 534.993, 465.205, 291.442, 417.596, 453.637, 133.111],
+        ["release/candidate/native", 471.911, 431.057, 289.406, 361.378, 383.344, 120.819],
+        ["candidate/native/release", 461.082, 504.604, 277.663, 390.393, 383.038, 131.705],
+        ["native/release/candidate", 483.033, 466.335, 305.711, 375.723, 346.212, 138.065],
+        ["release/native/candidate", 494.701, 474.061, 280.54, 349.262, 332.59, 81.444],
+        ["candidate/release/native", 457.921, 453.397, 288.731, 331.655, 338.456, 130.912],
+        ["native/candidate/release", 469.773, 499.708, 311.634, 433.438, 455.832, 42.314]
+      ]
+    }
+  },
+  "timelines": {
+    "batch-file-times": {
+      "method": "Post-exit inode change times relative to command start. Eight alternating pairs. The final release run also compared all 166 symlink targets with the reference checkout.",
+      "columns": ["round", "arm", "firstRegularMs", "lastRegularMs", "firstLinkMs", "lastLinkMs", "exitMs"],
+      "rows": [
+        [1, "candidate", 175.625, 400.909, 403.753, 411.921, 428.349],
+        [1, "previous", 177.021, 395.599, 406.659, 414.359, 431.601],
+        [2, "previous", 156.764, 384.239, 395.673, 403.302, 420.172],
+        [2, "candidate", 155.317, 381.121, 381.084, 389.125, 405.599],
+        [3, "candidate", 194.823, 437.45, 427.993, 436.611, 455.012],
+        [3, "previous", 171.871, 394.63, 405.398, 411.785, 428.843],
+        [4, "previous", 179.415, 402.042, 413.05, 420.896, 438.182],
+        [4, "candidate", 163.737, 391.545, 385.35, 393.833, 412.015],
+        [5, "candidate", 160.576, 381.379, 385.605, 392.781, 409.268],
+        [5, "previous", 154.287, 377.995, 389.099, 395.663, 413.885],
+        [6, "previous", 154.266, 378.531, 389.026, 396.45, 413.431],
+        [6, "candidate", 161.025, 376.464, 383.347, 390.806, 407.233],
+        [7, "candidate", 166.46, 387.375, 393.803, 401.693, 418.06],
+        [7, "previous", 162.767, 383.028, 394.309, 402.22, 420.143],
+        [8, "previous", 180.878, 402.587, 413.489, 421.444, 439.243],
+        [8, "candidate", 169.372, 395.487, 397.366, 404.856, 423.437]
+      ]
+    },
+    "release-file-times": {
+      "method": "Post-exit inode change times relative to command start. Eight alternating pairs. The final release run also compared all 166 symlink targets with the reference checkout.",
+      "columns": ["round", "arm", "firstRegularMs", "lastRegularMs", "firstLinkMs", "lastLinkMs", "exitMs"],
+      "rows": [
+        [1, "candidate", 202.617, 446.582, 441.525, 449.883, 472.238],
+        [1, "previous", 166.843, 394.457, 405.738, 411.472, 429.646],
+        [2, "previous", 169.022, 391.85, 403.898, 410.501, 429.937],
+        [2, "candidate", 169.639, 394.366, 398.998, 406.521, 434.021],
+        [3, "candidate", 167.963, 392.441, 396.229, 403.763, 428.387],
+        [3, "previous", 166.379, 414.534, 425.402, 432.116, 449.336],
+        [4, "previous", 153.436, 378.551, 388.545, 396.157, 412.877],
+        [4, "candidate", 165.754, 390.986, 392.231, 400.167, 423.401],
+        [5, "candidate", 167.767, 400.421, 396.469, 404.972, 426.231],
+        [5, "previous", 170.175, 399.887, 411.966, 418.387, 435.224],
+        [6, "previous", 176.173, 410.352, 422.056, 428.823, 448],
+        [6, "candidate", 157.798, 379.946, 384.079, 391.984, 413.213],
+        [7, "candidate", 165.899, 389.139, 394.334, 402.421, 424.753],
+        [7, "previous", 167.084, 387.362, 397.869, 404.992, 422.722],
+        [8, "previous", 165.056, 386.385, 396.977, 403.514, 421.657],
+        [8, "candidate", 170.167, 396.463, 393.668, 401.061, 423.491]
+      ]
+    }
+  },
+  "scenarios": [
+    {
+      "git": "git version 2.56.0",
+      "format": "sha1",
+      "scenario": "links"
+    },
+    {
+      "git": "git version 2.56.0",
+      "format": "sha1",
+      "scenario": "plain"
+    },
+    {
+      "git": "git version 2.56.0",
+      "format": "sha1",
+      "scenario": "collision"
+    },
+    {
+      "git": "git version 2.56.0",
+      "format": "sha1",
+      "scenario": "moved-head"
+    },
+    {
+      "git": "git version 2.56.0",
+      "format": "sha256",
+      "scenario": "links"
+    },
+    {
+      "git": "git version 2.56.0",
+      "format": "sha256",
+      "scenario": "plain"
+    },
+    {
+      "git": "git version 2.56.0",
+      "format": "sha256",
+      "scenario": "collision"
+    },
+    {
+      "git": "git version 2.56.0",
+      "format": "sha256",
+      "scenario": "moved-head"
+    },
+    {
+      "git": "git version 2.46.0",
+      "format": "sha1",
+      "scenario": "links"
+    },
+    {
+      "git": "git version 2.46.0",
+      "format": "sha1",
+      "scenario": "plain"
+    },
+    {
+      "git": "git version 2.46.0",
+      "format": "sha1",
+      "scenario": "collision"
+    },
+    {
+      "git": "git version 2.46.0",
+      "format": "sha1",
+      "scenario": "moved-head"
+    },
+    {
+      "git": "git version 2.46.0",
+      "format": "sha256",
+      "scenario": "links"
+    },
+    {
+      "git": "git version 2.46.0",
+      "format": "sha256",
+      "scenario": "plain"
+    },
+    {
+      "git": "git version 2.46.0",
+      "format": "sha256",
+      "scenario": "collision"
+    },
+    {
+      "git": "git version 2.46.0",
+      "format": "sha256",
+      "scenario": "moved-head"
+    }
+  ],
+  "allocation": {
+    "first": "5677056",
+    "repeat": "319488",
+    "advance": "442368",
+    "firstByPurpose": {
+      "primaryChange": "0",
+      "historyPacks": "5246976",
+      "historyIndexes": "106496",
+      "checkoutIndexes": "270336",
+      "sourceFiles": "0",
+      "records": "53248"
+    }
+  },
+  "binary": {
+    "bytes": 4301088,
+    "sha256": "65c83287a8db96849d1f9f81469e67c6bbb62d8f5608e148541358d5f8a65b79"
+  }
+}

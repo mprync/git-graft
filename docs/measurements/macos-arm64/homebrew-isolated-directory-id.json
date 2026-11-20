@@ -1,0 +1,841 @@
+{
+  "platform": "darwin",
+  "architecture": "arm64",
+  "node": "v24.5.0",
+  "operatingSystem": {
+    "type": "Darwin",
+    "release": "25.5.0",
+    "version": "Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:15 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T6041"
+  },
+  "git": "git version 2.56.0",
+  "resourceObserver": {
+    "tool": "/usr/bin/time",
+    "format": "bsd",
+    "scope": "Per CLI command; user and system CPU seconds and peak RSS. Includes the time wrapper; child accounting is OS-specific and is not simultaneous process-tree memory."
+  },
+  "apfsCalibration": {
+    "available": true,
+    "observerSeconds": 0.147117834
+  },
+  "binary": {
+    "bytes": 4401328,
+    "sha256": "1334b0f3675798d1297f13ac88c279ba1b1dec0fd8fc55b3350427c7444c2bcb"
+  },
+  "previousBinary": {
+    "bytes": 4317680,
+    "sha256": "09db3c3698be90d4bda5222b1f8a5cde18e56de3dd7251beef7c2860e5710ebf"
+  },
+  "method": "Rotating default isolated Graft, previous binary and git worktree add -b on fresh populated local Homebrew clones. Each command starts with the same selected commit and no Graft history cache. OS file cache was not flushed. Clone setup, status and object comparisons run outside the timer.",
+  "checks": "Every graft exposed exactly the expected object IDs, excluded a separate unreferenced object, matched the commit and tree, and had no alternates. With checkout enabled every graft shared all 3318 regular files and both working directories were clean. Each first candidate ran git fsck --strict --no-reflogs.",
+  "siblingActivity": "Created and removed an unrelated sibling directory every 200 ms throughout each timed command.",
+  "samples": {
+    "quiet": [
+      {
+        "round": 1,
+        "arm": "previous",
+        "elapsedMs": 4635.632,
+        "userSeconds": 6.74,
+        "systemSeconds": 3.72,
+        "peakRssBytes": 288882688,
+        "regularFilesShared": 3318,
+        "privateWorkingBytes": 0,
+        "historyTimings": {
+          "cache_publish_seconds": 0.136246666,
+          "reachability_seconds": 0.591613958,
+          "total_seconds": 3.309676042,
+          "transfer_seconds": 1.713878,
+          "verify_seconds": 0.832559292
+        }
+      },
+      {
+        "round": 1,
+        "arm": "standard",
+        "elapsedMs": 4168.188,
+        "userSeconds": 7.89,
+        "systemSeconds": 3.99,
+        "peakRssBytes": 288817152,
+        "regularFilesShared": 3318,
+        "privateWorkingBytes": 0,
+        "historyTimings": {
+          "cache_publish_seconds": 0.230502167,
+          "early_graph_verified": true,
+          "reachability_seconds": 0.588536083,
+          "total_seconds": 2.807919375,
+          "transfer_seconds": 1.802267375,
+          "verify_seconds": 0.000424958
+        }
+      },
+      {
+        "round": 1,
+        "arm": "worktree",
+        "elapsedMs": 288.819,
+        "userSeconds": 0.05,
+        "systemSeconds": 0.22,
+        "peakRssBytes": 52051968
+      },
+      {
+        "round": 2,
+        "arm": "standard",
+        "elapsedMs": 4211.321,
+        "userSeconds": 7.79,
+        "systemSeconds": 4.15,
+        "peakRssBytes": 288800768,
+        "regularFilesShared": 3318,
+        "privateWorkingBytes": 0,
+        "historyTimings": {
+          "cache_publish_seconds": 0.211823833,
+          "early_graph_verified": true,
+          "reachability_seconds": 0.590061042,
+          "total_seconds": 2.740830833,
+          "transfer_seconds": 1.754075209,
+          "verify_seconds": 0.000425834
+        }
+      },
+      {
+        "round": 2,
+        "arm": "worktree",
+        "elapsedMs": 289.705,
+        "userSeconds": 0.05,
+        "systemSeconds": 0.23,
+        "peakRssBytes": 52215808
+      },
+      {
+        "round": 2,
+        "arm": "previous",
+        "elapsedMs": 4720.001,
+        "userSeconds": 6.82,
+        "systemSeconds": 3.75,
+        "peakRssBytes": 289882112,
+        "regularFilesShared": 3318,
+        "privateWorkingBytes": 0,
+        "historyTimings": {
+          "cache_publish_seconds": 0.141728333,
+          "reachability_seconds": 0.596576333,
+          "total_seconds": 3.385890625,
+          "transfer_seconds": 1.7857563330000001,
+          "verify_seconds": 0.828636542
+        }
+      },
+      {
+        "round": 3,
+        "arm": "worktree",
+        "elapsedMs": 286.733,
+        "userSeconds": 0.05,
+        "systemSeconds": 0.22,
+        "peakRssBytes": 52183040
+      },
+      {
+        "round": 3,
+        "arm": "previous",
+        "elapsedMs": 4596.529,
+        "userSeconds": 6.71,
+        "systemSeconds": 3.68,
+        "peakRssBytes": 288833536,
+        "regularFilesShared": 3318,
+        "privateWorkingBytes": 0,
+        "historyTimings": {
+          "cache_publish_seconds": 0.140766667,
+          "reachability_seconds": 0.590234209,
+          "total_seconds": 3.278847333,
+          "transfer_seconds": 1.7132402500000001,
+          "verify_seconds": 0.796357
+        }
+      },
+      {
+        "round": 3,
+        "arm": "standard",
+        "elapsedMs": 4037.902,
+        "userSeconds": 7.82,
+        "systemSeconds": 3.92,
+        "peakRssBytes": 288882688,
+        "regularFilesShared": 3318,
+        "privateWorkingBytes": 0,
+        "historyTimings": {
+          "cache_publish_seconds": 0.204117291,
+          "early_graph_verified": true,
+          "reachability_seconds": 0.596450584,
+          "total_seconds": 2.735845292,
+          "transfer_seconds": 1.7551963750000001,
+          "verify_seconds": 0.000428083
+        }
+      },
+      {
+        "round": 4,
+        "arm": "worktree",
+        "elapsedMs": 301.23,
+        "userSeconds": 0.05,
+        "systemSeconds": 0.22,
+        "peakRssBytes": 52199424
+      },
+      {
+        "round": 4,
+        "arm": "standard",
+        "elapsedMs": 4088.048,
+        "userSeconds": 7.87,
+        "systemSeconds": 3.89,
+        "peakRssBytes": 288882688,
+        "regularFilesShared": 3318,
+        "privateWorkingBytes": 0,
+        "historyTimings": {
+          "cache_publish_seconds": 0.2100835,
+          "early_graph_verified": true,
+          "reachability_seconds": 0.630284084,
+          "total_seconds": 2.77869125,
+          "transfer_seconds": 1.7547891249999998,
+          "verify_seconds": 0.000475375
+        }
+      },
+      {
+        "round": 4,
+        "arm": "previous",
+        "elapsedMs": 4698.194,
+        "userSeconds": 6.72,
+        "systemSeconds": 3.9,
+        "peakRssBytes": 288882688,
+        "regularFilesShared": 3318,
+        "privateWorkingBytes": 0,
+        "historyTimings": {
+          "cache_publish_seconds": 0.13815625,
+          "reachability_seconds": 0.591267917,
+          "total_seconds": 3.3022489999999998,
+          "transfer_seconds": 1.711506625,
+          "verify_seconds": 0.828062459
+        }
+      },
+      {
+        "round": 5,
+        "arm": "previous",
+        "elapsedMs": 4549.238,
+        "userSeconds": 6.7,
+        "systemSeconds": 3.7,
+        "peakRssBytes": 289128448,
+        "regularFilesShared": 3318,
+        "privateWorkingBytes": 0,
+        "historyTimings": {
+          "cache_publish_seconds": 0.137433083,
+          "reachability_seconds": 0.595258708,
+          "total_seconds": 3.268619083,
+          "transfer_seconds": 1.710042166,
+          "verify_seconds": 0.793799125
+        }
+      },
+      {
+        "round": 5,
+        "arm": "worktree",
+        "elapsedMs": 287.765,
+        "userSeconds": 0.05,
+        "systemSeconds": 0.22,
+        "peakRssBytes": 52150272
+      },
+      {
+        "round": 5,
+        "arm": "standard",
+        "elapsedMs": 4158.683,
+        "userSeconds": 7.87,
+        "systemSeconds": 3.9,
+        "peakRssBytes": 288882688,
+        "regularFilesShared": 3318,
+        "privateWorkingBytes": 0,
+        "historyTimings": {
+          "cache_publish_seconds": 0.209656375,
+          "early_graph_verified": true,
+          "reachability_seconds": 0.610135375,
+          "total_seconds": 2.77720475,
+          "transfer_seconds": 1.770797041,
+          "verify_seconds": 0.001727917
+        }
+      },
+      {
+        "round": 6,
+        "arm": "standard",
+        "elapsedMs": 4031.619,
+        "userSeconds": 7.78,
+        "systemSeconds": 3.86,
+        "peakRssBytes": 288931840,
+        "regularFilesShared": 3318,
+        "privateWorkingBytes": 0,
+        "historyTimings": {
+          "cache_publish_seconds": 0.203740875,
+          "early_graph_verified": true,
+          "reachability_seconds": 0.600043542,
+          "total_seconds": 2.745207417,
+          "transfer_seconds": 1.7607979999999999,
+          "verify_seconds": 0.000437875
+        }
+      },
+      {
+        "round": 6,
+        "arm": "previous",
+        "elapsedMs": 4549.131,
+        "userSeconds": 6.71,
+        "systemSeconds": 3.68,
+        "peakRssBytes": 288866304,
+        "regularFilesShared": 3318,
+        "privateWorkingBytes": 0,
+        "historyTimings": {
+          "cache_publish_seconds": 0.137418,
+          "reachability_seconds": 0.592003833,
+          "total_seconds": 3.2742135,
+          "transfer_seconds": 1.709601667,
+          "verify_seconds": 0.803114834
+        }
+      },
+      {
+        "round": 6,
+        "arm": "worktree",
+        "elapsedMs": 280.809,
+        "userSeconds": 0.05,
+        "systemSeconds": 0.22,
+        "peakRssBytes": 52215808
+      }
+    ],
+    "active": [
+      {
+        "round": 1,
+        "arm": "previous",
+        "elapsedMs": 4595.817,
+        "userSeconds": 6.76,
+        "systemSeconds": 3.7,
+        "peakRssBytes": 288915456,
+        "regularFilesShared": 3318,
+        "privateWorkingBytes": 0,
+        "historyTimings": {
+          "cache_publish_seconds": 0.132420875,
+          "reachability_seconds": 0.604071208,
+          "total_seconds": 3.307087417,
+          "transfer_seconds": 1.728195167,
+          "verify_seconds": 0.810042333
+        }
+      },
+      {
+        "round": 1,
+        "arm": "standard",
+        "elapsedMs": 4051.003,
+        "userSeconds": 7.88,
+        "systemSeconds": 3.89,
+        "peakRssBytes": 288899072,
+        "regularFilesShared": 3318,
+        "privateWorkingBytes": 0,
+        "historyTimings": {
+          "cache_publish_seconds": 0.213621,
+          "early_graph_verified": true,
+          "reachability_seconds": 0.601609083,
+          "total_seconds": 2.784658667,
+          "transfer_seconds": 1.785816875,
+          "verify_seconds": 0.000423833
+        }
+      },
+      {
+        "round": 1,
+        "arm": "worktree",
+        "elapsedMs": 288.612,
+        "userSeconds": 0.05,
+        "systemSeconds": 0.22,
+        "peakRssBytes": 52084736
+      },
+      {
+        "round": 2,
+        "arm": "standard",
+        "elapsedMs": 4149.955,
+        "userSeconds": 7.98,
+        "systemSeconds": 3.93,
+        "peakRssBytes": 288833536,
+        "regularFilesShared": 3318,
+        "privateWorkingBytes": 0,
+        "historyTimings": {
+          "cache_publish_seconds": 0.205601833,
+          "early_graph_verified": true,
+          "reachability_seconds": 0.594182041,
+          "total_seconds": 2.780463166,
+          "transfer_seconds": 1.7953367500000001,
+          "verify_seconds": 0.000465917
+        }
+      },
+      {
+        "round": 2,
+        "arm": "worktree",
+        "elapsedMs": 279.686,
+        "userSeconds": 0.05,
+        "systemSeconds": 0.22,
+        "peakRssBytes": 52150272
+      },
+      {
+        "round": 2,
+        "arm": "previous",
+        "elapsedMs": 4672.178,
+        "userSeconds": 6.77,
+        "systemSeconds": 3.73,
+        "peakRssBytes": 288882688,
+        "regularFilesShared": 3318,
+        "privateWorkingBytes": 0,
+        "historyTimings": {
+          "cache_publish_seconds": 0.144637583,
+          "reachability_seconds": 0.609115958,
+          "total_seconds": 3.341635,
+          "transfer_seconds": 1.719209041,
+          "verify_seconds": 0.829517667
+        }
+      },
+      {
+        "round": 3,
+        "arm": "worktree",
+        "elapsedMs": 287.975,
+        "userSeconds": 0.05,
+        "systemSeconds": 0.22,
+        "peakRssBytes": 52199424
+      },
+      {
+        "round": 3,
+        "arm": "previous",
+        "elapsedMs": 4672.573,
+        "userSeconds": 6.79,
+        "systemSeconds": 3.77,
+        "peakRssBytes": 288948224,
+        "regularFilesShared": 3318,
+        "privateWorkingBytes": 0,
+        "historyTimings": {
+          "cache_publish_seconds": 0.138307917,
+          "reachability_seconds": 0.590570042,
+          "total_seconds": 3.346313916,
+          "transfer_seconds": 1.750015541,
+          "verify_seconds": 0.834454875
+        }
+      },
+      {
+        "round": 3,
+        "arm": "standard",
+        "elapsedMs": 4034.654,
+        "userSeconds": 7.86,
+        "systemSeconds": 3.87,
+        "peakRssBytes": 288768000,
+        "regularFilesShared": 3318,
+        "privateWorkingBytes": 0,
+        "historyTimings": {
+          "cache_publish_seconds": 0.203007333,
+          "early_graph_verified": true,
+          "reachability_seconds": 0.587507375,
+          "total_seconds": 2.7339508329999997,
+          "transfer_seconds": 1.7558147910000002,
+          "verify_seconds": 0.000436666
+        }
+      },
+      {
+        "round": 4,
+        "arm": "worktree",
+        "elapsedMs": 294.988,
+        "userSeconds": 0.05,
+        "systemSeconds": 0.23,
+        "peakRssBytes": 52412416
+      },
+      {
+        "round": 4,
+        "arm": "standard",
+        "elapsedMs": 4298.69,
+        "userSeconds": 7.83,
+        "systemSeconds": 4.36,
+        "peakRssBytes": 288915456,
+        "regularFilesShared": 3318,
+        "privateWorkingBytes": 0,
+        "historyTimings": {
+          "cache_publish_seconds": 0.211921333,
+          "early_graph_verified": true,
+          "reachability_seconds": 0.616370292,
+          "total_seconds": 2.786713791,
+          "transfer_seconds": 1.752092583,
+          "verify_seconds": 0.000448625
+        }
+      },
+      {
+        "round": 4,
+        "arm": "previous",
+        "elapsedMs": 4641.658,
+        "userSeconds": 6.75,
+        "systemSeconds": 3.76,
+        "peakRssBytes": 289030144,
+        "regularFilesShared": 3318,
+        "privateWorkingBytes": 0,
+        "historyTimings": {
+          "cache_publish_seconds": 0.137071542,
+          "reachability_seconds": 0.600164542,
+          "total_seconds": 3.313298417,
+          "transfer_seconds": 1.7265891660000001,
+          "verify_seconds": 0.816223458
+        }
+      },
+      {
+        "round": 5,
+        "arm": "previous",
+        "elapsedMs": 4640.462,
+        "userSeconds": 6.74,
+        "systemSeconds": 3.73,
+        "peakRssBytes": 288849920,
+        "regularFilesShared": 3318,
+        "privateWorkingBytes": 0,
+        "historyTimings": {
+          "cache_publish_seconds": 0.135721333,
+          "reachability_seconds": 0.62223175,
+          "total_seconds": 3.305651292,
+          "transfer_seconds": 1.7106112919999998,
+          "verify_seconds": 0.801530959
+        }
+      },
+      {
+        "round": 5,
+        "arm": "worktree",
+        "elapsedMs": 287.344,
+        "userSeconds": 0.05,
+        "systemSeconds": 0.22,
+        "peakRssBytes": 52215808
+      },
+      {
+        "round": 5,
+        "arm": "standard",
+        "elapsedMs": 4085.326,
+        "userSeconds": 7.87,
+        "systemSeconds": 3.94,
+        "peakRssBytes": 288882688,
+        "regularFilesShared": 3318,
+        "privateWorkingBytes": 0,
+        "historyTimings": {
+          "cache_publish_seconds": 0.2118415,
+          "early_graph_verified": true,
+          "reachability_seconds": 0.59238,
+          "total_seconds": 2.76153625,
+          "transfer_seconds": 1.7749315829999999,
+          "verify_seconds": 0.000393792
+        }
+      },
+      {
+        "round": 6,
+        "arm": "standard",
+        "elapsedMs": 4047.103,
+        "userSeconds": 7.79,
+        "systemSeconds": 3.89,
+        "peakRssBytes": 288948224,
+        "regularFilesShared": 3318,
+        "privateWorkingBytes": 0,
+        "historyTimings": {
+          "cache_publish_seconds": 0.209514125,
+          "early_graph_verified": true,
+          "reachability_seconds": 0.598816541,
+          "total_seconds": 2.757712875,
+          "transfer_seconds": 1.76341,
+          "verify_seconds": 0.000411375
+        }
+      },
+      {
+        "round": 6,
+        "arm": "previous",
+        "elapsedMs": 4676.714,
+        "userSeconds": 6.86,
+        "systemSeconds": 3.73,
+        "peakRssBytes": 288931840,
+        "regularFilesShared": 3318,
+        "privateWorkingBytes": 0,
+        "historyTimings": {
+          "cache_publish_seconds": 0.13707975,
+          "reachability_seconds": 0.639131958,
+          "total_seconds": 3.383211625,
+          "transfer_seconds": 1.736905958,
+          "verify_seconds": 0.837986333
+        }
+      },
+      {
+        "round": 6,
+        "arm": "worktree",
+        "elapsedMs": 290.933,
+        "userSeconds": 0.05,
+        "systemSeconds": 0.23,
+        "peakRssBytes": 52412416
+      }
+    ],
+    "empty": [
+      {
+        "round": 1,
+        "arm": "previous",
+        "elapsedMs": 3499.901,
+        "userSeconds": 6.59,
+        "systemSeconds": 1.47,
+        "peakRssBytes": 289406976,
+        "regularFilesShared": 0,
+        "privateWorkingBytes": 0,
+        "historyTimings": {
+          "cache_publish_seconds": 0.141696875,
+          "reachability_seconds": 0.613664,
+          "total_seconds": 3.34654825,
+          "transfer_seconds": 1.7352434589999999,
+          "verify_seconds": 0.823804959
+        }
+      },
+      {
+        "round": 1,
+        "arm": "standard",
+        "elapsedMs": 2919.208,
+        "userSeconds": 7.66,
+        "systemSeconds": 1.65,
+        "peakRssBytes": 288817152,
+        "regularFilesShared": 0,
+        "privateWorkingBytes": 0,
+        "historyTimings": {
+          "cache_publish_seconds": 0.209054792,
+          "early_graph_verified": true,
+          "reachability_seconds": 0.608708333,
+          "total_seconds": 2.777870709,
+          "transfer_seconds": 1.7741397920000002,
+          "verify_seconds": 0.000420375
+        }
+      },
+      {
+        "round": 1,
+        "arm": "worktree",
+        "elapsedMs": 14.678,
+        "userSeconds": 0,
+        "systemSeconds": 0,
+        "peakRssBytes": 9371648
+      },
+      {
+        "round": 2,
+        "arm": "standard",
+        "elapsedMs": 2972.71,
+        "userSeconds": 7.77,
+        "systemSeconds": 1.64,
+        "peakRssBytes": 289079296,
+        "regularFilesShared": 0,
+        "privateWorkingBytes": 0,
+        "historyTimings": {
+          "cache_publish_seconds": 0.210260791,
+          "early_graph_verified": true,
+          "reachability_seconds": 0.599872625,
+          "total_seconds": 2.8162979999999997,
+          "transfer_seconds": 1.821669042,
+          "verify_seconds": 0.000450917
+        }
+      },
+      {
+        "round": 2,
+        "arm": "worktree",
+        "elapsedMs": 16.884,
+        "userSeconds": 0,
+        "systemSeconds": 0,
+        "peakRssBytes": 9420800
+      },
+      {
+        "round": 2,
+        "arm": "previous",
+        "elapsedMs": 3428.347,
+        "userSeconds": 6.53,
+        "systemSeconds": 1.46,
+        "peakRssBytes": 288915456,
+        "regularFilesShared": 0,
+        "privateWorkingBytes": 0,
+        "historyTimings": {
+          "cache_publish_seconds": 0.135034375,
+          "reachability_seconds": 0.602340791,
+          "total_seconds": 3.29121025,
+          "transfer_seconds": 1.7132122920000001,
+          "verify_seconds": 0.807372958
+        }
+      },
+      {
+        "round": 3,
+        "arm": "worktree",
+        "elapsedMs": 15.338,
+        "userSeconds": 0,
+        "systemSeconds": 0,
+        "peakRssBytes": 9420800
+      },
+      {
+        "round": 3,
+        "arm": "previous",
+        "elapsedMs": 3529.807,
+        "userSeconds": 6.6,
+        "systemSeconds": 1.49,
+        "peakRssBytes": 291422208,
+        "regularFilesShared": 0,
+        "privateWorkingBytes": 0,
+        "historyTimings": {
+          "cache_publish_seconds": 0.137555833,
+          "reachability_seconds": 0.660020459,
+          "total_seconds": 3.370877208,
+          "transfer_seconds": 1.730993875,
+          "verify_seconds": 0.810213458
+        }
+      },
+      {
+        "round": 3,
+        "arm": "standard",
+        "elapsedMs": 2894.637,
+        "userSeconds": 7.61,
+        "systemSeconds": 1.63,
+        "peakRssBytes": 288735232,
+        "regularFilesShared": 0,
+        "privateWorkingBytes": 0,
+        "historyTimings": {
+          "cache_publish_seconds": 0.215034583,
+          "early_graph_verified": true,
+          "reachability_seconds": 0.601797083,
+          "total_seconds": 2.749826583,
+          "transfer_seconds": 1.74902975,
+          "verify_seconds": 0.000408333
+        }
+      }
+    ]
+  },
+  "source": {
+    "head": "bc63375ac3a4d6debb1ceb441ae6e22854f0909a",
+    "tree": "ee570b9dbb122c6b6f0f609b83402c1f8eaca195",
+    "commits": 53716,
+    "objects": 371804
+  },
+  "allocation": {
+    "native": {
+      "firstAndRepeat": {
+        "bytesSincePopulatedCheckout": "59883520",
+        "firstCheckoutBytes": "29941760",
+        "additionalSecondCheckoutBytes": "29941760",
+        "observerSeconds": 0.868583625
+      },
+      "oneFileAdvance": {
+        "additionalCheckoutBytes": "29945856",
+        "observerSeconds": 0.8350279169999999
+      }
+    },
+    "graft": {
+      "firstAndRepeat": {
+        "bytesSincePopulatedCheckout": "15802368",
+        "firstCheckoutBytes": "15486976",
+        "additionalSecondCheckoutBytes": "315392",
+        "firstCheckoutFileDataByPurpose": {
+          "primaryChange": "0",
+          "historyPacks": "4321280",
+          "historyIndexes": "9338880",
+          "checkoutIndexes": "286720",
+          "sourceFiles": "0",
+          "records": "1540096"
+        },
+        "additionalSecondCheckoutFileDataByPurpose": {
+          "primaryChange": "0",
+          "historyPacks": "0",
+          "historyIndexes": "0",
+          "checkoutIndexes": "286720",
+          "sourceFiles": "0",
+          "records": "28672"
+        },
+        "fileDataByPurpose": {
+          "primaryChange": "0",
+          "historyPacks": "4321280",
+          "historyIndexes": "9338880",
+          "checkoutIndexes": "573440",
+          "sourceFiles": "0",
+          "records": "1568768"
+        },
+        "observerSeconds": 1.737304791999998
+      },
+      "oneFileAdvance": {
+        "additionalCheckoutBytes": "1818624",
+        "observerSeconds": 1.3517651260000003
+      }
+    }
+  },
+  "allocationScope": "Each round starts from a fresh populated clone. Spawn timings include the entire CLI process and cold object setup. The first git status is timed separately for each workspace. Clone preparation and advanced commit creation are outside both timers. Checks verify source contents, primary state and object visibility for the actual history mode. Signed statfs deltas cover the volume. Separately timed APFS scans can warm caches and exclude metadata, forks and xattrs.",
+  "validation": {
+    "rustTests": 153,
+    "nativeClippy": "passed with warnings denied",
+    "crossLint": [
+      "x86_64-pc-windows-gnu",
+      "x86_64-unknown-linux-gnu"
+    ],
+    "minimumRust": "1.89 check --all-targets",
+    "suites": {
+      "git version 2.46.0": {
+        "counts": {
+          "passed": 148,
+          "failed": 0,
+          "unavailable": 0,
+          "total": 148
+        },
+        "cli": 23,
+        "mcp": 22
+      },
+      "git version 2.56.0": {
+        "counts": {
+          "passed": 148,
+          "failed": 0,
+          "unavailable": 0,
+          "total": 148
+        },
+        "cli": 23,
+        "mcp": 22
+      }
+    },
+    "objectFormatColumns": [
+      "format",
+      "expectedAndActualVisibleObjects",
+      "fixturePackBytes",
+      "filteredPacks"
+    ],
+    "objectFormats": [
+      [
+        "sha1",
+        100012,
+        8347939,
+        1
+      ],
+      [
+        "sha256",
+        100012,
+        9568167,
+        1
+      ]
+    ],
+    "recoveryColumns": [
+      "git",
+      "condition",
+      "verifiedReachableObjects"
+    ],
+    "recovery": [
+      [
+        "git version 2.56.0",
+        "read_failure",
+        371804
+      ],
+      [
+        "git version 2.56.0",
+        "namespace_changed",
+        371804
+      ],
+      [
+        "git version 2.56.0",
+        "persistent_read_failure",
+        371804
+      ],
+      [
+        "git version 2.56.0",
+        "interrupted",
+        371804
+      ],
+      [
+        "git version 2.46.0",
+        "read_failure",
+        371804
+      ],
+      [
+        "git version 2.46.0",
+        "namespace_changed",
+        371804
+      ],
+      [
+        "git version 2.46.0",
+        "persistent_read_failure",
+        371804
+      ],
+      [
+        "git version 2.46.0",
+        "interrupted",
+        371804
+      ]
+    ],
+    "interruption": "A killed process left an owned pending record. Its scratch had no standalone object store. After discard and restore, the user's file survived. A fresh workspace had the exact requested history and no leftover preview directories.",
+    "retry": "Transient read failure or a changed verification view retried the graph walk once with fresh scratch and a single native mixed-index verification. Repeated read failure used ordinary serial verification."
+  }
+}

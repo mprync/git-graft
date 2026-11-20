@@ -79,6 +79,51 @@ impl Drop for Batch {
     }
 }
 
+pub(super) struct RawBatch {
+    batch: Batch,
+    expected: Vec<u8>,
+    actual: Vec<u8>,
+}
+
+impl RawBatch {
+    pub(super) fn start(checkout: &Checkout<'_>, files: &[&Entry]) -> Result<Self> {
+        Ok(Self {
+            batch: Batch::start(checkout, files, false)?,
+            expected: vec![0; 64 * 1024],
+            actual: vec![0; 64 * 1024],
+        })
+    }
+
+    pub(super) fn matches(
+        &mut self,
+        entry: &Entry,
+        file: Option<(&mut File, u64)>,
+    ) -> Result<bool> {
+        let size = self.batch.header(entry)?;
+        let mut input = file
+            .filter(|(_, bytes)| *bytes == size)
+            .map(|(file, _)| file);
+        let mut remaining = size;
+        while remaining != 0 {
+            let length = remaining.min(self.expected.len() as u64) as usize;
+            self.batch.out.read_exact(&mut self.expected[..length])?;
+            if let Some(file) = &mut input {
+                file.read_exact(&mut self.actual[..length])?;
+                if self.actual[..length] != self.expected[..length] {
+                    input = None;
+                }
+            }
+            remaining -= length as u64;
+        }
+        self.batch.end_blob()?;
+        Ok(input.is_some())
+    }
+
+    pub(super) fn finish(self) -> Result<()> {
+        self.batch.finish()
+    }
+}
+
 // Git reports the original blob length in --batch --filters even after
 // conversion. A NUL could be file data. Frame the filtered stream with the raw
 // stream, permitting only the CRLF insertion established by the attr check.

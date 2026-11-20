@@ -45,6 +45,7 @@ export const cases: Scenario[] = [
   {
     name: 'many small source files share verified data and stay isolated',
     run(ctx) {
+      ctx.git(['config', '--local', 'graft.history', 'isolated']);
       ctx.git(['config', 'core.symlinks', 'true']);
       const count = 320;
       mkdirSync(join(ctx.repo, 'small'));
@@ -88,6 +89,7 @@ export const cases: Scenario[] = [
   {
     name: 'source clone checkout isolation and parent reuse',
     run(ctx) {
+      ctx.git(['config', '--local', 'graft.history', 'isolated']);
       const large = Buffer.alloc(3 * 1024 * 1024, 97);
       mkdirSync(join(ctx.repo, 'nested'), { recursive: true });
       writeFileSync(join(ctx.repo, 'large.bin'), large);
@@ -242,6 +244,7 @@ export const cases: Scenario[] = [
   {
     name: 'cold source reuse excludes tracked donor substitutions and private metadata',
     run(ctx) {
+      ctx.git(['config', '--local', 'graft.history', 'isolated']);
       ctx.git(['config', 'core.symlinks', 'true']);
       const original = 'same bytes\n';
       const tests = ['assumed.txt', 'staged.txt', 'missing.txt', 'hardlinked.txt', 'route/tracked.txt'];
@@ -307,6 +310,7 @@ export const cases: Scenario[] = [
   {
     name: 'polluted and foreign base generations are preserved without being reused',
     run(ctx) {
+      ctx.git(['config', '--local', 'graft.history', 'isolated']);
       const oid = ctx.git(['rev-parse', 'HEAD']);
       const first = ctx.spawn('cache-prime');
       const bases = join(ctx.repo, '.git', 'graft', 'bases');
@@ -401,6 +405,7 @@ export const cases: Scenario[] = [
   {
     name: 'conversion filters and gitlinks use native Git',
     run(ctx) {
+      ctx.git(['config', '--local', 'graft.history', 'isolated']);
       // Exercise the conversion decision even on Git installations that
       // default to symlink emulation. This fixture contains no symlinks.
       ctx.git(['config', 'core.symlinks', 'true']);
@@ -438,6 +443,7 @@ export const cases: Scenario[] = [
   {
     name: 'Git symlink emulation checks out link contents as independent ordinary files',
     run(ctx) {
+      ctx.git(['config', '--local', 'graft.history', 'isolated']);
       ctx.git(['config', 'core.symlinks', 'false']);
       const link = join(ctx.repo, 'tracked-link');
       writeFileSync(link, 'tracked.txt');

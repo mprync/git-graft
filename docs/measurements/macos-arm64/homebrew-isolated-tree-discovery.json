@@ -1,0 +1,478 @@
+{
+  "platform": "darwin",
+  "architecture": "arm64",
+  "operatingSystem": {
+    "type": "Darwin",
+    "release": "25.5.0",
+    "version": "Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:15 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T6041"
+  },
+  "git": "git version 2.56.0",
+  "head": "bc63375ac3a4d6debb1ceb441ae6e22854f0909a",
+  "tree": "ee570b9dbb122c6b6f0f609b83402c1f8eaca195",
+  "commits": 53716,
+  "objects": 371804,
+  "previous": {
+    "bytes": 4401328,
+    "sha256": "746cf460ecfb7ac6503a0b55715dc2b8fefc915cbce2d432709dd1daa88fa1fb"
+  },
+  "current": {
+    "bytes": 4417904,
+    "sha256": "d922ddfefe9b707bdd63d666b67f3dbfbb5e3a42eeac6d0bfb2d0f4975276f16"
+  },
+  "method": "Fresh populated Homebrew clone per command, rotating order. Timing encloses public spawn or git worktree add. All grafts had the selected object set, no alternates, 3318 shared regular files and clean status. The first candidate also passed git fsck --strict. CPU and peak RSS from /usr/bin/time -l. Separate APFS allocation run counts unique regular-file blocks.",
+  "checkoutColumns": ["round", "arm", "elapsedMs", "userCpuSeconds", "systemCpuSeconds", "peakRssBytes", "sourceDiscoverySeconds", "privateHistorySeconds"],
+  "standardRelease": [
+    [1, "release", 4002.339, 7.8, 3.96, 288784384, 0.590971709, 2.749245916],
+    [1, "candidate", 3660.516, 7.88, 3.96, 288800768, 0.277965292, 2.428509875],
+    [1, "worktree", 300.381, 0.05, 0.23, 52232192, null, null],
+    [2, "candidate", 3701.221, 7.99, 3.87, 289030144, 0.272107, 2.487346084],
+    [2, "worktree", 286.994, 0.05, 0.22, 52035584, null, null],
+    [2, "release", 3978.095, 7.81, 3.89, 288915456, 0.604608916, 2.773794417],
+    [3, "worktree", 291.047, 0.05, 0.22, 52150272, null, null],
+    [3, "release", 3942.137, 7.79, 3.86, 288899072, 0.59116725, 2.735903125],
+    [3, "candidate", 3632.828, 7.88, 3.88, 288948224, 0.269454166, 2.420875667],
+    [4, "worktree", 287.142, 0.05, 0.22, 52346880, null, null],
+    [4, "candidate", 3618.996, 7.87, 3.92, 288800768, 0.267709291, 2.405207583],
+    [4, "release", 3986.848, 7.79, 3.9, 288882688, 0.595206916, 2.743303917],
+    [5, "release", 3959.486, 7.81, 3.88, 288751616, 0.59103575, 2.739605],
+    [5, "worktree", 294.557, 0.05, 0.22, 52215808, null, null],
+    [5, "candidate", 3688.307, 7.91, 3.92, 288882688, 0.275422584, 2.436292875],
+    [6, "candidate", 3737.125, 7.93, 4.01, 288784384, 0.278579167, 2.451152708],
+    [6, "release", 3966.73, 7.79, 3.88, 288866304, 0.59181825, 2.751789291],
+    [6, "worktree", 308.106, 0.05, 0.23, 52346880, null, null],
+    [7, "release", 3957.534, 7.8, 3.87, 288899072, 0.599624208, 2.747499958],
+    [7, "candidate", 3749.379, 8.07, 3.87, 288882688, 0.315873458, 2.526238208],
+    [7, "worktree", 297.902, 0.05, 0.23, 52150272, null, null],
+    [8, "candidate", 3658.818, 7.86, 3.87, 288882688, 0.275417459, 2.435227834],
+    [8, "worktree", 293.788, 0.05, 0.23, 52051968, null, null],
+    [8, "release", 4048.624, 7.86, 3.88, 288899072, 0.652271834, 2.825904542],
+    [9, "worktree", 293.561, 0.05, 0.22, 52232192, null, null],
+    [9, "release", 3982.6, 7.81, 3.85, 288882688, 0.593419125, 2.766344541],
+    [9, "candidate", 3611.02, 7.89, 3.75, 288899072, 0.273776333, 2.427557583]
+  ],
+  "diagnosticRelease": [
+    [1, "release", 3965.401, 7.89, 3.93, 288882688, 0.574929708, 2.7587919579999998],
+    [1, "candidate", 3627.023, 7.88, 3.92, 288849920, 0.263675917, 2.411605667],
+    [1, "worktree", 285.957, 0.04, 0.22, 52150272, null, null],
+    [2, "candidate", 3638.403, 7.88, 3.99, 288866304, 0.271658375, 2.420273708],
+    [2, "worktree", 283.273, 0.05, 0.22, 52232192, null, null],
+    [2, "release", 3935.189, 7.77, 3.94, 288948224, 0.57711225, 2.7238005],
+    [3, "worktree", 293.619, 0.05, 0.22, 52461568, null, null],
+    [3, "release", 3950.122, 7.8, 3.88, 288833536, 0.587971042, 2.744884083],
+    [3, "candidate", 3601.832, 7.87, 3.79, 288849920, 0.268006042, 2.424991208],
+    [4, "worktree", 291.06, 0.05, 0.23, 52035584, null, null],
+    [4, "candidate", 3659.858, 7.89, 3.92, 288849920, 0.2704615, 2.439797583],
+    [4, "release", 3948.798, 7.82, 3.9, 288866304, 0.58474, 2.731743416],
+    [5, "release", 3958.681, 7.81, 3.9, 288866304, 0.594126375, 2.747939542],
+    [5, "worktree", 294.421, 0.05, 0.22, 52051968, null, null],
+    [5, "candidate", 3657.883, 7.89, 3.96, 288817152, 0.272740417, 2.431621917],
+    [6, "candidate", 3650.164, 7.91, 3.96, 288882688, 0.27394075, 2.441277666],
+    [6, "release", 4019.684, 7.82, 3.93, 288833536, 0.596391792, 2.756123583],
+    [6, "worktree", 302.332, 0.05, 0.23, 52051968, null, null]
+  ],
+  "sourceDiscoveryProbe": {
+    "uniqueRootTrees": 47717,
+    "columns": ["round", "treeWorkers", "elapsedMs", "commitsAndRootsMs", "outputRows"],
+    "samples": [
+      [1, 0, 574.566, null, 371804],
+      [1, 1, 639.89, 81.804, 371804],
+      [1, 2, 439.833, 90.45, 374603],
+      [1, 4, 321.827, 91.529, 379575],
+      [2, 1, 687.217, 86.553, 371804],
+      [2, 2, 441.705, 87.518, 374603],
+      [2, 4, 327.017, 101.068, 379575],
+      [2, 0, 580.644, null, 371804],
+      [3, 2, 428.951, 87.707, 374603],
+      [3, 4, 311.51, 91.761, 379575],
+      [3, 0, 592.046, null, 371804],
+      [3, 1, 636.98, 78.388, 371804],
+      [4, 4, 312.008, 81.601, 379575],
+      [4, 0, 572.935, null, 371804],
+      [4, 1, 651.159, 86.465, 371804],
+      [4, 2, 435.825, 89.959, 374603],
+      [5, 4, 301.636, 77.832, 379575],
+      [5, 2, 422.843, 76.16, 374603],
+      [5, 1, 651.08, 84.523, 371804],
+      [5, 0, 594.446, null, 371804],
+      [6, 0, 619.855, null, 371804],
+      [6, 4, 302.157, 77.177, 379575],
+      [6, 2, 430.485, 84.953, 374603],
+      [6, 1, 654.784, 86.148, 371804],
+      [7, 1, 639.126, 80.443, 371804],
+      [7, 0, 608.826, null, 371804],
+      [7, 4, 327.924, 104.537, 379575],
+      [7, 2, 423.368, 74.507, 374603],
+      [8, 2, 420.816, 78.557, 374603],
+      [8, 1, 650.474, 83.101, 371804],
+      [8, 0, 564.524, null, 371804],
+      [8, 4, 315.994, 91.857, 379575]
+    ]
+  },
+  "originalPackTrace": [
+    {
+      "round": 1,
+      "phasesMs": {
+        "git_discovery": [578.353],
+        "decode_discovery": [41.502]
+      },
+      "indexTrace": [
+        {
+          "event": "data",
+          "category": "progress",
+          "key": "total_objects",
+          "value": "329692",
+          "t_rel": 0.939647,
+          "t_abs": 0.941228
+        },
+        {
+          "event": "region_leave",
+          "category": "progress",
+          "label": "Indexing objects",
+          "t_rel": 0.939685
+        },
+        {
+          "event": "data",
+          "category": "progress",
+          "key": "total_objects",
+          "value": "236258",
+          "t_rel": 0.589907,
+          "t_abs": 1.538414
+        },
+        {
+          "event": "region_leave",
+          "category": "progress",
+          "label": "Resolving deltas",
+          "t_rel": 0.589955
+        },
+        {
+          "event": "exit",
+          "t_abs": 1.589771
+        }
+      ]
+    },
+    {
+      "round": 2,
+      "phasesMs": {
+        "git_discovery": [760.907],
+        "decode_discovery": [43.297]
+      },
+      "indexTrace": [
+        {
+          "event": "data",
+          "category": "progress",
+          "key": "total_objects",
+          "value": "329692",
+          "t_rel": 1.006385,
+          "t_abs": 1.015128
+        },
+        {
+          "event": "region_leave",
+          "category": "progress",
+          "label": "Indexing objects",
+          "t_rel": 1.006425
+        },
+        {
+          "event": "data",
+          "category": "progress",
+          "key": "total_objects",
+          "value": "236258",
+          "t_rel": 0.755495,
+          "t_abs": 1.778493
+        },
+        {
+          "event": "region_leave",
+          "category": "progress",
+          "label": "Resolving deltas",
+          "t_rel": 0.755519
+        },
+        {
+          "event": "exit",
+          "t_abs": 1.839214
+        }
+      ]
+    },
+    {
+      "round": 3,
+      "phasesMs": {
+        "git_discovery": [585.401],
+        "decode_discovery": [41.525]
+      },
+      "indexTrace": [
+        {
+          "event": "data",
+          "category": "progress",
+          "key": "total_objects",
+          "value": "329692",
+          "t_rel": 0.949246,
+          "t_abs": 0.950852
+        },
+        {
+          "event": "region_leave",
+          "category": "progress",
+          "label": "Indexing objects",
+          "t_rel": 0.949285
+        },
+        {
+          "event": "data",
+          "category": "progress",
+          "key": "total_objects",
+          "value": "236258",
+          "t_rel": 0.594044,
+          "t_abs": 1.552212
+        },
+        {
+          "event": "region_leave",
+          "category": "progress",
+          "label": "Resolving deltas",
+          "t_rel": 0.594085
+        },
+        {
+          "event": "exit",
+          "t_abs": 1.608126
+        }
+      ]
+    }
+  ],
+  "partitionExperiment": {
+    "method": "Native verification of each independently repacked delta-family group inside the timer. Native verification of the installed original pack followed the timer for the experimental checkout arm.",
+    "layout": {
+      "head": "bc63375ac3a4d6debb1ceb441ae6e22854f0909a",
+      "release": "746cf460ecfb7ac6503a0b55715dc2b8fefc915cbce2d432709dd1daa88fa1fb",
+      "pack": "pack-8f45472cc17a6b9d311b31bc96704cf8d3be254c.pack",
+      "packBytes": 111582478,
+      "records": 329692,
+      "deltas": 236258,
+      "families": 93434,
+      "largestFamily": 2861,
+      "legalBoundaries": 23,
+      "largestIndivisible": {
+        "first": 25,
+        "end": 329692,
+        "bytes": 111566461
+      },
+      "nearestCuts": [
+        [0.25, 25, 15997],
+        [0.5, 25, 15997],
+        [0.75, 329692, 111582458]
+      ],
+      "crossingLinks": [
+        [0.25, 10493],
+        [0.5, 24819],
+        [0.75, 16672]
+      ]
+    },
+    "probeColumns": ["round", "partitions", "totalMs", "prepareMs", "walkMs", "temporaryFileBytes"],
+    "probe": [
+      [1, 1, 1544.406, 0, 683.02, 0],
+      [1, 2, 1154.624, 125.079, 763.519, 120815625],
+      [1, 4, 865.397, 106.138, 732.85, 120817474],
+      [1, 8, 757.408, 97.859, 743.01, 120821041],
+      [2, 2, 1174.512, 154.508, 730.569, 120815625],
+      [2, 4, 922.915, 160.366, 727.649, 120817474],
+      [2, 8, 828.883, 171.426, 733.682, 120821041],
+      [2, 1, 1561.701, 0, 696.084, 0],
+      [3, 4, 871.924, 108.606, 733.175, 120817474],
+      [3, 8, 756.866, 97.759, 741.606, 120821041],
+      [3, 1, 1564.469, 0, 704.622, 0],
+      [3, 2, 1216.889, 134.114, 795.544, 120815625],
+      [4, 8, 766.705, 108.291, 754.777, 120821041],
+      [4, 1, 1565.455, 0, 704.824, 0],
+      [4, 2, 1148.368, 132.625, 718.667, 120815625],
+      [4, 4, 876.642, 111.896, 734.888, 120817474],
+      [5, 8, 762.22, 103.898, 741.741, 120821041],
+      [5, 4, 872.523, 107.919, 739.813, 120817474],
+      [5, 2, 1142.174, 126.82, 721.88, 120815625],
+      [5, 1, 1569.366, 0, 703.458, 0],
+      [6, 1, 1602.756, 0, 738.459, 0],
+      [6, 8, 758.57, 98.412, 744.48, 120821041],
+      [6, 4, 875.397, 108.036, 737.276, 120817474],
+      [6, 2, 1145.871, 128.394, 720.628, 120815625],
+      [7, 2, 1154.293, 134.324, 729.938, 120815625],
+      [7, 1, 1574.205, 0, 728.859, 0],
+      [7, 8, 759.537, 99.138, 748.785, 120821041],
+      [7, 4, 876.562, 109.708, 738.863, 120817474],
+      [8, 4, 870.998, 107.287, 729.632, 120817474],
+      [8, 2, 1140.662, 126.316, 724.826, 120815625],
+      [8, 1, 1567.348, 0, 717.625, 0],
+      [8, 8, 760.376, 99.336, 750.212, 120821041]
+    ],
+    "checkout": [
+      [1, "release", 3938.088, 7.77, 3.89, 288833536, 0.587081667, 2.735569292],
+      [1, "candidate", 3652.355, 7.89, 3.45, 383942656, 0.593465208, 2.395999917],
+      [1, "worktree", 285.238, 0.05, 0.22, 52215808, null, null],
+      [2, "candidate", 3745.582, 7.95, 3.4, 381304832, 0.662319042, 2.479317041],
+      [2, "worktree", 287.955, 0.05, 0.22, 52363264, null, null],
+      [2, "release", 3957.52, 7.85, 3.87, 288899072, 0.601769667, 2.751344833],
+      [3, "worktree", 289.195, 0.05, 0.22, 52232192, null, null],
+      [3, "release", 7881.151, 8.45, 4.29, 288931840, 0.590524542, 4.151185],
+      [3, "candidate", 3682.283, 7.94, 3.4, 382353408, 0.618216958, 2.3937692090000002],
+      [4, "worktree", 304.105, 0.05, 0.23, 52281344, null, null],
+      [4, "candidate", 3805.178, 7.94, 3.53, 381632512, 0.606961583, 2.4389964170000002],
+      [4, "release", 4067.175, 8, 3.89, 288948224, 0.603128, 2.864060542],
+      [5, "release", 3944.745, 7.79, 3.88, 288899072, 0.586005167, 2.742524583],
+      [5, "worktree", 299.254, 0.05, 0.23, 52281344, null, null],
+      [5, "candidate", 3739.894, 7.92, 3.45, 382713856, 0.601484542, 2.4339494999999998],
+      [6, "candidate", 3694.624, 7.9, 3.42, 381566976, 0.592668708, 2.422382583],
+      [6, "release", 3953.878, 7.82, 3.72, 288931840, 0.603575958, 2.7593187500000003],
+      [6, "worktree", 307.805, 0.05, 0.22, 52215808, null, null]
+    ],
+    "temporaryFiles": {
+      "original": "pack-8f45472cc17a6b9d311b31bc96704cf8d3be254c.pack",
+      "parts": 8,
+      "temporaryFileBytes": 120821041,
+      "temporaryAllocatedBytes": 120856576
+    }
+  },
+  "allocation": {
+    "native": {
+      "first": "29941760",
+      "repeat": "29941760",
+      "advanced": "29945856"
+    },
+    "graft": {
+      "first": "15486976",
+      "repeat": "315392",
+      "advanced": "1814528",
+      "firstByPurpose": {
+        "primaryChange": "0",
+        "historyPacks": "4321280",
+        "historyIndexes": "9338880",
+        "checkoutIndexes": "286720",
+        "sourceFiles": "0",
+        "records": "1540096"
+      }
+    }
+  },
+  "validation": {
+    "rustTestsPassed": 154,
+    "crossChecks": ["Windows GNU", "Linux GNU", "Rust 1.89"],
+    "formatAndRecovery": [
+      {
+        "format": "sha1",
+        "git": "git version 2.56.0",
+        "mode": "normal",
+        "objects": 114004,
+        "parallel": true,
+        "rawRetry": false
+      },
+      {
+        "format": "sha1",
+        "git": "git version 2.46.0",
+        "mode": "normal",
+        "objects": 114004,
+        "parallel": true,
+        "rawRetry": false
+      },
+      {
+        "format": "sha1",
+        "git": "git version 2.56.0",
+        "mode": "exit",
+        "objects": 114004,
+        "parallel": false,
+        "rawRetry": false
+      },
+      {
+        "format": "sha1",
+        "git": "git version 2.46.0",
+        "mode": "malformed",
+        "objects": 114004,
+        "parallel": false,
+        "rawRetry": false
+      },
+      {
+        "format": "sha1",
+        "git": "git version 2.56.0",
+        "mode": "omitted",
+        "objects": 114004,
+        "parallel": false,
+        "rawRetry": true
+      },
+      {
+        "format": "sha1",
+        "git": "git version 2.46.0",
+        "mode": "limit",
+        "objects": 114004,
+        "parallel": false,
+        "rawRetry": false
+      },
+      {
+        "format": "sha1",
+        "git": "git version 2.56.0",
+        "mode": "bitmap",
+        "objects": 114004,
+        "parallel": false,
+        "rawRetry": false
+      },
+      {
+        "format": "sha256",
+        "git": "git version 2.56.0",
+        "mode": "normal",
+        "objects": 114004,
+        "parallel": true,
+        "rawRetry": false
+      },
+      {
+        "format": "sha256",
+        "git": "git version 2.46.0",
+        "mode": "normal",
+        "objects": 114004,
+        "parallel": true,
+        "rawRetry": false
+      },
+      {
+        "format": "sha256",
+        "git": "git version 2.56.0",
+        "mode": "exit",
+        "objects": 114004,
+        "parallel": false,
+        "rawRetry": false
+      },
+      {
+        "format": "sha256",
+        "git": "git version 2.46.0",
+        "mode": "malformed",
+        "objects": 114004,
+        "parallel": false,
+        "rawRetry": false
+      },
+      {
+        "format": "sha256",
+        "git": "git version 2.56.0",
+        "mode": "omitted",
+        "objects": 114004,
+        "parallel": false,
+        "rawRetry": true
+      },
+      {
+        "format": "sha256",
+        "git": "git version 2.46.0",
+        "mode": "limit",
+        "objects": 114004,
+        "parallel": false,
+        "rawRetry": false
+      },
+      {
+        "format": "sha256",
+        "git": "git version 2.56.0",
+        "mode": "bitmap",
+        "objects": 114004,
+        "parallel": false,
+        "rawRetry": false
+      }
+    ],
+    "suites": {
+      "246": {
+        "passed": 148,
+        "failed": 0,
+        "unavailable": 0,
+        "total": 148
+      },
+      "256": {
+        "passed": 148,
+        "failed": 0,
+        "unavailable": 0,
+        "total": 148
+      }
+    }
+  }
+}

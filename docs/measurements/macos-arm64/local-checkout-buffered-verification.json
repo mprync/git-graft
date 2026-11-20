@@ -1,0 +1,892 @@
+{
+  "fixture": {
+    "head": "bc63375ac3a4d6debb1ceb441ae6e22854f0909a",
+    "tree": "ee570b9dbb122c6b6f0f609b83402c1f8eaca195",
+    "packCount": 4,
+    "packBytes": 130939998,
+    "commits": 53716,
+    "hasUnrelatedSourceCommit": true
+  },
+  "platform": "macOS arm64, APFS, Git 2.56.0",
+  "release": {
+    "bytes": 4434464,
+    "sha256": "91b4b7b3e5e9959fcfac995bf915ea00ada1bc7fb7ff5ef18ed18b6d54a4834e"
+  },
+  "method": "Each command uses a fresh populated clone and an unconfigured history policy. Six rotating release triples and six reversed triples test the prototype. Nine rotating triples and nine reversed triples compare the two standard release executables and git worktree add. Each graft must share 3318 working files, keep an independent Git object store and match Git's index and tree. Each series checks candidate fsck. Host load and OS caches are uncontrolled.",
+  "change": "Buffer object IDs written to the input file and request buffered Git cat-file output. Query every selected blob, bound the response, verify exactly one blob type per expected row, and authenticate the commit and committed attributes.",
+  "columns": [
+    "round",
+    "arm",
+    "spawnMs",
+    "firstStatusMs",
+    "userSeconds",
+    "systemSeconds",
+    "peakRssBytes"
+  ],
+  "series": {
+    "buffered": {
+      "controlSha256": "f3cfb1bd1206368e0bbe0fba712a61fc2e3dde9bbb9573c77ed8785b59183fe8",
+      "candidateSha256": "420298e73a6c5a1d64d9cacc8d994f11a01d65c08b250d1dc1064a65f44c26ca",
+      "candidateWins": 4,
+      "medianPairedSavingMs": 7.229,
+      "samples": [
+        [1, "release", 487.503, 599.978, 0.13, 1.03, 28819456],
+        [1, "candidate", 535.568, 446.172, 0.13, 1.06, 28835840],
+        [1, "worktree", 438.07, 95.63, 0.05, 0.29, 52674560],
+        [2, "candidate", 471.723, 492.926, 0.13, 0.93, 28835840],
+        [2, "worktree", 339.439, 117.094, 0.05, 0.25, 52396032],
+        [2, "release", 409.908, 451.612, 0.13, 0.84, 28819456],
+        [3, "worktree", 335.107, 116.083, 0.05, 0.25, 52215808],
+        [3, "release", 399.293, 422.222, 0.12, 0.84, 28835840],
+        [3, "candidate", 387.652, 426.321, 0.12, 0.81, 28852224],
+        [4, "worktree", 345.958, 116.452, 0.05, 0.27, 52232192],
+        [4, "candidate", 420.792, 494.581, 0.13, 0.9, 28819456],
+        [4, "release", 439.218, 462.371, 0.13, 0.88, 28786688],
+        [5, "release", 458.826, 448.723, 0.13, 0.99, 28803072],
+        [5, "worktree", 353.951, 117.798, 0.05, 0.26, 52477952],
+        [5, "candidate", 456.009, 454.943, 0.13, 0.89, 28835840],
+        [6, "candidate", 390.538, 455.049, 0.12, 0.89, 28884992],
+        [6, "release", 430.68, 452.377, 0.13, 0.88, 28786688],
+        [6, "worktree", 365.694, 115.635, 0.05, 0.28, 52330496]
+      ]
+    },
+    "buffered-reverse": {
+      "controlSha256": "f3cfb1bd1206368e0bbe0fba712a61fc2e3dde9bbb9573c77ed8785b59183fe8",
+      "candidateSha256": "420298e73a6c5a1d64d9cacc8d994f11a01d65c08b250d1dc1064a65f44c26ca",
+      "candidateWins": 4,
+      "medianPairedSavingMs": 7.377,
+      "samples": [
+        [1, "worktree", 357.432, 98.609, 0.05, 0.25, 52346880],
+        [1, "candidate", 402.443, 426.882, 0.12, 0.84, 28835840],
+        [1, "release", 441.896, 557.235, 0.13, 0.89, 28803072],
+        [2, "release", 396.971, 445.002, 0.12, 0.86, 28786688],
+        [2, "worktree", 328.683, 72.543, 0.05, 0.26, 52133888],
+        [2, "candidate", 396.598, 467.889, 0.12, 0.81, 28835840],
+        [3, "candidate", 426.368, 506.147, 0.12, 0.85, 28819456],
+        [3, "release", 440.749, 426.307, 0.13, 0.94, 28819456],
+        [3, "worktree", 326.549, 113.465, 0.05, 0.25, 52248576],
+        [4, "release", 405.083, 427.674, 0.12, 0.86, 28803072],
+        [4, "candidate", 440.549, 472.541, 0.13, 0.95, 28819456],
+        [4, "worktree", 341.917, 118.19, 0.05, 0.26, 52330496],
+        [5, "candidate", 454.081, 495.196, 0.13, 0.92, 28835840],
+        [5, "worktree", 387.961, 122.316, 0.05, 0.26, 52477952],
+        [5, "release", 618.399, 574.228, 0.12, 0.68, 19038208],
+        [6, "worktree", 413.877, 213.05, 0.05, 0.28, 52314112],
+        [6, "release", 426.206, 489.353, 0.13, 0.87, 28803072],
+        [6, "candidate", 439.666, 465.493, 0.13, 0.91, 28819456]
+      ]
+    },
+    "final": {
+      "controlSha256": "f3cfb1bd1206368e0bbe0fba712a61fc2e3dde9bbb9573c77ed8785b59183fe8",
+      "candidateSha256": "91b4b7b3e5e9959fcfac995bf915ea00ada1bc7fb7ff5ef18ed18b6d54a4834e",
+      "candidateWins": 4,
+      "medianPairedSavingMs": -10.42,
+      "samples": [
+        [1, "release", 511.432, 622.493, 0.13, 1.05, 28803072],
+        [1, "candidate", 521.852, 474.437, 0.14, 0.99, 28835840],
+        [1, "worktree", 373.629, 77.442, 0.05, 0.25, 52461568],
+        [2, "candidate", 644.398, 569.029, 0.15, 0.83, 28819456],
+        [2, "worktree", 346.479, 122.181, 0.05, 0.25, 52297728],
+        [2, "release", 752.114, 496.25, 0.16, 0.97, 28803072],
+        [3, "worktree", 355.655, 130.411, 0.06, 0.26, 52527104],
+        [3, "release", 710.484, 511.788, 0.16, 0.88, 28786688],
+        [3, "candidate", 580.686, 478.546, 0.15, 0.88, 28803072],
+        [4, "worktree", 480.317, 82.502, 0.06, 0.28, 52461568],
+        [4, "candidate", 517.379, 497.908, 0.13, 1.04, 28803072],
+        [4, "release", 394.755, 423.674, 0.12, 0.82, 28803072],
+        [5, "release", 400.01, 415.867, 0.12, 0.81, 28786688],
+        [5, "worktree", 377.763, 124.563, 0.05, 0.28, 52477952],
+        [5, "candidate", 435.836, 473.521, 0.12, 0.88, 28803072],
+        [6, "candidate", 460.246, 423.852, 0.13, 0.87, 28803072],
+        [6, "release", 586.812, 1229.938, 0.12, 0.84, 28852224],
+        [6, "worktree", 416.651, 115.567, 0.05, 0.24, 52215808],
+        [7, "release", 456.71, 367.019, 0.13, 0.87, 28835840],
+        [7, "candidate", 606.43, 436.502, 0.13, 0.89, 28803072],
+        [7, "worktree", 345.44, 115.899, 0.05, 0.26, 52363264],
+        [8, "candidate", 522.228, 430.259, 0.13, 1.07, 28803072],
+        [8, "worktree", 358.176, 171.899, 0.05, 0.26, 52510720],
+        [8, "release", 497.074, 409.971, 0.14, 0.98, 28803072],
+        [9, "worktree", 331.907, 85.549, 0.06, 0.24, 52527104],
+        [9, "release", 695.241, 410.27, 0.16, 0.89, 28786688],
+        [9, "candidate", 621.609, 406.531, 0.15, 0.91, 28852224]
+      ]
+    },
+    "final-reverse": {
+      "controlSha256": "f3cfb1bd1206368e0bbe0fba712a61fc2e3dde9bbb9573c77ed8785b59183fe8",
+      "candidateSha256": "91b4b7b3e5e9959fcfac995bf915ea00ada1bc7fb7ff5ef18ed18b6d54a4834e",
+      "candidateWins": 5,
+      "medianPairedSavingMs": 9.891,
+      "samples": [
+        [1, "worktree", 454.067, 33.971, 0.05, 0.29, 52281344],
+        [1, "candidate", 461.731, 393.952, 0.12, 0.99, 28803072],
+        [1, "release", 560.219, 401.416, 0.12, 0.88, 28803072],
+        [2, "release", 430.116, 417.758, 0.12, 0.83, 28786688],
+        [2, "worktree", 316.36, 115.841, 0.05, 0.24, 52396032],
+        [2, "candidate", 1043.381, 897.742, 0.14, 2.72, 28819456],
+        [3, "candidate", 451.921, 546.667, 0.12, 0.84, 28852224],
+        [3, "release", 477.941, 471.066, 0.13, 1.01, 28852224],
+        [3, "worktree", 338.908, 116.701, 0.05, 0.24, 52363264],
+        [4, "release", 409.956, 405.782, 0.12, 0.8, 28803072],
+        [4, "candidate", 427.871, 445.682, 0.12, 0.84, 28835840],
+        [4, "worktree", 314.559, 114.712, 0.05, 0.23, 52543488],
+        [5, "candidate", 407.244, 377.976, 0.12, 0.8, 28852224],
+        [5, "worktree", 309.459, 74.301, 0.05, 0.23, 52215808],
+        [5, "release", 479.551, 440.673, 0.12, 0.93, 28803072],
+        [6, "worktree", 364.35, 68.848, 0.05, 0.26, 52494336],
+        [6, "release", 441.223, 421.397, 0.12, 0.84, 28819456],
+        [6, "candidate", 455.296, 403.892, 0.12, 0.85, 28819456],
+        [7, "worktree", 302.83, 75.955, 0.05, 0.23, 52166656],
+        [7, "candidate", 414.467, 426.917, 0.12, 0.81, 28803072],
+        [7, "release", 396.61, 922.552, 0.12, 0.8, 28786688],
+        [8, "release", 635.048, 808.451, 0.12, 0.82, 28819456],
+        [8, "worktree", 357.58, 114.659, 0.05, 0.26, 52576256],
+        [8, "candidate", 387.147, 385.684, 0.12, 0.79, 28803072],
+        [9, "candidate", 399.006, 383.531, 0.12, 0.78, 28835840],
+        [9, "release", 408.897, 426.169, 0.11, 0.81, 28770304],
+        [9, "worktree", 305.56, 114.595, 0.05, 0.24, 52215808]
+      ]
+    }
+  },
+  "standardReleaseMedians": {
+    "release": {
+      "spawnMs": 478.746,
+      "spawnAndFirstStatusMs": 934.615
+    },
+    "candidate": {
+      "spawnMs": 460.988,
+      "spawnAndFirstStatusMs": 930.922
+    },
+    "worktree": {
+      "spawnMs": 351.067,
+      "spawnAndFirstStatusMs": 458.474
+    }
+  },
+  "gitOnly": {
+    "method": "Identical prebuilt batch input, stable pack, 3484 selected blob IDs. Alternate buffered and unbuffered stdout for 12 pairs per Git version. Each output was byte-identical to the expected 3484 blob rows.",
+    "samples": [
+      {
+        "git": "git version 2.56.0",
+        "round": 1,
+        "buffered": false,
+        "ms": 11.261
+      },
+      {
+        "git": "git version 2.56.0",
+        "round": 1,
+        "buffered": true,
+        "ms": 9.582
+      },
+      {
+        "git": "git version 2.56.0",
+        "round": 2,
+        "buffered": true,
+        "ms": 9.967
+      },
+      {
+        "git": "git version 2.56.0",
+        "round": 2,
+        "buffered": false,
+        "ms": 12.084
+      },
+      {
+        "git": "git version 2.56.0",
+        "round": 3,
+        "buffered": false,
+        "ms": 12.043
+      },
+      {
+        "git": "git version 2.56.0",
+        "round": 3,
+        "buffered": true,
+        "ms": 10.108
+      },
+      {
+        "git": "git version 2.56.0",
+        "round": 4,
+        "buffered": true,
+        "ms": 9.997
+      },
+      {
+        "git": "git version 2.56.0",
+        "round": 4,
+        "buffered": false,
+        "ms": 11.172
+      },
+      {
+        "git": "git version 2.56.0",
+        "round": 5,
+        "buffered": false,
+        "ms": 11.16
+      },
+      {
+        "git": "git version 2.56.0",
+        "round": 5,
+        "buffered": true,
+        "ms": 8.674
+      },
+      {
+        "git": "git version 2.56.0",
+        "round": 6,
+        "buffered": true,
+        "ms": 9.138
+      },
+      {
+        "git": "git version 2.56.0",
+        "round": 6,
+        "buffered": false,
+        "ms": 10.136
+      },
+      {
+        "git": "git version 2.56.0",
+        "round": 7,
+        "buffered": false,
+        "ms": 9.635
+      },
+      {
+        "git": "git version 2.56.0",
+        "round": 7,
+        "buffered": true,
+        "ms": 9
+      },
+      {
+        "git": "git version 2.56.0",
+        "round": 8,
+        "buffered": true,
+        "ms": 8.545
+      },
+      {
+        "git": "git version 2.56.0",
+        "round": 8,
+        "buffered": false,
+        "ms": 11.071
+      },
+      {
+        "git": "git version 2.56.0",
+        "round": 9,
+        "buffered": false,
+        "ms": 12.175
+      },
+      {
+        "git": "git version 2.56.0",
+        "round": 9,
+        "buffered": true,
+        "ms": 10.801
+      },
+      {
+        "git": "git version 2.56.0",
+        "round": 10,
+        "buffered": true,
+        "ms": 9.807
+      },
+      {
+        "git": "git version 2.56.0",
+        "round": 10,
+        "buffered": false,
+        "ms": 10.99
+      },
+      {
+        "git": "git version 2.56.0",
+        "round": 11,
+        "buffered": false,
+        "ms": 9.856
+      },
+      {
+        "git": "git version 2.56.0",
+        "round": 11,
+        "buffered": true,
+        "ms": 10.003
+      },
+      {
+        "git": "git version 2.56.0",
+        "round": 12,
+        "buffered": true,
+        "ms": 8.931
+      },
+      {
+        "git": "git version 2.56.0",
+        "round": 12,
+        "buffered": false,
+        "ms": 10.77
+      },
+      {
+        "git": "git version 2.46.0",
+        "round": 1,
+        "buffered": false,
+        "ms": 10.77
+      },
+      {
+        "git": "git version 2.46.0",
+        "round": 1,
+        "buffered": true,
+        "ms": 8.124
+      },
+      {
+        "git": "git version 2.46.0",
+        "round": 2,
+        "buffered": true,
+        "ms": 7.436
+      },
+      {
+        "git": "git version 2.46.0",
+        "round": 2,
+        "buffered": false,
+        "ms": 9.106
+      },
+      {
+        "git": "git version 2.46.0",
+        "round": 3,
+        "buffered": false,
+        "ms": 8.904
+      },
+      {
+        "git": "git version 2.46.0",
+        "round": 3,
+        "buffered": true,
+        "ms": 7.908
+      },
+      {
+        "git": "git version 2.46.0",
+        "round": 4,
+        "buffered": true,
+        "ms": 7.461
+      },
+      {
+        "git": "git version 2.46.0",
+        "round": 4,
+        "buffered": false,
+        "ms": 11.111
+      },
+      {
+        "git": "git version 2.46.0",
+        "round": 5,
+        "buffered": false,
+        "ms": 11.479
+      },
+      {
+        "git": "git version 2.46.0",
+        "round": 5,
+        "buffered": true,
+        "ms": 9.44
+      },
+      {
+        "git": "git version 2.46.0",
+        "round": 6,
+        "buffered": true,
+        "ms": 9.487
+      },
+      {
+        "git": "git version 2.46.0",
+        "round": 6,
+        "buffered": false,
+        "ms": 9.548
+      },
+      {
+        "git": "git version 2.46.0",
+        "round": 7,
+        "buffered": false,
+        "ms": 9.827
+      },
+      {
+        "git": "git version 2.46.0",
+        "round": 7,
+        "buffered": true,
+        "ms": 7.595
+      },
+      {
+        "git": "git version 2.46.0",
+        "round": 8,
+        "buffered": true,
+        "ms": 8.411
+      },
+      {
+        "git": "git version 2.46.0",
+        "round": 8,
+        "buffered": false,
+        "ms": 8.403
+      },
+      {
+        "git": "git version 2.46.0",
+        "round": 9,
+        "buffered": false,
+        "ms": 9.015
+      },
+      {
+        "git": "git version 2.46.0",
+        "round": 9,
+        "buffered": true,
+        "ms": 8.239
+      },
+      {
+        "git": "git version 2.46.0",
+        "round": 10,
+        "buffered": true,
+        "ms": 7.875
+      },
+      {
+        "git": "git version 2.46.0",
+        "round": 10,
+        "buffered": false,
+        "ms": 8.954
+      },
+      {
+        "git": "git version 2.46.0",
+        "round": 11,
+        "buffered": false,
+        "ms": 8.965
+      },
+      {
+        "git": "git version 2.46.0",
+        "round": 11,
+        "buffered": true,
+        "ms": 7.493
+      },
+      {
+        "git": "git version 2.46.0",
+        "round": 12,
+        "buffered": true,
+        "ms": 8.938
+      },
+      {
+        "git": "git version 2.46.0",
+        "round": 12,
+        "buffered": false,
+        "ms": 8.882
+      }
+    ]
+  },
+  "diagnostic": {
+    "binary": "f9851d3389907440d230e647a5dad6a8fba0dc93d1e5fb004bbd80bc56c28fd2",
+    "method": "Instrumented release, candidate alone, six fresh clones. live_listing, blob_names, blob_types and commit_attributes are successive installed-store verification durations. regular_done and links_done are completion times relative to launch of checkout workers. ready_wait and link_parents are durations within that same interval. Missing keys mean the corresponding path was not taken.",
+    "samples": [
+      {
+        "spawnMs": 406.519,
+        "phases": {
+          "live_listing": [
+            55.844
+          ],
+          "blob_names": [
+            0.129
+          ],
+          "blob_types": [
+            84.42
+          ],
+          "commit_attributes": [
+            16.112
+          ],
+          "ready_wait": [
+            107.016
+          ],
+          "link_parents": [
+            1.295
+          ],
+          "links_done": [
+            126.592
+          ],
+          "regular_done": [
+            127.21,
+            143.418,
+            144.725,
+            152.375
+          ]
+        }
+      },
+      {
+        "spawnMs": 403.364,
+        "phases": {
+          "live_listing": [
+            57.388
+          ],
+          "blob_names": [
+            0.132
+          ],
+          "blob_types": [
+            81.721
+          ],
+          "commit_attributes": [
+            16.781
+          ],
+          "ready_wait": [
+            105.625
+          ],
+          "link_parents": [
+            1.363
+          ],
+          "links_done": [
+            125.478
+          ],
+          "regular_done": [
+            128.976,
+            142.619,
+            145.302,
+            156.038
+          ]
+        }
+      },
+      {
+        "spawnMs": 401.702,
+        "phases": {
+          "live_listing": [
+            56.504
+          ],
+          "blob_names": [
+            0.271
+          ],
+          "blob_types": [
+            80.755
+          ],
+          "commit_attributes": [
+            15.321
+          ],
+          "ready_wait": [
+            101.204
+          ],
+          "link_parents": [
+            1.021
+          ],
+          "links_done": [
+            120.38
+          ],
+          "regular_done": [
+            125.812,
+            139.395,
+            140.492,
+            150.978
+          ]
+        }
+      },
+      {
+        "spawnMs": 376.867,
+        "phases": {
+          "live_listing": [
+            57.258
+          ],
+          "blob_names": [
+            0.128
+          ],
+          "blob_types": [
+            86.249
+          ],
+          "commit_attributes": [
+            15.836
+          ],
+          "regular_done": [
+            122.624,
+            135.276,
+            137.982,
+            145.71
+          ],
+          "ready_wait": [
+            107.124
+          ],
+          "link_parents": [
+            1.636
+          ],
+          "links_done": [
+            125.842
+          ]
+        }
+      },
+      {
+        "spawnMs": 414.422,
+        "phases": {
+          "live_listing": [
+            59.588
+          ],
+          "blob_names": [
+            0.653
+          ],
+          "blob_types": [
+            80.113
+          ],
+          "commit_attributes": [
+            16.487
+          ],
+          "ready_wait": [
+            91.393
+          ],
+          "link_parents": [
+            1.28
+          ],
+          "links_done": [
+            112.019
+          ],
+          "regular_done": [
+            127.84,
+            141.932,
+            143.556,
+            152.863
+          ]
+        }
+      },
+      {
+        "spawnMs": 415.794,
+        "phases": {
+          "live_listing": [
+            57.537
+          ],
+          "blob_names": [
+            0.124
+          ],
+          "blob_types": [
+            79.784
+          ],
+          "commit_attributes": [
+            16.292
+          ],
+          "ready_wait": [
+            100.919
+          ],
+          "link_parents": [
+            0.997
+          ],
+          "links_done": [
+            120.935
+          ],
+          "regular_done": [
+            128.003,
+            143.852,
+            145.042,
+            156.766
+          ]
+        }
+      }
+    ]
+  },
+  "allocation": {
+    "native": {
+      "first": 29941760,
+      "repeat": 29941760,
+      "advanced": 29945856
+    },
+    "graft": {
+      "first": 311296,
+      "repeat": 299008,
+      "advanced": 299008
+    }
+  },
+  "firstGraftFileDataByPurpose": {
+    "primaryChange": "0",
+    "historyPacks": "0",
+    "historyIndexes": "0",
+    "checkoutIndexes": "270336",
+    "sourceFiles": "0",
+    "records": "40960"
+  },
+  "validation": {
+    "cliAndMcp": {
+      "git version 2.46.0": {
+        "passed": 149,
+        "failed": 0,
+        "unavailable": 0,
+        "total": 149
+      },
+      "git version 2.56.0": {
+        "passed": 149,
+        "failed": 0,
+        "unavailable": 0,
+        "total": 149
+      }
+    },
+    "rustTests": 158,
+    "strictLint": [
+      "native",
+      "Windows x86_64",
+      "Linux x86_64"
+    ],
+    "minimumRust": "1.89 all targets",
+    "recovery": [
+      {
+        "format": "sha1",
+        "git": "git version 2.56.0",
+        "case": "missing-tree",
+        "status": "pending",
+        "exit": 1,
+        "index": false,
+        "liveTreeReadable": false
+      },
+      {
+        "format": "sha1",
+        "git": "git version 2.56.0",
+        "case": "missing-blob",
+        "status": "pending",
+        "exit": 1,
+        "index": false,
+        "liveTreeReadable": true
+      },
+      {
+        "format": "sha1",
+        "git": "git version 2.56.0",
+        "case": "corrupt-attributes",
+        "status": "pending",
+        "exit": 1,
+        "index": false,
+        "liveTreeReadable": true
+      },
+      {
+        "format": "sha1",
+        "git": "git version 2.56.0",
+        "case": "interrupt",
+        "status": "pending",
+        "exit": -9,
+        "index": false,
+        "headBeforeSnapshot": false,
+        "checkoutFilesBeforeSnapshot": false,
+        "archived": true,
+        "restored": true
+      },
+      {
+        "format": "sha1",
+        "git": "git version 2.56.0",
+        "case": "stalled-read",
+        "status": "active",
+        "exit": 0,
+        "index": true,
+        "optionalChildReaped": true
+      },
+      {
+        "format": "sha256",
+        "git": "git version 2.56.0",
+        "case": "missing-tree",
+        "status": "pending",
+        "exit": 1,
+        "index": false,
+        "liveTreeReadable": false
+      },
+      {
+        "format": "sha256",
+        "git": "git version 2.56.0",
+        "case": "missing-blob",
+        "status": "pending",
+        "exit": 1,
+        "index": false,
+        "liveTreeReadable": true
+      },
+      {
+        "format": "sha256",
+        "git": "git version 2.56.0",
+        "case": "corrupt-attributes",
+        "status": "pending",
+        "exit": 1,
+        "index": false,
+        "liveTreeReadable": true
+      },
+      {
+        "format": "sha256",
+        "git": "git version 2.56.0",
+        "case": "interrupt",
+        "status": "pending",
+        "exit": -9,
+        "index": false,
+        "headBeforeSnapshot": false,
+        "checkoutFilesBeforeSnapshot": false,
+        "archived": true,
+        "restored": true
+      },
+      {
+        "format": "sha256",
+        "git": "git version 2.56.0",
+        "case": "stalled-read",
+        "status": "active",
+        "exit": 0,
+        "index": true,
+        "optionalChildReaped": true
+      },
+      {
+        "format": "sha1",
+        "git": "git version 2.46.0",
+        "case": "missing-tree",
+        "status": "pending",
+        "exit": 1,
+        "index": false,
+        "liveTreeReadable": false
+      },
+      {
+        "format": "sha1",
+        "git": "git version 2.46.0",
+        "case": "missing-blob",
+        "status": "pending",
+        "exit": 1,
+        "index": false,
+        "liveTreeReadable": true
+      },
+      {
+        "format": "sha1",
+        "git": "git version 2.46.0",
+        "case": "corrupt-attributes",
+        "status": "pending",
+        "exit": 1,
+        "index": false,
+        "liveTreeReadable": true
+      },
+      {
+        "format": "sha1",
+        "git": "git version 2.46.0",
+        "case": "interrupt",
+        "status": "pending",
+        "exit": -9,
+        "index": false,
+        "headBeforeSnapshot": false,
+        "checkoutFilesBeforeSnapshot": false,
+        "archived": true,
+        "restored": true
+      },
+      {
+        "format": "sha1",
+        "git": "git version 2.46.0",
+        "case": "stalled-read",
+        "status": "active",
+        "exit": 0,
+        "index": true,
+        "optionalChildReaped": true
+      },
+      {
+        "format": "sha256",
+        "git": "git version 2.46.0",
+        "case": "missing-tree",
+        "status": "pending",
+        "exit": 1,
+        "index": false,
+        "liveTreeReadable": false
+      },
+      {
+        "format": "sha256",
+        "git": "git version 2.46.0",
+        "case": "missing-blob",
+        "status": "pending",
+        "exit": 1,
+        "index": false,
+        "liveTreeReadable": true
+      },
+      {
+        "format": "sha256",
+        "git": "git version 2.46.0",
+        "case": "corrupt-attributes",
+        "status": "pending",
+        "exit": 1,
+        "index": false,
+        "liveTreeReadable": true
+      },
+      {
+        "format": "sha256",
+        "git": "git version 2.46.0",
+        "case": "interrupt",
+        "status": "pending",
+        "exit": -9,
+        "index": false,
+        "headBeforeSnapshot": false,
+        "checkoutFilesBeforeSnapshot": false,
+        "archived": true,
+        "restored": true
+      },
+      {
+        "format": "sha256",
+        "git": "git version 2.46.0",
+        "case": "stalled-read",
+        "status": "active",
+        "exit": 0,
+        "index": true,
+        "optionalChildReaped": true
+      }
+    ]
+  }
+}

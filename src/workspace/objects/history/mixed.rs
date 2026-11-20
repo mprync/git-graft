@@ -17,7 +17,11 @@ use std::{
     process::Stdio,
 };
 
+#[cfg(target_os = "macos")]
+mod preview;
 mod scratch;
+#[cfg(target_os = "macos")]
+pub(super) use preview::Preview;
 
 pub(super) const MIN_PACK_BYTES: u64 = 1 << 20;
 const MAX_PACK_BYTES: u64 = 256 << 20;
@@ -28,6 +32,8 @@ const MAX_WORKING_BYTES: u64 = 192 << 20;
 const MAX_ALIGNMENT_BYTES: usize = 64 << 10;
 
 pub(super) struct Prepared {
+    #[cfg(target_os = "macos")]
+    pub(super) preview: Option<Preview>,
     file: File,
     scratch: tempfile::TempDir,
     pub(super) ids: Vec<ObjectId>,
@@ -165,6 +171,8 @@ fn clear_gap(bytes: &mut [u8]) -> Result<()> {
 }
 
 struct Selection {
+    #[cfg(target_os = "macos")]
+    offsets: Vec<u32>,
     ids: Vec<ObjectId>,
     first_header: Option<Range<usize>>,
     // Compressed bytes to move right, followed by the end of the removed run.
@@ -179,7 +187,10 @@ fn select(
     width: usize,
     wanted: &HashSet<ObjectId>,
     allow_prefix: bool,
+    early_walk: bool,
 ) -> Result<Selection> {
+    #[cfg(not(target_os = "macos"))]
+    let _ = early_walk;
     ensure!(
         bytes.len() >= 12 + width
             && &bytes[..4] == b"PACK"
@@ -249,12 +260,28 @@ fn select(
     // same order so the rebuilt index can be compared in one pass.
     let mut ids = Vec::new();
     ids.try_reserve_exact(count)?;
+    #[cfg(target_os = "macos")]
+    let offsets = if early_walk && !allow_prefix && count >= 100_000 {
+        let mut by_row = vec![0u32; records.len()];
+        for &(offset, row) in records {
+            by_row[row] = u32::try_from(offset)?;
+        }
+        by_row
+            .into_iter()
+            .zip(&selected)
+            .filter_map(|(offset, keep)| keep.then_some(offset))
+            .collect()
+    } else {
+        Vec::new()
+    };
     for (row, keep) in table.chunks_exact(width).zip(selected) {
         if keep {
             ids.push(object_id(row, width));
         }
     }
     Ok(Selection {
+        #[cfg(target_os = "macos")]
+        offsets,
         ids,
         first_header,
         gaps,
@@ -268,6 +295,7 @@ pub(super) fn prepare(
     wanted: &HashSet<ObjectId>,
     width: usize,
     allow_prefix: bool,
+    early_walk: bool,
 ) -> Result<Prepared> {
     let input = open_regular(&donor.pack)?;
     let input_size = input.metadata()?.len();
@@ -276,11 +304,20 @@ pub(super) fn prepare(
     check_budget(input_size, index_size, width)?;
     let index = bounded_bytes(index, index_size)?;
     let (table, records) = offsets(&index, width, wanted, allow_prefix)?;
-    // Keep unfinished transfer artifacts in the primary registry.
     let scratch = cache::private_tempdir_in(state)?;
-    let mut file = scratch::create(&input, &donor.pack, scratch.path())?;
+    let (mut file, reader) = scratch::create(&input, &donor.pack, scratch.path(), early_walk)?;
+    #[cfg(not(target_os = "macos"))]
+    let _ = reader;
     let mut bytes = bounded_bytes(&file, input_size)?;
-    let plan = select(&bytes, table, &records, width, wanted, allow_prefix)?;
+    let plan = select(
+        &bytes,
+        table,
+        &records,
+        width,
+        wanted,
+        allow_prefix,
+        early_walk,
+    )?;
     drop(records);
     drop(index);
 
@@ -316,13 +353,19 @@ pub(super) fn prepare(
     };
     file.seek(SeekFrom::Start(plan.end as u64))?;
     file.write_all(&trailer)?;
-    drop(bytes);
     file.set_len((plan.end + width) as u64)?;
+    #[cfg(target_os = "macos")]
+    let preview = reader
+        .filter(|_| !plan.offsets.is_empty())
+        .and_then(|input| Preview::new(input, &plan.ids, plan.offsets, payload, &trailer).ok());
+    drop(bytes);
     let mut permissions = file.metadata()?.permissions();
     permissions.set_readonly(true);
     file.set_permissions(permissions)?;
 
     Ok(Prepared {
+        #[cfg(target_os = "macos")]
+        preview,
         file,
         scratch,
         ids: plan.ids,
@@ -330,15 +373,39 @@ pub(super) fn prepare(
     })
 }
 
+pub(super) fn default_delta_cache(root: &Path) -> bool {
+    transfer_git(root)
+        .args(["config", "--get", "core.deltaBaseCacheLimit"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.code() == Some(1))
+}
+
 impl Prepared {
+    fn index_threads(&self, root: &Path, command: &mut std::process::Command) -> &'static str {
+        // Git multiplies its delta cache limit by the worker count. Keep the
+        // four-worker default budget and respect an explicitly configured limit.
+        if self.ids.len() >= 100_000
+            && std::thread::available_parallelism().is_ok_and(|n| n.get() >= 8)
+            && default_delta_cache(root)
+        {
+            command.args(["-c", "core.deltaBaseCacheLimit=48m"]);
+            "--threads=8"
+        } else {
+            "--threads=4"
+        }
+    }
+
     pub(super) fn verify(mut self, root: &Path, stage: &Path, width: usize) -> Result<(Pack, u64)> {
         // Git verifies the anonymous pack as a regular file and writes only the
         // index in private staging. Name the pack after its membership is proven.
         let index = self.scratch.path().join("filtered.idx");
         self.file.rewind()?;
         let mut command = transfer_git(root);
+        let threads = self.index_threads(root, &mut command);
         command
-            .args(["index-pack", "--index-version=2", "--threads=4", "-o"])
+            .args(["index-pack", "--index-version=2", threads, "-o"])
             .arg(&index)
             .arg("/dev/fd/0")
             .stdin(Stdio::from(self.file.try_clone()?));
@@ -381,7 +448,7 @@ mod tests {
         pack[140] = 0x30;
         let table: Vec<_> = (0..5).flat_map(|i| [i; 20]).collect();
         let wanted = (1..5).map(|id| object_id(&[id; 20], 20)).collect();
-        let selection = select(&pack, &table, &records, 20, &wanted, true)?;
+        let selection = select(&pack, &table, &records, 20, &wanted, true, false)?;
         assert_eq!(selection.first_header, Some(52..55));
         assert_eq!(selection.ids.len(), 2);
         assert!(selection.ids.contains(&object_id(&[1; 20], 20)));
@@ -410,6 +477,8 @@ mod tests {
         let scratch = cache::private_tempdir_in(root.path())?;
         let stage = tempfile::tempdir_in(root.path())?;
         let prepared = Prepared {
+            #[cfg(target_os = "macos")]
+            preview: None,
             file,
             scratch,
             // Model a donor index mapping a wanted ID to an unrelated record.

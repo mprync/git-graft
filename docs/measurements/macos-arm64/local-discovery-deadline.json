@@ -1,0 +1,500 @@
+{
+  "platform": "macOS arm64, APFS, Git 2.56.0",
+  "method": "Six rotating triples per series at Homebrew bc63375ac3a4. Each arm receives a fresh populated clone. Established projects also create one orphan workspace before timing. History omitted. Filesystem caches and host load uncontrolled. Each checkout verified HEAD, tree, index and clean status, and each Graft checked unrelated-object visibility and absence of alternates.",
+  "matched": "Both Graft arms run one instrumented executable with the missing-blob check. The control ends optional discovery at reservation. The candidate ends it after local object installation.",
+  "release": "Separate uninstrumented executables. The previous release ends discovery at reservation and lacks the missing-blob fallback check. The candidate includes both changes.",
+  "sampleColumns": [
+    "round",
+    "arm",
+    "spawnMs",
+    "firstStatusMs",
+    "userSeconds",
+    "systemSeconds",
+    "peakRssBytes",
+    "usedPreparedIndexIfInstrumented"
+  ],
+  "series": {
+    "matched-fresh": {
+      "controlSha256": "0803978e00562f9b35207d647a2403590071869ec930116050032c2462d457ed",
+      "candidateSha256": "0803978e00562f9b35207d647a2403590071869ec930116050032c2462d457ed",
+      "medians": {
+        "release": {
+          "spawnMs": 466.471,
+          "spawnPlusFirstStatusMs": 872.579,
+          "userSeconds": 0.13,
+          "systemSeconds": 0.94,
+          "peakRssBytes": 28819456
+        },
+        "candidate": {
+          "spawnMs": 450.808,
+          "spawnPlusFirstStatusMs": 918.555,
+          "userSeconds": 0.13,
+          "systemSeconds": 0.92,
+          "peakRssBytes": 28835840
+        },
+        "worktree": {
+          "spawnMs": 353.757,
+          "spawnPlusFirstStatusMs": 440.242,
+          "userSeconds": 0.05,
+          "systemSeconds": 0.255,
+          "peakRssBytes": 52314112
+        }
+      },
+      "samples": [
+        [1, "release", 456.675, 406.968, 0.13, 0.93, 28803072, true],
+        [1, "candidate", 449.092, 517.439, 0.13, 0.89, 28819456, true],
+        [1, "worktree", 358.57, 118.654, 0.05, 0.25, 52314112, null],
+        [2, "candidate", 581.646, 411.843, 0.14, 1.24, 28835840, true],
+        [2, "worktree", 369.985, 116.5, 0.05, 0.27, 52609024, null],
+        [2, "release", 439.272, 410.304, 0.12, 0.89, 28803072, true],
+        [3, "worktree", 413.559, 45.431, 0.05, 0.28, 52412416, null],
+        [3, "release", 486.409, 566.265, 0.13, 0.95, 28835840, true],
+        [3, "candidate", 534.123, 550.283, 0.13, 1.16, 28835840, true],
+        [4, "worktree", 348.944, 47.543, 0.05, 0.26, 52297728, null],
+        [4, "candidate", 452.524, 399.996, 0.13, 0.91, 28835840, true],
+        [4, "release", 476.266, 405.248, 0.13, 0.99, 28835840, true],
+        [5, "release", 481.749, 438.763, 0.13, 0.98, 28835840, true],
+        [5, "worktree", 327.667, 48.603, 0.05, 0.25, 52314112, null],
+        [5, "candidate", 443.823, 426.757, 0.13, 0.89, 28852224, true],
+        [6, "candidate", 437.42, 360.553, 0.12, 0.93, 28835840, true],
+        [6, "release", 425.255, 379.994, 0.13, 0.85, 28803072, true],
+        [6, "worktree", 311.545, 109.949, 0.05, 0.24, 52101120, null]
+      ]
+    },
+    "matched-established": {
+      "controlSha256": "0803978e00562f9b35207d647a2403590071869ec930116050032c2462d457ed",
+      "candidateSha256": "0803978e00562f9b35207d647a2403590071869ec930116050032c2462d457ed",
+      "medians": {
+        "release": {
+          "spawnMs": 531.099,
+          "spawnPlusFirstStatusMs": 960.636,
+          "userSeconds": 0.12,
+          "systemSeconds": 0.88,
+          "peakRssBytes": 28811264
+        },
+        "candidate": {
+          "spawnMs": 400.139,
+          "spawnPlusFirstStatusMs": 870.19,
+          "userSeconds": 0.12,
+          "systemSeconds": 0.895,
+          "peakRssBytes": 28803072
+        },
+        "worktree": {
+          "spawnMs": 319.465,
+          "spawnPlusFirstStatusMs": 426.079,
+          "userSeconds": 0.05,
+          "systemSeconds": 0.25,
+          "peakRssBytes": 52207616
+        }
+      },
+      "samples": [
+        [1, "worktree", 310.865, 109.778, 0.05, 0.24, 52363264, null],
+        [1, "candidate", 386.242, 419.24, 0.12, 0.85, 28803072, true],
+        [1, "release", 565.195, 415.08, 0.12, 0.86, 28803072, false],
+        [2, "release", 386.288, 443.577, 0.12, 0.86, 28803072, true],
+        [2, "worktree", 317.136, 117.849, 0.05, 0.25, 52150272, null],
+        [2, "candidate", 469.254, 623.7, 0.13, 0.93, 28803072, true],
+        [3, "candidate", 622.06, 442.633, 0.14, 1.54, 28835840, true],
+        [3, "release", 406.695, 424.936, 0.13, 0.9, 28803072, true],
+        [3, "worktree", 307.046, 111.77, 0.05, 0.24, 52215808, null],
+        [4, "release", 552.162, 388.835, 0.11, 0.84, 28819456, false],
+        [4, "candidate", 407.101, 438.221, 0.12, 0.93, 28803072, true],
+        [4, "worktree", 321.793, 109.721, 0.05, 0.25, 52215808, null],
+        [5, "candidate", 391.973, 420.69, 0.12, 0.86, 28803072, true],
+        [5, "worktree", 326.231, 70.591, 0.05, 0.25, 52199424, null],
+        [5, "release", 627.164, 440.877, 0.12, 0.9, 28835840, false],
+        [6, "worktree", 421.689, 124.75, 0.05, 0.27, 52199424, null],
+        [6, "release", 510.036, 666.511, 0.13, 0.92, 28835840, true],
+        [6, "candidate", 393.178, 501.881, 0.12, 0.85, 28803072, true]
+      ]
+    },
+    "release-fresh": {
+      "controlSha256": "4ef6857b1a68b36d76e460edf06792770545032eb24597f527b8b0b416385987",
+      "candidateSha256": "6ffd18bf52a6a0433d6450367d4ae53c323b952a8b401f63e1edfa5fb956400a",
+      "medians": {
+        "release": {
+          "spawnMs": 421.21,
+          "spawnPlusFirstStatusMs": 814.193,
+          "userSeconds": 0.125,
+          "systemSeconds": 0.865,
+          "peakRssBytes": 28811264
+        },
+        "candidate": {
+          "spawnMs": 436.23,
+          "spawnPlusFirstStatusMs": 854.928,
+          "userSeconds": 0.12,
+          "systemSeconds": 0.875,
+          "peakRssBytes": 28819456
+        },
+        "worktree": {
+          "spawnMs": 317.99,
+          "spawnPlusFirstStatusMs": 412.587,
+          "userSeconds": 0.05,
+          "systemSeconds": 0.24,
+          "peakRssBytes": 52207616
+        }
+      },
+      "samples": [
+        [1, "release", 473.533, 423.961, 0.13, 0.89, 28819456, null],
+        [1, "candidate", 468.156, 412.954, 0.13, 0.97, 28803072, null],
+        [1, "worktree", 325.95, 118.637, 0.05, 0.24, 52363264, null],
+        [2, "candidate", 449.672, 395.921, 0.12, 0.86, 28819456, null],
+        [2, "worktree", 319.902, 46.331, 0.05, 0.24, 52363264, null],
+        [2, "release", 418.765, 386.779, 0.12, 0.86, 28803072, null],
+        [3, "worktree", 317.484, 112.609, 0.05, 0.24, 52166656, null],
+        [3, "release", 441.396, 472.163, 0.13, 0.88, 28803072, null],
+        [3, "candidate", 421.207, 439.925, 0.12, 0.85, 28819456, null],
+        [4, "worktree", 306.805, 89.452, 0.05, 0.24, 52199424, null],
+        [4, "candidate", 433.715, 704.006, 0.12, 0.9, 28819456, null],
+        [4, "release", 417.645, 396.104, 0.13, 0.85, 28819456, null],
+        [5, "release", 423.655, 390.983, 0.12, 0.87, 28835840, null],
+        [5, "worktree", 312.126, 77.752, 0.05, 0.24, 52051968, null],
+        [5, "candidate", 438.745, 409.98, 0.12, 0.89, 28819456, null],
+        [6, "candidate", 408.29, 425.338, 0.13, 0.86, 28835840, null],
+        [6, "release", 415.092, 387.574, 0.12, 0.84, 28803072, null],
+        [6, "worktree", 318.495, 110.423, 0.05, 0.25, 52215808, null]
+      ]
+    },
+    "release-established": {
+      "controlSha256": "4ef6857b1a68b36d76e460edf06792770545032eb24597f527b8b0b416385987",
+      "candidateSha256": "6ffd18bf52a6a0433d6450367d4ae53c323b952a8b401f63e1edfa5fb956400a",
+      "medians": {
+        "release": {
+          "spawnMs": 489.696,
+          "spawnPlusFirstStatusMs": 915.076,
+          "userSeconds": 0.11,
+          "systemSeconds": 0.84,
+          "peakRssBytes": 19005440
+        },
+        "candidate": {
+          "spawnMs": 394.251,
+          "spawnPlusFirstStatusMs": 833.435,
+          "userSeconds": 0.125,
+          "systemSeconds": 0.905,
+          "peakRssBytes": 28811264
+        },
+        "worktree": {
+          "spawnMs": 330.081,
+          "spawnPlusFirstStatusMs": 444.011,
+          "userSeconds": 0.05,
+          "systemSeconds": 0.25,
+          "peakRssBytes": 52461568
+        }
+      },
+      "samples": [
+        [1, "worktree", 612.096, 133.767, 0.06, 0.36, 52461568, null],
+        [1, "candidate", 535.81, 596.863, 0.13, 1.03, 28819456, null],
+        [1, "release", 482.223, 392.673, 0.11, 0.82, 19038208, null],
+        [2, "release", 497.168, 440.264, 0.11, 0.86, 19021824, null],
+        [2, "worktree", 318.066, 117.626, 0.05, 0.25, 52019200, null],
+        [2, "candidate", 393.887, 387.559, 0.12, 0.89, 28803072, null],
+        [3, "candidate", 394.616, 455.387, 0.12, 0.89, 28803072, null],
+        [3, "release", 582.155, 446.499, 0.11, 0.99, 18956288, null],
+        [3, "worktree", 317.606, 124.536, 0.05, 0.25, 52461568, null],
+        [4, "release", 462.805, 372.345, 0.1, 0.79, 18989056, null],
+        [4, "candidate", 408.128, 410.945, 0.13, 0.92, 28835840, null],
+        [4, "worktree", 328.096, 117.784, 0.05, 0.25, 52117504, null],
+        [5, "candidate", 392.051, 376.889, 0.12, 0.92, 28852224, null],
+        [5, "worktree", 333.768, 118.145, 0.05, 0.26, 52494336, null],
+        [5, "release", 518, 458.717, 0.11, 0.94, 19038208, null],
+        [6, "worktree", 332.065, 46.46, 0.05, 0.25, 52592640, null],
+        [6, "release", 457.194, 435.525, 0.1, 0.78, 18989056, null],
+        [6, "candidate", 388.161, 459.636, 0.13, 0.86, 28803072, null]
+      ]
+    }
+  },
+  "missingBlobBefore": [
+    {
+      "git": "git version 2.56.0",
+      "format": "sha1",
+      "delayed": false,
+      "code": 0,
+      "status": "active",
+      "installedIndex": true,
+      "filePresent": true,
+      "objectReadable": false,
+      "sourcePreserved": true
+    },
+    {
+      "git": "git version 2.56.0",
+      "format": "sha1",
+      "delayed": true,
+      "code": 0,
+      "status": "active",
+      "installedIndex": true,
+      "filePresent": true,
+      "objectReadable": false,
+      "sourcePreserved": true
+    },
+    {
+      "git": "git version 2.56.0",
+      "format": "sha256",
+      "delayed": false,
+      "code": 0,
+      "status": "active",
+      "installedIndex": true,
+      "filePresent": true,
+      "objectReadable": false,
+      "sourcePreserved": true
+    },
+    {
+      "git": "git version 2.56.0",
+      "format": "sha256",
+      "delayed": true,
+      "code": 0,
+      "status": "active",
+      "installedIndex": true,
+      "filePresent": true,
+      "objectReadable": false,
+      "sourcePreserved": true
+    },
+    {
+      "git": "git version 2.46.0",
+      "format": "sha1",
+      "delayed": false,
+      "code": 1,
+      "status": "pending",
+      "installedIndex": false,
+      "filePresent": true,
+      "objectReadable": false,
+      "sourcePreserved": true
+    },
+    {
+      "git": "git version 2.46.0",
+      "format": "sha1",
+      "delayed": true,
+      "code": 0,
+      "status": "active",
+      "installedIndex": true,
+      "filePresent": true,
+      "objectReadable": false,
+      "sourcePreserved": true
+    },
+    {
+      "git": "git version 2.46.0",
+      "format": "sha256",
+      "delayed": false,
+      "code": 1,
+      "status": "pending",
+      "installedIndex": false,
+      "filePresent": true,
+      "objectReadable": false,
+      "sourcePreserved": true
+    },
+    {
+      "git": "git version 2.46.0",
+      "format": "sha256",
+      "delayed": true,
+      "code": 0,
+      "status": "active",
+      "installedIndex": true,
+      "filePresent": true,
+      "objectReadable": false,
+      "sourcePreserved": true
+    }
+  ],
+  "missingBlobAfter": [
+    {
+      "git": "git version 2.56.0",
+      "format": "sha1",
+      "delayed": false,
+      "code": 1,
+      "status": "pending",
+      "installedIndex": false,
+      "filePresent": true,
+      "objectReadable": false,
+      "sourcePreserved": true
+    },
+    {
+      "git": "git version 2.56.0",
+      "format": "sha1",
+      "delayed": true,
+      "code": 1,
+      "status": "pending",
+      "installedIndex": false,
+      "filePresent": false,
+      "objectReadable": false,
+      "sourcePreserved": true
+    },
+    {
+      "git": "git version 2.56.0",
+      "format": "sha256",
+      "delayed": false,
+      "code": 1,
+      "status": "pending",
+      "installedIndex": false,
+      "filePresent": true,
+      "objectReadable": false,
+      "sourcePreserved": true
+    },
+    {
+      "git": "git version 2.56.0",
+      "format": "sha256",
+      "delayed": true,
+      "code": 1,
+      "status": "pending",
+      "installedIndex": false,
+      "filePresent": false,
+      "objectReadable": false,
+      "sourcePreserved": true
+    },
+    {
+      "git": "git version 2.46.0",
+      "format": "sha1",
+      "delayed": false,
+      "code": 1,
+      "status": "pending",
+      "installedIndex": false,
+      "filePresent": true,
+      "objectReadable": false,
+      "sourcePreserved": true
+    },
+    {
+      "git": "git version 2.46.0",
+      "format": "sha1",
+      "delayed": true,
+      "code": 1,
+      "status": "pending",
+      "installedIndex": false,
+      "filePresent": false,
+      "objectReadable": false,
+      "sourcePreserved": true
+    },
+    {
+      "git": "git version 2.46.0",
+      "format": "sha256",
+      "delayed": false,
+      "code": 1,
+      "status": "pending",
+      "installedIndex": false,
+      "filePresent": true,
+      "objectReadable": false,
+      "sourcePreserved": true
+    },
+    {
+      "git": "git version 2.46.0",
+      "format": "sha256",
+      "delayed": true,
+      "code": 1,
+      "status": "pending",
+      "installedIndex": false,
+      "filePresent": false,
+      "objectReadable": false,
+      "sourcePreserved": true
+    }
+  ],
+  "initializationFailure": [
+    {
+      "git": "git version 2.56.0",
+      "format": "sha1",
+      "elapsedMs": 130.325,
+      "childReaped": true,
+      "restored": true
+    },
+    {
+      "git": "git version 2.56.0",
+      "format": "sha256",
+      "elapsedMs": 125.814,
+      "childReaped": true,
+      "restored": true
+    },
+    {
+      "git": "git version 2.46.0",
+      "format": "sha1",
+      "elapsedMs": 125.283,
+      "childReaped": true,
+      "restored": true
+    },
+    {
+      "git": "git version 2.46.0",
+      "format": "sha256",
+      "elapsedMs": 121.77,
+      "childReaped": true,
+      "restored": true
+    }
+  ],
+  "controlledDiscovery": [
+    {
+      "git": "git version 2.56.0",
+      "format": "sha1",
+      "deadline": "reservation",
+      "prepared": false,
+      "cloned": 299
+    },
+    {
+      "git": "git version 2.56.0",
+      "format": "sha1",
+      "deadline": "objects",
+      "prepared": true,
+      "cloned": 299
+    },
+    {
+      "git": "git version 2.56.0",
+      "format": "sha256",
+      "deadline": "reservation",
+      "prepared": false,
+      "cloned": 299
+    },
+    {
+      "git": "git version 2.56.0",
+      "format": "sha256",
+      "deadline": "objects",
+      "prepared": true,
+      "cloned": 299
+    },
+    {
+      "git": "git version 2.46.0",
+      "format": "sha1",
+      "deadline": "reservation",
+      "prepared": false,
+      "cloned": 299
+    },
+    {
+      "git": "git version 2.46.0",
+      "format": "sha1",
+      "deadline": "objects",
+      "prepared": true,
+      "cloned": 299
+    },
+    {
+      "git": "git version 2.46.0",
+      "format": "sha256",
+      "deadline": "reservation",
+      "prepared": false,
+      "cloned": 299
+    },
+    {
+      "git": "git version 2.46.0",
+      "format": "sha256",
+      "deadline": "objects",
+      "prepared": true,
+      "cloned": 299
+    }
+  ],
+  "cliAndMcp": {
+    "git version 2.46.0": {
+      "passed": 149,
+      "failed": 0,
+      "unavailable": 0,
+      "total": 149
+    },
+    "git version 2.56.0": {
+      "passed": 149,
+      "failed": 0,
+      "unavailable": 0,
+      "total": 149
+    }
+  },
+  "additionalPhysicalFileBytes": {
+    "native": {
+      "first": 29941760,
+      "repeat": 29941760,
+      "oneFileAdvance": 29945856
+    },
+    "graft": {
+      "first": 311296,
+      "repeat": 299008,
+      "oneFileAdvance": 299008
+    }
+  }
+}

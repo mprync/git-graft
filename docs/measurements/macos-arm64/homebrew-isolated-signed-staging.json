@@ -1,0 +1,642 @@
+{
+  "platform": {
+    "type": "Darwin",
+    "release": "25.5.0",
+    "version": "Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:15 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T6041"
+  },
+  "git": "git version 2.56.0",
+  "architecture": "arm64",
+  "node": "v24.5.0",
+  "fixture": {
+    "head": "bc63375ac3a4d6debb1ceb441ae6e22854f0909a",
+    "tree": "ee570b9dbb122c6b6f0f609b83402c1f8eaca195",
+    "commits": 53716,
+    "objects": 371804
+  },
+  "method": "Fresh clean APFS primary per timed command, local clone --no-hardlinks --template=, pinned Homebrew commit. Wall time includes the CLI and its children. Setup and checks occur outside the timer. Arms rotate by round. CPU and peak RSS use /usr/bin/time -l.",
+  "commands": {
+    "previous": "previous release --repo PRIMARY --json spawn agent --base COMMIT",
+    "current": "current release --repo PRIMARY --json spawn agent --base COMMIT",
+    "linked": "git worktree add -qb graft/agent DEST COMMIT",
+    "local": "current release --repo PRIMARY --json spawn agent --base COMMIT --history local"
+  },
+  "checks": "Every isolated repository contained exactly the reachable object IDs, excluded an unrelated loose sentinel, had no alternates, had the expected commit count and tree, and was clean. Local snapshots included the sentinel. Each Graft checkout reused all 3318 regular files with zero private working-file bytes on the clean fixture.",
+  "binaryBytes": {
+    "previous": 4417904,
+    "current": 4417920
+  },
+  "sampleColumns": [
+    "round",
+    "arm",
+    "wallMs",
+    "userCpuS",
+    "systemCpuS",
+    "peakRssBytes",
+    "historyMs"
+  ],
+  "series": {
+    "directBypass": {
+      "releaseSha256": "db86d61808aa987918c9418fd392d26d3d49b83c734f697fa19dca9e6a2ec42a",
+      "candidateSha256": "c4c79c9a12fff14a321b30e825e87f18198cdd45bc6404d474c5c04b4f007e13",
+      "medianMs": {
+        "release": 3616.264,
+        "candidate": 2788.757,
+        "worktree": 288.226
+      },
+      "pairedMedianSavingMs": 828.56,
+      "candidateWins": 6,
+      "samples": [
+        [1, "release", 3602.346, 7.06, 3.8, 288931840, 2399.624],
+        [1, "candidate", 2778.946, 6.92, 2.23, 288915456, 2387.443],
+        [1, "worktree", 293.979, 0.04, 0.22, 52051968, null],
+        [2, "candidate", 2793.012, 6.93, 2.26, 288915456, 2389.838],
+        [2, "worktree", 287.221, 0.05, 0.22, 52051968, null],
+        [2, "release", 3621.583, 7.07, 3.79, 288866304, 2383.437],
+        [3, "worktree", 280.38, 0.04, 0.21, 52215808, null],
+        [3, "release", 3613.406, 7.06, 3.64, 288817152, 2400.004],
+        [3, "candidate", 2782.189, 6.93, 2.21, 288899072, 2387.919],
+        [4, "worktree", 289.232, 0.05, 0.22, 52215808, null],
+        [4, "candidate", 2790.573, 6.93, 2.23, 288817152, 2395.928],
+        [4, "release", 3619.122, 7.09, 3.75, 288899072, 2402.565],
+        [5, "release", 3641.002, 7.11, 3.77, 288833536, 2429.92],
+        [5, "worktree", 291.626, 0.05, 0.22, 52051968, null],
+        [5, "candidate", 2786.942, 6.93, 2.21, 288817152, 2397.346],
+        [6, "candidate", 2800.088, 6.93, 2.21, 288980992, 2396.004],
+        [6, "release", 3604.987, 7.07, 3.74, 288849920, 2395.337],
+        [6, "worktree", 285.217, 0.05, 0.22, 52215808, null]
+      ]
+    },
+    "directWithRefresh": {
+      "releaseSha256": "db86d61808aa987918c9418fd392d26d3d49b83c734f697fa19dca9e6a2ec42a",
+      "candidateSha256": "9d79029c194856052c37f3d457b33f465958d02096d94c84a15bb3a693024f79",
+      "medianMs": {
+        "release": 3645.762,
+        "candidate": 3168.069,
+        "worktree": 294.974
+      },
+      "pairedMedianSavingMs": 462.591,
+      "candidateWins": 6,
+      "samples": [
+        [1, "worktree", 295.074, 0.05, 0.22, 52051968, null],
+        [1, "candidate", 3152.776, 7.07, 2.36, 288866304, 2450.683],
+        [1, "release", 3619.174, 7.09, 3.76, 288882688, 2409.102],
+        [2, "release", 3658.619, 7.26, 3.83, 288980992, 2460.246],
+        [2, "worktree", 302.782, 0.05, 0.23, 52035584, null],
+        [2, "candidate", 3160.821, 7.03, 2.37, 288899072, 2427.905],
+        [3, "candidate", 3393.798, 7.47, 2.69, 288686080, 2644.995],
+        [3, "release", 3664.067, 7.1, 3.81, 288866304, 2431.097],
+        [3, "worktree", 294.874, 0.05, 0.22, 52527104, null],
+        [4, "release", 3715.674, 7.22, 3.82, 288931840, 2488.991],
+        [4, "candidate", 3307.751, 7.26, 2.7, 288849920, 2550.348],
+        [4, "worktree", 296.489, 0.05, 0.22, 52150272, null],
+        [5, "candidate", 3174.122, 7.01, 2.36, 288833536, 2436.878],
+        [5, "worktree", 289.053, 0.05, 0.23, 52199424, null],
+        [5, "release", 3632.906, 7.13, 3.75, 288866304, 2428.093],
+        [6, "worktree", 282.238, 0.05, 0.22, 52150272, null],
+        [6, "release", 3630.785, 7.12, 3.76, 288866304, 2423.603],
+        [6, "candidate", 3162.016, 7.05, 2.37, 288849920, 2448.794]
+      ]
+    },
+    "streamOnly": {
+      "releaseSha256": "db86d61808aa987918c9418fd392d26d3d49b83c734f697fa19dca9e6a2ec42a",
+      "candidateSha256": "ebe708cff20879433b06cfc1fd81583217581d2c3c1a3f785d8c40b655836296",
+      "medianMs": {
+        "release": 3618.748,
+        "candidate": 3593.303,
+        "worktree": 296.612
+      },
+      "pairedMedianSavingMs": 27.735,
+      "candidateWins": 4,
+      "samples": [
+        [1, "release", 3568.746, 7.03, 3.79, 288899072, 2365.452],
+        [1, "candidate", 3536.998, 7.01, 3.67, 288800768, 2374.041],
+        [1, "worktree", 346.778, 0.05, 0.24, 52232192, null],
+        [2, "candidate", 3783.73, 7.31, 3.78, 288915456, 2535.988],
+        [2, "worktree", 300.261, 0.05, 0.22, 52133888, null],
+        [2, "release", 3667.807, 7.08, 3.78, 288800768, 2411.561],
+        [3, "worktree", 302.131, 0.05, 0.23, 52477952, null],
+        [3, "release", 3618.468, 7.1, 3.78, 288849920, 2410.225],
+        [3, "candidate", 3590.281, 7.09, 3.73, 288948224, 2431.43],
+        [4, "worktree", 292.963, 0.05, 0.22, 52150272, null],
+        [4, "candidate", 3594.861, 7.06, 3.69, 288931840, 2414.55],
+        [4, "release", 3583.434, 7.08, 3.6, 288882688, 2405.372],
+        [5, "release", 3619.028, 7.09, 3.78, 288866304, 2409.328],
+        [5, "worktree", 288.162, 0.05, 0.22, 52215808, null],
+        [5, "candidate", 3591.745, 7.08, 3.69, 288915456, 2417.553],
+        [6, "candidate", 3601.198, 7.05, 3.68, 288800768, 2408.499],
+        [6, "release", 3653.713, 7.07, 3.75, 288784384, 2422.704],
+        [6, "worktree", 288.118, 0.05, 0.22, 52215808, null]
+      ]
+    },
+    "stageFromVerifiedHandle": {
+      "releaseSha256": "db86d61808aa987918c9418fd392d26d3d49b83c734f697fa19dca9e6a2ec42a",
+      "candidateSha256": "f90472e3f50433150ce3a450bed537f7df9ba9ca64457fa1ed9729458ae0bb1d",
+      "medianMs": {
+        "release": 3704.471,
+        "candidate": 3671.187,
+        "worktree": 299.331
+      },
+      "pairedMedianSavingMs": -5.51,
+      "candidateWins": 2,
+      "samples": [
+        [1, "release", 3710.838, 7.22, 3.86, 288866304, 2485.726],
+        [1, "candidate", 3588.376, 7.12, 3.66, 288866304, 2400.552],
+        [1, "worktree", 299.979, 0.05, 0.23, 52264960, null],
+        [2, "candidate", 3645.8, 7.09, 3.83, 288899072, 2410.354],
+        [2, "worktree", 318.856, 0.05, 0.24, 52346880, null],
+        [2, "release", 3789.07, 7.28, 3.94, 288931840, 2524.278],
+        [3, "worktree", 293.694, 0.05, 0.23, 52215808, null],
+        [3, "release", 3663.451, 7.15, 3.81, 288849920, 2436.901],
+        [3, "candidate", 3673.381, 7.21, 3.73, 288866304, 2481.489],
+        [4, "worktree", 298.682, 0.05, 0.23, 52510720, null],
+        [4, "candidate", 3703.752, 7.16, 3.75, 288833536, 2443.654],
+        [4, "release", 3698.104, 7.16, 3.85, 288849920, 2444.943],
+        [5, "release", 3740.282, 7.24, 3.82, 288849920, 2513.214],
+        [5, "worktree", 305.994, 0.05, 0.23, 52314112, null],
+        [5, "candidate", 4195.088, 7.23, 4.25, 288768000, 2486.335],
+        [6, "candidate", 3668.993, 7.28, 3.72, 288931840, 2471.806],
+        [6, "release", 3663.621, 7.22, 3.8, 288899072, 2449.77],
+        [6, "worktree", 290.339, 0.05, 0.22, 52314112, null]
+      ]
+    },
+    "combinedTrial": {
+      "releaseSha256": "db86d61808aa987918c9418fd392d26d3d49b83c734f697fa19dca9e6a2ec42a",
+      "candidateSha256": "1eb471ceeb98b5f0721d616ffedbd2f529a183890185c2addc55edb156e1b107",
+      "medianMs": {
+        "release": 3915.542,
+        "candidate": 3634.359,
+        "worktree": 327.164
+      },
+      "pairedMedianSavingMs": 272.743,
+      "candidateWins": 5,
+      "samples": [
+        [1, "release", 6893.624, 7.23, 11.96, 288899072, 2487.921],
+        [1, "candidate", 5560.261, 7.92, 4.21, 286752768, 4048.367],
+        [1, "worktree", 324.681, 0.05, 0.23, 52330496, null],
+        [2, "candidate", 3613.973, 7.23, 3.54, 288866304, 2467.196],
+        [2, "worktree", 292.955, 0.05, 0.22, 52363264, null],
+        [2, "release", 3916.231, 7.19, 3.95, 288800768, 2461.558],
+        [3, "worktree", 303.574, 0.05, 0.23, 52215808, null],
+        [3, "release", 3918.516, 7.34, 4.07, 288784384, 2554.637],
+        [3, "candidate", 3918.865, 7.29, 3.77, 289030144, 2586.247],
+        [4, "worktree", 329.648, 0.05, 0.23, 52314112, null],
+        [4, "candidate", 3605.619, 7.12, 3.5, 288948224, 2470.537],
+        [4, "release", 3914.853, 7.27, 4, 288833536, 2538.519],
+        [5, "release", 3897.971, 7.17, 4.05, 288948224, 2468.447],
+        [5, "worktree", 350.652, 0.05, 0.26, 52658176, null],
+        [5, "candidate", 3654.744, 7.18, 3.59, 288800768, 2495.552],
+        [6, "candidate", 3538.07, 7.17, 3.32, 288882688, 2435.88],
+        [6, "release", 3776.695, 7.22, 3.93, 288833536, 2483.92],
+        [6, "worktree", 334.227, 0.05, 0.26, 52609024, null]
+      ]
+    },
+    "combinedTrialReversed": {
+      "releaseSha256": "db86d61808aa987918c9418fd392d26d3d49b83c734f697fa19dca9e6a2ec42a",
+      "candidateSha256": "1eb471ceeb98b5f0721d616ffedbd2f529a183890185c2addc55edb156e1b107",
+      "medianMs": {
+        "release": 3714.164,
+        "candidate": 3567.148,
+        "worktree": 296.337
+      },
+      "pairedMedianSavingMs": 158.347,
+      "candidateWins": 6,
+      "samples": [
+        [1, "worktree", 289.899, 0.05, 0.22, 52428800, null],
+        [1, "candidate", 3565.441, 7.11, 3.55, 288899072, 2421.16],
+        [1, "release", 3660.87, 7.12, 3.79, 288899072, 2421.749],
+        [2, "release", 3687.938, 7.14, 3.81, 288931840, 2439.915],
+        [2, "worktree", 295.215, 0.05, 0.23, 52051968, null],
+        [2, "candidate", 3602.814, 7.14, 3.5, 290783232, 2447.226],
+        [3, "candidate", 3542.779, 7.1, 3.47, 288931840, 2423.156],
+        [3, "release", 3710.192, 7.2, 3.88, 288817152, 2478.721],
+        [3, "worktree", 297.458, 0.05, 0.23, 52215808, null],
+        [4, "release", 3797.599, 7.38, 4.1, 288899072, 2541.565],
+        [4, "candidate", 3555.231, 7.16, 3.49, 288882688, 2449.043],
+        [4, "worktree", 293.952, 0.05, 0.23, 52346880, null],
+        [5, "candidate", 3587.495, 7.16, 3.53, 288817152, 2444.06],
+        [5, "worktree", 351.114, 0.05, 0.27, 52559872, null],
+        [5, "release", 3757.289, 7.35, 3.87, 288784384, 2527.14],
+        [6, "worktree", 297.49, 0.05, 0.23, 52133888, null],
+        [6, "release", 3718.135, 7.29, 3.94, 288980992, 2470.917],
+        [6, "candidate", 3568.854, 7.14, 3.56, 288882688, 2432.262]
+      ]
+    },
+    "withSignedStampCheck": {
+      "releaseSha256": "db86d61808aa987918c9418fd392d26d3d49b83c734f697fa19dca9e6a2ec42a",
+      "candidateSha256": "69515e12043502b736ffa977a87b390b08cb032484373c62f847ed4b9d619f83",
+      "medianMs": {
+        "release": 3664.901,
+        "candidate": 3581.051,
+        "worktree": 298.209
+      },
+      "pairedMedianSavingMs": 87.37,
+      "candidateWins": 5,
+      "samples": [
+        [1, "release", 3599.547, 7.18, 3.66, 288849920, 2437.685],
+        [1, "candidate", 3910.4, 7.48, 3.86, 289226752, 2731.746],
+        [1, "worktree", 299.298, 0.05, 0.22, 52215808, null],
+        [2, "candidate", 3553.441, 7.06, 3.6, 288866304, 2426.533],
+        [2, "worktree", 301.815, 0.05, 0.23, 52461568, null],
+        [2, "release", 3647.134, 7.14, 3.44, 288899072, 2466.376],
+        [3, "worktree", 298.946, 0.05, 0.23, 52527104, null],
+        [3, "release", 3690.44, 7.13, 3.88, 288849920, 2426.066],
+        [3, "candidate", 3569.31, 7.12, 3.51, 288899072, 2438.811],
+        [4, "worktree", 297.472, 0.05, 0.23, 52445184, null],
+        [4, "candidate", 3561.062, 7.07, 3.57, 288800768, 2430.683],
+        [4, "release", 3655.965, 7.14, 3.81, 288833536, 2440.394],
+        [5, "release", 3673.837, 7.2, 3.77, 288849920, 2457.869],
+        [5, "worktree", 290.634, 0.05, 0.23, 52183040, null],
+        [5, "candidate", 3592.791, 7.12, 3.61, 288817152, 2444.706],
+        [6, "candidate", 3759.049, 7.19, 3.76, 288751616, 2526.747],
+        [6, "release", 3779.04, 7.16, 3.84, 288866304, 2536.392],
+        [6, "worktree", 289.133, 0.05, 0.22, 52363264, null]
+      ]
+    },
+    "standard": {
+      "releaseSha256": "db86d61808aa987918c9418fd392d26d3d49b83c734f697fa19dca9e6a2ec42a",
+      "candidateSha256": "704ff1b8713def169ea78a24432ad6df4094a769a1643716eb17345c8306b8e2",
+      "medianMs": {
+        "release": 3631.49,
+        "candidate": 3523.527,
+        "worktree": 283.022
+      },
+      "pairedMedianSavingMs": 100.274,
+      "candidateWins": 9,
+      "samples": [
+        [1, "release", 3614.059, 7.06, 3.79, 288817152, 2390.602],
+        [1, "candidate", 3523.012, 7.03, 3.58, 288866304, 2397.434],
+        [1, "worktree", 285.65, 0.04, 0.22, 52150272, null],
+        [2, "candidate", 3523.527, 7.07, 3.51, 288800768, 2404.501],
+        [2, "worktree", 283.257, 0.05, 0.22, 52215808, null],
+        [2, "release", 3601.807, 7.08, 3.75, 288915456, 2388.291],
+        [3, "worktree", 276.965, 0.05, 0.21, 52150272, null],
+        [3, "release", 3731.69, 7.2, 3.86, 288833536, 2454.281],
+        [3, "candidate", 3520.4, 7.05, 3.53, 288833536, 2399.935],
+        [4, "worktree", 277.487, 0.05, 0.21, 52199424, null],
+        [4, "candidate", 3581.91, 7.09, 3.59, 288849920, 2412.651],
+        [4, "release", 3631.49, 7.11, 3.8, 288882688, 2432.809],
+        [5, "release", 3626.463, 7.12, 3.77, 288866304, 2412.268],
+        [5, "worktree", 283, 0.05, 0.22, 52330496, null],
+        [5, "candidate", 3517.13, 7.06, 3.56, 288866304, 2403.179],
+        [6, "candidate", 3517.392, 7.06, 3.51, 288800768, 2404.226],
+        [6, "release", 3586.099, 7.14, 3.57, 288817152, 2426.605],
+        [6, "worktree", 283.518, 0.05, 0.22, 52051968, null],
+        [7, "release", 3740.865, 7.09, 4.02, 288931840, 2400.258],
+        [7, "candidate", 3534.198, 7.09, 3.56, 288833536, 2414.379],
+        [7, "worktree", 293.34, 0.05, 0.23, 52264960, null],
+        [8, "candidate", 3573.481, 7.15, 3.55, 288833536, 2427.394],
+        [8, "worktree", 281.386, 0.05, 0.22, 52215808, null],
+        [8, "release", 3834.178, 7.53, 4, 288849920, 2617.21],
+        [9, "worktree", 283.022, 0.05, 0.22, 52199424, null],
+        [9, "release", 3678.794, 7.31, 3.78, 288849920, 2466.83],
+        [9, "candidate", 3578.52, 7.08, 3.53, 288817152, 2409.673]
+      ]
+    },
+    "standardReversed": {
+      "releaseSha256": "db86d61808aa987918c9418fd392d26d3d49b83c734f697fa19dca9e6a2ec42a",
+      "candidateSha256": "704ff1b8713def169ea78a24432ad6df4094a769a1643716eb17345c8306b8e2",
+      "medianMs": {
+        "release": 4111.673,
+        "candidate": 4769.31,
+        "worktree": 345.049
+      },
+      "pairedMedianSavingMs": -430.226,
+      "candidateWins": 1,
+      "samples": [
+        [1, "worktree", 352.716, 0.05, 0.25, 52412416, null],
+        [1, "candidate", 5073.027, 8.85, 3.52, 288899072, 3819.079],
+        [1, "release", 4709.07, 8.26, 4.03, 288931840, 3323.942],
+        [2, "release", 4032.217, 7.55, 4.02, 288849920, 2599.027],
+        [2, "worktree", 359.717, 0.06, 0.26, 52543488, null],
+        [2, "candidate", 4037.573, 7.71, 4.01, 288817152, 2754.253],
+        [3, "candidate", 4465.593, 8.03, 3.73, 289259520, 3069.163],
+        [3, "release", 3969.098, 7.46, 3.95, 288784384, 2538.529],
+        [3, "worktree", 327.129, 0.05, 0.25, 52215808, null],
+        [4, "release", 4191.13, 7.77, 4.48, 288866304, 2704.157],
+        [4, "candidate", 5308.977, 8.32, 3.02, 288866304, 3595.329],
+        [4, "worktree", 337.382, 0.06, 0.25, 52510720, null],
+        [5, "candidate", 5630.02, 9.24, 3.46, 288768000, 4090.698],
+        [5, "worktree", 360.114, 0.06, 0.26, 52346880, null],
+        [5, "release", 4027.656, 7.65, 3.98, 289095680, 2703.323],
+        [6, "worktree", 317.238, 0.05, 0.25, 52396032, null],
+        [6, "release", 4496.083, 7.37, 5.99, 288899072, 2540.373],
+        [6, "candidate", 3845.691, 7.38, 4.07, 288915456, 2534.966]
+      ]
+    },
+    "currentHistoryModes": {
+      "releaseSha256": "704ff1b8713def169ea78a24432ad6df4094a769a1643716eb17345c8306b8e2",
+      "candidateSha256": "704ff1b8713def169ea78a24432ad6df4094a769a1643716eb17345c8306b8e2",
+      "medianMs": {
+        "release": 3748.11,
+        "candidate": 476.687,
+        "worktree": 316.829
+      },
+      "pairedMedianSavingMs": 3264.556,
+      "candidateWins": 6,
+      "samples": [
+        [1, "release", 3568.968, 7.12, 3.6, 288817152, 2412.538],
+        [1, "candidate", 475.394, 0.09, 0.75, 17006592, null],
+        [1, "worktree", 319.776, 0.05, 0.24, 52264960, null],
+        [2, "candidate", 463.014, 0.09, 0.75, 16859136, null],
+        [2, "worktree", 307.353, 0.05, 0.23, 52215808, null],
+        [2, "release", 3639.872, 7.21, 3.68, 288866304, 2451.321],
+        [3, "worktree", 313.882, 0.05, 0.24, 52215808, null],
+        [3, "release", 3968.567, 7.34, 4.58, 288800768, 2514.904],
+        [3, "candidate", 485.737, 0.09, 0.81, 16941056, null],
+        [4, "worktree", 309.111, 0.05, 0.24, 52215808, null],
+        [4, "candidate", 461.92, 0.09, 0.76, 16891904, null],
+        [4, "release", 3789.506, 7.28, 3.81, 288931840, 2530.392],
+        [5, "release", 3747.818, 7.39, 3.75, 288833536, 2547.864],
+        [5, "worktree", 328.439, 0.05, 0.25, 52215808, null],
+        [5, "candidate", 489.128, 0.09, 0.8, 17022976, null],
+        [6, "candidate", 477.98, 0.09, 0.76, 16891904, null],
+        [6, "release", 3748.402, 7.32, 3.68, 288817152, 2521.794],
+        [6, "worktree", 357.347, 0.05, 0.26, 52527104, null]
+      ],
+      "arms": {
+        "release": "current isolated",
+        "candidate": "current local",
+        "worktree": "linked Git worktree"
+      }
+    },
+    "preparedHistory": {
+      "releaseSha256": "db86d61808aa987918c9418fd392d26d3d49b83c734f697fa19dca9e6a2ec42a",
+      "candidateSha256": "704ff1b8713def169ea78a24432ad6df4094a769a1643716eb17345c8306b8e2",
+      "medianMs": {
+        "release": 1561.158,
+        "candidate": 1556.874,
+        "worktree": 383.823
+      },
+      "pairedMedianSavingMs": 149.274,
+      "candidateWins": 2,
+      "samples": [
+        [1, "release", 1476.57, 0.31, 2.62, 25985024, 113.127],
+        [1, "candidate", 1327.296, 0.28, 2.16, 26001408, 108.516],
+        [1, "worktree", 447.248, 0.06, 0.29, 52723712, null],
+        [2, "candidate", 1556.874, 0.3, 2.33, 26198016, 110.93],
+        [2, "worktree", 383.823, 0.06, 0.27, 52789248, null],
+        [2, "release", 1933.814, 0.38, 2.5, 26132480, 120.901],
+        [3, "worktree", 346.313, 0.05, 0.25, 52396032, null],
+        [3, "release", 1561.158, 0.31, 2.45, 26017792, 108.273],
+        [3, "candidate", 1836.047, 0.32, 2.05, 26001408, 124.515]
+      ],
+      "setup": "Each Graft arm created a no-checkout workspace at the selected commit before timing. The source snapshot cache did not yet exist."
+    }
+  },
+  "apfsFileDataBytes": {
+    "native": {
+      "first": 29941760,
+      "repeat": 29941760,
+      "oneFileAdvance": 29945856
+    },
+    "graft": {
+      "first": 15486976,
+      "repeat": 315392,
+      "oneFileAdvance": 1814528
+    }
+  },
+  "firstGraftByPurpose": {
+    "primaryChange": 0,
+    "historyPacks": 4321280,
+    "historyIndexes": 9338880,
+    "checkoutIndexes": 286720,
+    "sourceFiles": 0,
+    "records": 1540096
+  },
+  "dirtyDonorBypass": [
+    {
+      "arm": "release",
+      "checkout": "first",
+      "diffFilesExitBeforeStatus": 0,
+      "privateWorkingFileBytes": 0
+    },
+    {
+      "arm": "release",
+      "checkout": "repeat",
+      "diffFilesExitBeforeStatus": 0,
+      "privateWorkingFileBytes": 0
+    },
+    {
+      "arm": "release",
+      "checkout": "advanced",
+      "diffFilesExitBeforeStatus": 0,
+      "privateWorkingFileBytes": 0
+    },
+    {
+      "arm": "direct",
+      "checkout": "first",
+      "diffFilesExitBeforeStatus": 1,
+      "privateWorkingFileBytes": 0
+    },
+    {
+      "arm": "direct",
+      "checkout": "repeat",
+      "diffFilesExitBeforeStatus": 1,
+      "privateWorkingFileBytes": 4194304
+    },
+    {
+      "arm": "direct",
+      "checkout": "advanced",
+      "diffFilesExitBeforeStatus": 1,
+      "privateWorkingFileBytes": 4194304
+    }
+  ],
+  "validation": {
+    "rustTestsPassed": 156,
+    "targets": [
+      "Linux",
+      "Windows"
+    ],
+    "minimumRust": "1.89",
+    "suites": {
+      "git version 2.46.0": {
+        "passed": 148,
+        "failed": 0,
+        "unavailable": 0,
+        "total": 148
+      },
+      "git version 2.56.0": {
+        "passed": 148,
+        "failed": 0,
+        "unavailable": 0,
+        "total": 148
+      }
+    },
+    "previousRecovery": [
+      [
+        "git version 2.56.0",
+        "drop refused nested_git_metadata in .graft-checkout-*"
+      ],
+      [
+        "git version 2.46.0",
+        "drop refused nested_git_metadata in .graft-checkout-*"
+      ]
+    ],
+    "currentRecovery": [
+      [
+        "git version 2.56.0",
+        "interrupt"
+      ],
+      [
+        "git version 2.56.0",
+        "failed-read"
+      ],
+      [
+        "git version 2.56.0",
+        "changed-snapshot"
+      ],
+      [
+        "git version 2.56.0",
+        "late-file"
+      ],
+      [
+        "git version 2.46.0",
+        "interrupt"
+      ],
+      [
+        "git version 2.46.0",
+        "failed-read"
+      ],
+      [
+        "git version 2.46.0",
+        "changed-snapshot"
+      ],
+      [
+        "git version 2.46.0",
+        "late-file"
+      ]
+    ],
+    "gitFixtures": {
+      "Git 2.46 SHA-1": [
+        {
+          "arm": "clean",
+          "checkout": "first",
+          "diffFilesExitBeforeStatus": 0,
+          "privateWorkingFileBytes": 0,
+          "reusedSnapshot": false
+        },
+        {
+          "arm": "clean",
+          "checkout": "repeat",
+          "diffFilesExitBeforeStatus": 0,
+          "privateWorkingFileBytes": 0,
+          "reusedSnapshot": true
+        },
+        {
+          "arm": "clean",
+          "checkout": "advanced",
+          "diffFilesExitBeforeStatus": 0,
+          "privateWorkingFileBytes": 0,
+          "reusedSnapshot": false
+        },
+        {
+          "arm": "dirty",
+          "checkout": "first",
+          "diffFilesExitBeforeStatus": 0,
+          "privateWorkingFileBytes": 4194304,
+          "reusedSnapshot": false
+        },
+        {
+          "arm": "dirty",
+          "checkout": "repeat",
+          "diffFilesExitBeforeStatus": 0,
+          "privateWorkingFileBytes": 0,
+          "reusedSnapshot": true
+        },
+        {
+          "arm": "dirty",
+          "checkout": "advanced",
+          "diffFilesExitBeforeStatus": 0,
+          "privateWorkingFileBytes": 0,
+          "reusedSnapshot": false
+        },
+        {
+          "arm": "crlf",
+          "checkout": "first",
+          "diffFilesExitBeforeStatus": 0,
+          "privateWorkingFileBytes": 11,
+          "reusedSnapshot": false
+        },
+        {
+          "arm": "crlf",
+          "checkout": "repeat",
+          "diffFilesExitBeforeStatus": 0,
+          "privateWorkingFileBytes": 0,
+          "reusedSnapshot": true
+        },
+        {
+          "arm": "crlf",
+          "checkout": "advanced",
+          "diffFilesExitBeforeStatus": 0,
+          "privateWorkingFileBytes": 0,
+          "reusedSnapshot": false
+        }
+      ],
+      "Git 2.56 SHA-256": [
+        {
+          "arm": "clean",
+          "checkout": "first",
+          "diffFilesExitBeforeStatus": 0,
+          "privateWorkingFileBytes": 0,
+          "reusedSnapshot": false
+        },
+        {
+          "arm": "clean",
+          "checkout": "repeat",
+          "diffFilesExitBeforeStatus": 0,
+          "privateWorkingFileBytes": 0,
+          "reusedSnapshot": true
+        },
+        {
+          "arm": "clean",
+          "checkout": "advanced",
+          "diffFilesExitBeforeStatus": 0,
+          "privateWorkingFileBytes": 0,
+          "reusedSnapshot": false
+        },
+        {
+          "arm": "dirty",
+          "checkout": "first",
+          "diffFilesExitBeforeStatus": 0,
+          "privateWorkingFileBytes": 4194304,
+          "reusedSnapshot": false
+        },
+        {
+          "arm": "dirty",
+          "checkout": "repeat",
+          "diffFilesExitBeforeStatus": 0,
+          "privateWorkingFileBytes": 0,
+          "reusedSnapshot": true
+        },
+        {
+          "arm": "dirty",
+          "checkout": "advanced",
+          "diffFilesExitBeforeStatus": 0,
+          "privateWorkingFileBytes": 0,
+          "reusedSnapshot": false
+        },
+        {
+          "arm": "crlf",
+          "checkout": "first",
+          "diffFilesExitBeforeStatus": 0,
+          "privateWorkingFileBytes": 11,
+          "reusedSnapshot": false
+        },
+        {
+          "arm": "crlf",
+          "checkout": "repeat",
+          "diffFilesExitBeforeStatus": 0,
+          "privateWorkingFileBytes": 0,
+          "reusedSnapshot": true
+        },
+        {
+          "arm": "crlf",
+          "checkout": "advanced",
+          "diffFilesExitBeforeStatus": 0,
+          "privateWorkingFileBytes": 0,
+          "reusedSnapshot": false
+        }
+      ]
+    }
+  }
+}

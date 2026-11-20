@@ -1,0 +1,280 @@
+{
+  "homebrewBase": "bc63375ac3a4d6debb1ceb441ae6e22854f0909a",
+  "fixtureCommit": "6d4598044a681f82443728ed64101bf8d0bb3a91",
+  "regularFiles": 3319,
+  "gitlinks": 1,
+  "medians": {
+    "before": {
+      "cold": 0.6213399795000001,
+      "repeat": 0.3569486670000001,
+      "firstStatus": 0.1301109584999997,
+      "native": 0.2969404795
+    },
+    "after": {
+      "cold": 0.5552296875000002,
+      "repeat": 0.4228418959999999,
+      "firstStatus": 0.3792450414999998,
+      "native": 0.3268742289999999
+    }
+  },
+  "allocation": {
+    "before": {
+      "bytesSincePopulatedCheckout": "64962560",
+      "firstCheckoutBytes": "35168256",
+      "additionalSecondCheckoutBytes": "29794304",
+      "firstCheckoutFileDataByPurpose": {
+        "primaryChange": "0",
+        "historyPacks": "5246976",
+        "historyIndexes": "106496",
+        "checkoutIndexes": "286720",
+        "sourceFiles": "29474816",
+        "records": "53248"
+      },
+      "additionalSecondCheckoutFileDataByPurpose": {
+        "primaryChange": "0",
+        "historyPacks": "0",
+        "historyIndexes": "0",
+        "checkoutIndexes": "286720",
+        "sourceFiles": "29474816",
+        "records": "32768"
+      },
+      "fileDataByPurpose": {
+        "primaryChange": "0",
+        "historyPacks": "5246976",
+        "historyIndexes": "106496",
+        "checkoutIndexes": "573440",
+        "sourceFiles": "58949632",
+        "records": "86016"
+      },
+      "observerSeconds": 1.0362767500000003
+    },
+    "after": {
+      "bytesSincePopulatedCheckout": "6012928",
+      "firstCheckoutBytes": "5693440",
+      "additionalSecondCheckoutBytes": "319488",
+      "firstCheckoutFileDataByPurpose": {
+        "primaryChange": "0",
+        "historyPacks": "5246976",
+        "historyIndexes": "106496",
+        "checkoutIndexes": "286720",
+        "sourceFiles": "0",
+        "records": "53248"
+      },
+      "additionalSecondCheckoutFileDataByPurpose": {
+        "primaryChange": "0",
+        "historyPacks": "0",
+        "historyIndexes": "0",
+        "checkoutIndexes": "286720",
+        "sourceFiles": "0",
+        "records": "32768"
+      },
+      "fileDataByPurpose": {
+        "primaryChange": "0",
+        "historyPacks": "5246976",
+        "historyIndexes": "106496",
+        "checkoutIndexes": "573440",
+        "sourceFiles": "0",
+        "records": "86016"
+      },
+      "observerSeconds": 1.0582396669999998
+    }
+  },
+  "samples": {
+    "before": [
+      {
+        "receipt": "pair-0-before.json",
+        "binary": {
+          "bytes": 4182480,
+          "sha256": "b1f50c64bdc05d0dd6a29419411927e0e6e86f041fd8c894a5f9ba8f2c2303fc"
+        },
+        "cold": 0.6222492499999999,
+        "repeat": 0.353323625,
+        "firstStatus": 0.12692612500000042,
+        "native": 0.327217625,
+        "resources": {
+          "userSeconds": 0.54,
+          "systemSeconds": 0.55,
+          "peakRssBytes": 79429632
+        }
+      },
+      {
+        "receipt": "pair-1-before.json",
+        "binary": {
+          "bytes": 4182480,
+          "sha256": "b1f50c64bdc05d0dd6a29419411927e0e6e86f041fd8c894a5f9ba8f2c2303fc"
+        },
+        "cold": 0.7224207919999999,
+        "repeat": 0.4847232920000006,
+        "firstStatus": 0.22159441700000024,
+        "native": 0.2899730830000001,
+        "resources": {
+          "userSeconds": 0.55,
+          "systemSeconds": 0.83,
+          "peakRssBytes": 78741504
+        }
+      },
+      {
+        "receipt": "pair-2-before.json",
+        "binary": {
+          "bytes": 4182480,
+          "sha256": "b1f50c64bdc05d0dd6a29419411927e0e6e86f041fd8c894a5f9ba8f2c2303fc"
+        },
+        "cold": 0.5950555,
+        "repeat": 0.3823146670000001,
+        "firstStatus": 0.08715066699999989,
+        "native": 0.2915065420000001,
+        "resources": {
+          "userSeconds": 0.53,
+          "systemSeconds": 0.57,
+          "peakRssBytes": 76955648
+        }
+      },
+      {
+        "receipt": "pair-3-before.json",
+        "binary": {
+          "bytes": 4182480,
+          "sha256": "b1f50c64bdc05d0dd6a29419411927e0e6e86f041fd8c894a5f9ba8f2c2303fc"
+        },
+        "cold": 0.6204307090000002,
+        "repeat": 0.3402315830000002,
+        "firstStatus": 0.13257474999999977,
+        "native": 0.29007158400000005,
+        "resources": {
+          "userSeconds": 0.53,
+          "systemSeconds": 0.61,
+          "peakRssBytes": 77348864
+        }
+      },
+      {
+        "receipt": "pair-4-before.json",
+        "binary": {
+          "bytes": 4182480,
+          "sha256": "b1f50c64bdc05d0dd6a29419411927e0e6e86f041fd8c894a5f9ba8f2c2303fc"
+        },
+        "cold": 0.5797243330000001,
+        "repeat": 0.3388817919999997,
+        "firstStatus": 0.12764716699999962,
+        "native": 0.3101298339999998,
+        "resources": {
+          "userSeconds": 0.53,
+          "systemSeconds": 0.54,
+          "peakRssBytes": 76562432
+        }
+      },
+      {
+        "receipt": "pair-5-before.json",
+        "binary": {
+          "bytes": 4182480,
+          "sha256": "b1f50c64bdc05d0dd6a29419411927e0e6e86f041fd8c894a5f9ba8f2c2303fc"
+        },
+        "cold": 0.6315538339999999,
+        "repeat": 0.36057370900000024,
+        "firstStatus": 0.13865829200000007,
+        "native": 0.302374417,
+        "resources": {
+          "userSeconds": 0.54,
+          "systemSeconds": 0.58,
+          "peakRssBytes": 79740928
+        }
+      }
+    ],
+    "after": [
+      {
+        "receipt": "pair-0-after.json",
+        "binary": {
+          "bytes": 4182496,
+          "sha256": "562a6884b2e51492f110e2d04d28b73797080230da601aea307f7460fa0abd49"
+        },
+        "cold": 0.5264078329999997,
+        "repeat": 0.39881999999999973,
+        "firstStatus": 0.38105412500000013,
+        "native": 0.3279650829999998,
+        "resources": {
+          "userSeconds": 0.53,
+          "systemSeconds": 0.92,
+          "peakRssBytes": 77774848
+        }
+      },
+      {
+        "receipt": "pair-1-after.json",
+        "binary": {
+          "bytes": 4182496,
+          "sha256": "562a6884b2e51492f110e2d04d28b73797080230da601aea307f7460fa0abd49"
+        },
+        "cold": 0.523603959,
+        "repeat": 0.4022532920000003,
+        "firstStatus": 0.368472667,
+        "native": 0.32991087499999994,
+        "resources": {
+          "userSeconds": 0.53,
+          "systemSeconds": 0.94,
+          "peakRssBytes": 78331904
+        }
+      },
+      {
+        "receipt": "pair-2-after.json",
+        "binary": {
+          "bytes": 4182496,
+          "sha256": "562a6884b2e51492f110e2d04d28b73797080230da601aea307f7460fa0abd49"
+        },
+        "cold": 0.540988292,
+        "repeat": 0.42524916699999993,
+        "firstStatus": 0.3759109580000004,
+        "native": 0.325783375,
+        "resources": {
+          "userSeconds": 0.53,
+          "systemSeconds": 0.92,
+          "peakRssBytes": 78266368
+        }
+      },
+      {
+        "receipt": "pair-3-after.json",
+        "binary": {
+          "bytes": 4182496,
+          "sha256": "562a6884b2e51492f110e2d04d28b73797080230da601aea307f7460fa0abd49"
+        },
+        "cold": 0.5843747080000002,
+        "repeat": 0.43207008399999997,
+        "firstStatus": 0.41566624999999974,
+        "native": 0.320105292,
+        "resources": {
+          "userSeconds": 0.54,
+          "systemSeconds": 1.07,
+          "peakRssBytes": 78839808
+        }
+      },
+      {
+        "receipt": "pair-4-after.json",
+        "binary": {
+          "bytes": 4182496,
+          "sha256": "562a6884b2e51492f110e2d04d28b73797080230da601aea307f7460fa0abd49"
+        },
+        "cold": 0.6837217500000001,
+        "repeat": 0.6193207500000008,
+        "firstStatus": 0.37743595799999957,
+        "native": 0.29530687499999997,
+        "resources": {
+          "userSeconds": 0.71,
+          "systemSeconds": 0.95,
+          "peakRssBytes": 77807616
+        }
+      },
+      {
+        "receipt": "pair-5-after.json",
+        "binary": {
+          "bytes": 4182496,
+          "sha256": "562a6884b2e51492f110e2d04d28b73797080230da601aea307f7460fa0abd49"
+        },
+        "cold": 0.5694710830000004,
+        "repeat": 0.4204346249999999,
+        "firstStatus": 0.40865799999999947,
+        "native": 0.37491824999999995,
+        "resources": {
+          "userSeconds": 0.54,
+          "systemSeconds": 1.02,
+          "peakRssBytes": 78020608
+        }
+      }
+    ]
+  }
+}

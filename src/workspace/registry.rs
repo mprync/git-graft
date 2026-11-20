@@ -285,16 +285,7 @@ pub(super) fn marked_dir(path: &Path, id: &str, create: bool) -> Result<()> {
             project_id: id.into(),
             directory: file_id(stage.path())?,
         };
-        atomic(
-            &stage.path().join(CACHE_OWNER),
-            &serde_json::to_vec(&owner)?,
-        )?;
-        // The name is no longer ours after rename. Never recursively clean up
-        // an entry that may have subsequently appeared at the staging path.
-        let stage = stage.keep();
-        rename_exclusive(&stage, path)
-            .with_context(|| format!("publish workspace namespace {}", path.display()))?;
-        sync_directory(parent)?;
+        crate::registry::publish_marked_directory(stage, path, &serde_json::to_vec(&owner)?)?;
     }
     let metadata = owned_directory(path)?;
     #[cfg(unix)]

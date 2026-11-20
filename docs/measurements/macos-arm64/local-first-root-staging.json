@@ -1,0 +1,841 @@
+{
+  "fixture": {
+    "commit": "bc63375ac3a4d6debb1ceb441ae6e22854f0909a",
+    "tree": "ee570b9dbb122c6b6f0f609b83402c1f8eaca195",
+    "platform": "macOS arm64 APFS, Git 2.56.0",
+    "method": "Fresh populated clones of Homebrew for each rotated arm. Each ordinary spawn omitted history and verified HEAD, tree, staged entries, clean status, inclusion of an unrelated object, and absence of alternates. First git status was timed separately. The empty control used --no-checkout. Host load and filesystem caches were uncontrolled.",
+    "columns": ["round","arm","spawnMs","firstStatusMs","userSeconds","systemSeconds","peakRssBytes","clonedRegularFiles","privateWorkingFileBytes"]
+  },
+  "series": {
+    "forward": {
+      "releaseSha256": "6ffd18bf52a6a0433d6450367d4ae53c323b952a8b401f63e1edfa5fb956400a",
+      "candidateSha256": "c237ea3ffd1c301cdefd6b6bffed0da2ed7bcb50a8c4f8533b8021e55b327d75",
+      "rows": [
+        [1,"release",473.002,343.863,0.12,0.83,28835840,3318,0],
+        [1,"candidate",465.501,324.856,0.12,0.83,28819456,3318,0],
+        [1,"worktree",299.747,111.643,0.05,0.22,52150272,null,null],
+        [2,"candidate",439.263,358.097,0.12,0.8,28819456,3318,0],
+        [2,"worktree",299.055,115.832,0.05,0.23,52150272,null,null],
+        [2,"release",414.58,332.859,0.12,0.8,28803072,3318,0],
+        [3,"worktree",311.588,110.657,0.05,0.23,52199424,null,null],
+        [3,"release",576.997,394.724,0.13,1.12,28819456,3318,0],
+        [3,"candidate",485.625,374.965,0.13,0.87,28819456,3318,0],
+        [4,"worktree",325.914,116.729,0.05,0.24,52445184,null,null],
+        [4,"candidate",482.852,361.084,0.13,0.82,28803072,3318,0],
+        [4,"release",418.198,311.613,0.12,0.78,28819456,3318,0],
+        [5,"release",416.376,356.208,0.12,0.79,28803072,3318,0],
+        [5,"worktree",294.458,108.812,0.05,0.22,52150272,null,null],
+        [5,"candidate",422.662,332.78,0.12,0.78,28803072,3318,0],
+        [6,"candidate",417.807,311.679,0.12,0.77,28803072,3318,0],
+        [6,"release",409.241,313.968,0.12,0.78,28803072,3318,0],
+        [6,"worktree",292.383,123.212,0.05,0.22,52215808,null,null]
+      ]
+    },
+    "reverse": {
+      "releaseSha256": "6ffd18bf52a6a0433d6450367d4ae53c323b952a8b401f63e1edfa5fb956400a",
+      "candidateSha256": "c237ea3ffd1c301cdefd6b6bffed0da2ed7bcb50a8c4f8533b8021e55b327d75",
+      "rows": [
+        [1,"worktree",293.069,61.015,0.05,0.23,52625408,null,null],
+        [1,"candidate",561.958,450.219,0.12,1.21,28819456,3318,0],
+        [1,"release",411.902,337.799,0.12,0.78,28819456,3318,0],
+        [2,"release",416.158,328.905,0.12,0.79,28819456,3318,0],
+        [2,"worktree",322.319,116.101,0.05,0.24,52396032,null,null],
+        [2,"candidate",419.294,320.665,0.11,0.76,28803072,3318,0],
+        [3,"candidate",478.86,418.115,0.12,0.85,28835840,3318,0],
+        [3,"release",414.042,324.792,0.12,0.76,28819456,3318,0],
+        [3,"worktree",291.501,108.318,0.05,0.22,52150272,null,null],
+        [4,"release",394.839,326.486,0.11,0.74,28803072,3318,0],
+        [4,"candidate",420.546,331.192,0.12,0.78,28819456,3318,0],
+        [4,"worktree",358.494,114.784,0.05,0.27,52412416,null,null],
+        [5,"candidate",437.804,426.708,0.12,0.87,28819456,3318,0],
+        [5,"worktree",303.743,121.131,0.05,0.23,52051968,null,null],
+        [5,"release",433.816,373.115,0.12,0.81,28819456,3318,0],
+        [6,"worktree",294.877,81.666,0.05,0.22,52150272,null,null],
+        [6,"release",435.448,336.369,0.12,0.81,28803072,3318,0],
+        [6,"candidate",578.804,405.576,0.12,0.82,28803072,3318,0]
+      ]
+    },
+    "empty": {
+      "releaseSha256": "6ffd18bf52a6a0433d6450367d4ae53c323b952a8b401f63e1edfa5fb956400a",
+      "candidateSha256": "c237ea3ffd1c301cdefd6b6bffed0da2ed7bcb50a8c4f8533b8021e55b327d75",
+      "rows": [
+        [1,"release",160.956,null,0.03,0.04,8781824,null,null],
+        [1,"candidate",197.502,null,0.04,0.04,8814592,null,null],
+        [1,"worktree",16.281,null,0,0,9371648,null,null],
+        [2,"candidate",205.42,null,0.04,0.04,8781824,null,null],
+        [2,"worktree",15.11,null,0,0,9420800,null,null],
+        [2,"release",192.79,null,0.04,0.04,8765440,null,null],
+        [3,"worktree",15.697,null,0,0,9338880,null,null],
+        [3,"release",186.104,null,0.04,0.04,8814592,null,null],
+        [3,"candidate",199.888,null,0.04,0.04,8781824,null,null],
+        [4,"worktree",17.422,null,0,0,9371648,null,null],
+        [4,"candidate",174.114,null,0.04,0.04,8765440,null,null],
+        [4,"release",181.389,null,0.03,0.04,8765440,null,null],
+        [5,"release",185.658,null,0.03,0.04,8814592,null,null],
+        [5,"worktree",15.437,null,0,0,9322496,null,null],
+        [5,"candidate",192.321,null,0.03,0.04,8781824,null,null],
+        [6,"candidate",184.039,null,0.04,0.04,8781824,null,null],
+        [6,"release",172.704,null,0.03,0.04,8814592,null,null],
+        [6,"worktree",15.515,null,0,0,9322496,null,null]
+      ]
+    },
+    "observed": {
+      "releaseSha256": "6ffd18bf52a6a0433d6450367d4ae53c323b952a8b401f63e1edfa5fb956400a",
+      "candidateSha256": "99b52fd19f8594785a6acd15a5f6c166aaab952be658309e21677cf85c04d775",
+      "rows": [
+        [1,"release",409.221,329.763,0.12,0.84,28803072,3318,0],
+        [1,"candidate",410.346,342.211,0.12,0.8,28803072,3318,0],
+        [1,"worktree",307.126,144.533,0.05,0.23,52051968,null,null],
+        [2,"candidate",463.018,346.123,0.12,0.98,28803072,3318,0],
+        [2,"worktree",295.593,111.246,0.05,0.22,52379648,null,null],
+        [2,"release",396.558,399.516,0.12,0.78,28819456,3318,0],
+        [3,"worktree",296.239,108.004,0.05,0.23,52281344,null,null],
+        [3,"release",410.69,319.688,0.11,0.78,28803072,3318,0],
+        [3,"candidate",391.668,364.067,0.11,0.76,28803072,3318,0],
+        [4,"worktree",302.345,112.89,0.05,0.23,52527104,null,null],
+        [4,"candidate",412.846,364.475,0.12,0.79,28819456,3318,0],
+        [4,"release",422.492,340.352,0.12,0.79,28803072,3318,0],
+        [5,"release",441.265,326.26,0.12,0.85,28803072,3318,0],
+        [5,"worktree",295.099,107.664,0.05,0.22,52035584,null,null],
+        [5,"candidate",495.27,410.716,0.13,1.04,28835840,3318,0],
+        [6,"candidate",424.115,376.95,0.13,0.85,28803072,3318,0],
+        [6,"release",515.819,401.065,0.12,1,28803072,3318,0],
+        [6,"worktree",436.767,127.547,0.05,0.25,52510720,null,null]
+      ]
+    },
+    "ordered-all": {
+      "releaseSha256": "6ffd18bf52a6a0433d6450367d4ae53c323b952a8b401f63e1edfa5fb956400a",
+      "candidateSha256": "925a6963bf2f112b2fb35a9d8d5eeeed01aa65581fb9e4aebcf4bfc744d04906",
+      "rows": [
+        [1,"release",554.069,498.569,0.14,0.84,28803072,3318,0],
+        [1,"candidate",552.83,332.578,0.15,0.86,28835840,3318,0],
+        [1,"worktree",289.826,117.082,0.05,0.22,52199424,null,null],
+        [2,"candidate",425.337,329.945,0.12,0.8,28803072,3318,0],
+        [2,"worktree",349.294,75.295,0.05,0.23,52051968,null,null],
+        [2,"release",440.888,318.116,0.13,0.9,28819456,3318,0],
+        [3,"worktree",295.005,120.346,0.05,0.22,52363264,null,null],
+        [3,"release",442.036,325.578,0.12,0.88,28803072,3318,0],
+        [3,"candidate",436.202,342.315,0.13,0.84,28803072,3318,0],
+        [4,"worktree",299.91,115.3,0.05,0.23,52396032,null,null],
+        [4,"candidate",450.621,326.074,0.13,0.87,28819456,3318,0],
+        [4,"release",432.145,331.328,0.12,0.84,28819456,3318,0],
+        [5,"release",426.742,319.119,0.12,0.79,28803072,3318,0],
+        [5,"worktree",290.154,94.746,0.05,0.22,52314112,null,null],
+        [5,"candidate",449.495,354.941,0.13,0.95,28819456,3318,0],
+        [6,"candidate",405.589,368.192,0.12,0.83,28819456,3318,0],
+        [6,"release",415.113,330.454,0.12,0.82,28803072,3318,0],
+        [6,"worktree",303.433,89.838,0.05,0.23,52363264,null,null]
+      ]
+    },
+    "ordered-all-reverse": {
+      "releaseSha256": "6ffd18bf52a6a0433d6450367d4ae53c323b952a8b401f63e1edfa5fb956400a",
+      "candidateSha256": "925a6963bf2f112b2fb35a9d8d5eeeed01aa65581fb9e4aebcf4bfc744d04906",
+      "rows": [
+        [1,"worktree",311.931,91.905,0.05,0.23,52412416,null,null],
+        [1,"candidate",442.054,366.093,0.12,0.85,28852224,3318,0],
+        [1,"release",428.691,419.622,0.12,0.86,28819456,3318,0],
+        [2,"release",401.186,314.24,0.12,0.78,28803072,3318,0],
+        [2,"worktree",349.031,153.849,0.05,0.26,52609024,null,null],
+        [2,"candidate",389.724,337.468,0.12,0.76,28803072,3318,0],
+        [3,"candidate",463.973,378.139,0.13,0.88,28819456,3318,0],
+        [3,"release",438.169,350.046,0.12,0.87,28819456,3318,0],
+        [3,"worktree",301.068,115.492,0.05,0.23,52051968,null,null],
+        [4,"release",425.972,344.331,0.12,0.8,28803072,3318,0],
+        [4,"candidate",419.779,329.821,0.12,0.82,28819456,3318,0],
+        [4,"worktree",297.216,37.94,0.05,0.22,52199424,null,null],
+        [5,"candidate",437.067,357.424,0.13,0.81,28835840,3318,0],
+        [5,"worktree",295.64,114.946,0.05,0.22,52215808,null,null],
+        [5,"release",436.636,336.103,0.12,0.8,28803072,3318,0],
+        [6,"worktree",294.776,116.19,0.05,0.22,52314112,null,null],
+        [6,"release",452.197,356.865,0.12,0.82,28786688,3318,0],
+        [6,"candidate",420.306,310.047,0.12,0.83,28803072,3318,0]
+      ]
+    },
+    "ordered-confirm": {
+      "releaseSha256": "6ffd18bf52a6a0433d6450367d4ae53c323b952a8b401f63e1edfa5fb956400a",
+      "candidateSha256": "925a6963bf2f112b2fb35a9d8d5eeeed01aa65581fb9e4aebcf4bfc744d04906",
+      "rows": [
+        [1,"release",399.279,306.682,0.12,0.78,28803072,3318,0],
+        [1,"candidate",406.336,339.51,0.11,0.76,28803072,3318,0],
+        [1,"worktree",292.522,107.801,0.05,0.22,52150272,null,null],
+        [2,"candidate",409.037,303.388,0.11,0.78,28786688,3318,0],
+        [2,"worktree",307.804,111.811,0.05,0.22,52281344,null,null],
+        [2,"release",398.184,334.995,0.12,0.8,28835840,3318,0],
+        [3,"worktree",294.914,107.086,0.05,0.22,52150272,null,null],
+        [3,"release",470.978,681.258,0.12,0.76,28803072,3318,0],
+        [3,"candidate",978.452,2121.204,0.12,0.77,28803072,3318,0],
+        [4,"worktree",288.812,106.636,0.05,0.22,52051968,null,null],
+        [4,"candidate",396.144,318.619,0.11,0.79,28835840,3318,0],
+        [4,"release",413.279,320.814,0.11,0.8,28803072,3318,0],
+        [5,"release",438.737,345.397,0.12,0.85,28819456,3318,0],
+        [5,"worktree",317.698,131.937,0.05,0.23,52428800,null,null],
+        [5,"candidate",459.475,361.727,0.12,0.8,28835840,3318,0],
+        [6,"candidate",446.211,382.113,0.12,0.81,28819456,3318,0],
+        [6,"release",397.913,323.08,0.11,0.76,28803072,3318,0],
+        [6,"worktree",309.054,93.281,0.05,0.23,52379648,null,null],
+        [7,"release",428.172,324.442,0.12,0.79,28803072,3318,0],
+        [7,"candidate",374.622,339.02,0.11,0.76,28819456,3318,0],
+        [7,"worktree",290.392,107.116,0.05,0.22,52314112,null,null],
+        [8,"candidate",422.77,410.67,0.12,0.81,28803072,3318,0],
+        [8,"worktree",322.111,120.109,0.05,0.23,52445184,null,null],
+        [8,"release",402.487,328.172,0.12,0.79,28803072,3318,0],
+        [9,"worktree",296.521,112.58,0.05,0.23,52215808,null,null],
+        [9,"release",449.593,323.684,0.13,0.88,28835840,3318,0],
+        [9,"candidate",422.196,329.097,0.12,0.81,28803072,3318,0],
+        [10,"worktree",332.201,114.252,0.05,0.25,52330496,null,null],
+        [10,"candidate",455.695,340.09,0.13,0.88,28852224,3318,0],
+        [10,"release",436.527,368.034,0.12,0.84,28803072,3318,0],
+        [11,"release",433.593,344.886,0.12,0.85,28819456,3318,0],
+        [11,"worktree",316.685,121.04,0.05,0.24,52232192,null,null],
+        [11,"candidate",455.687,333.982,0.12,0.87,28819456,3318,0],
+        [12,"candidate",465.118,399.42,0.12,0.9,28819456,3318,0],
+        [12,"release",470.761,351.179,0.13,0.91,28803072,3318,0],
+        [12,"worktree",315.745,117.676,0.05,0.25,52756480,null,null]
+      ]
+    }
+  },
+  "rootStage": {
+    "schedule": "Prepare a private sibling workspace root containing a .pending-* child with its marker while creating the registry records directory and obtaining its lock. Publish the prepared root before the usual Place record. Existing roots use serial placement.",
+    "milestones": {
+      "candidateSha256": "c237ea3ffd1c301cdefd6b6bffed0da2ed7bcb50a8c4f8533b8021e55b327d75",
+      "releaseSha256": "6ffd18bf52a6a0433d6450367d4ae53c323b952a8b401f63e1edfa5fb956400a",
+      "commit": "bc63375ac3a4d6debb1ceb441ae6e22854f0909a",
+      "method": "Six alternating pairs, with identical sampling in both arms. Sampled eight regular paths plus project identity, workspace marker, Git HEAD, an installed pack, branch ref, index lock and published index at 2 ms intervals. Times indicate first observation of a name.",
+      "groups": [
+        {
+          "count": 869,
+          "first": ".claude/settings.json",
+          "last": "Library/Homebrew/os/mac/pkgconfig/13/uuid.pc"
+        },
+        {
+          "count": 739,
+          "first": "Library/Homebrew/os/mac/pkgconfig/13/zlib.pc",
+          "last": "Library/Homebrew/test/cleaner_spec.rb"
+        },
+        {
+          "count": 842,
+          "first": "Library/Homebrew/test/cleanup_spec.rb",
+          "last": "Library/Homebrew/test/support/helper/spec/shared_context/integration_test_spec.rb"
+        },
+        {
+          "count": 868,
+          "first": "Library/Homebrew/test/support/helper/spec/shared_context/trust_store.rb",
+          "last": "package/scripts/preinstall"
+        }
+      ],
+      "rows": [
+        {
+          "round": 1,
+          "arm": "release",
+          "spawnMs": 408.049,
+          "firstMs": [224.314,224.354,224.38,224.401],
+          "lastMs": [364.894,347.165,361.849,377.009],
+          "setupMs": {
+            "projectId": 22.225,
+            "placed": 94.644,
+            "initHead": 121.701,
+            "privatePack": 161.371,
+            "branch": 176.133,
+            "checkoutLock": 194.328,
+            "publishedIndex": 383.067
+          }
+        },
+        {
+          "round": 1,
+          "arm": "candidate",
+          "spawnMs": 392.709,
+          "firstMs": [211.293,211.324,211.351,211.382],
+          "lastMs": [350.719,334.276,350.741,362.166],
+          "setupMs": {
+            "projectId": 16.601,
+            "placed": 85.839,
+            "initHead": 115.211,
+            "privatePack": 148.526,
+            "branch": 162.918,
+            "checkoutLock": 181.084,
+            "publishedIndex": 371.266
+          }
+        },
+        {
+          "round": 2,
+          "arm": "candidate",
+          "spawnMs": 396.007,
+          "firstMs": [211.754,211.786,211.813,211.837],
+          "lastMs": [355.164,337.481,355.189,367.301],
+          "setupMs": {
+            "projectId": 22.474,
+            "placed": 93.762,
+            "initHead": 115.248,
+            "privatePack": 145.671,
+            "branch": 166.934,
+            "checkoutLock": 185.131,
+            "publishedIndex": 372.682
+          }
+        },
+        {
+          "round": 2,
+          "arm": "release",
+          "spawnMs": 401.574,
+          "firstMs": [219.686,219.703,219.723,219.737],
+          "lastMs": [357.691,341.085,354.65,369.038],
+          "setupMs": {
+            "projectId": 22.503,
+            "placed": 99.606,
+            "initHead": 123.903,
+            "privatePack": 157.344,
+            "branch": 175.536,
+            "checkoutLock": 193.318,
+            "publishedIndex": 375.083
+          }
+        },
+        {
+          "round": 3,
+          "arm": "release",
+          "spawnMs": 417.028,
+          "firstMs": [225.717,225.747,225.769,225.795],
+          "lastMs": [374.35,355.277,371.293,383.033],
+          "setupMs": {
+            "projectId": 22.488,
+            "placed": 93.97,
+            "initHead": 117.573,
+            "privatePack": 154.953,
+            "branch": 176.442,
+            "checkoutLock": 196.5,
+            "publishedIndex": 392.16
+          }
+        },
+        {
+          "round": 3,
+          "arm": "candidate",
+          "spawnMs": 395.317,
+          "firstMs": [212.276,212.309,212.336,212.378],
+          "lastMs": [353.165,335.503,350.702,361.587],
+          "setupMs": {
+            "projectId": 16.501,
+            "placed": 92.619,
+            "initHead": 117.708,
+            "privatePack": 150.456,
+            "branch": 164.857,
+            "checkoutLock": 186.063,
+            "publishedIndex": 370.66
+          }
+        },
+        {
+          "round": 4,
+          "arm": "candidate",
+          "spawnMs": 411.938,
+          "firstMs": [224.326,224.343,224.355,224.375],
+          "lastMs": [367.401,349.43,364.356,376.498],
+          "setupMs": {
+            "projectId": 22.596,
+            "placed": 97.737,
+            "initHead": 117.776,
+            "privatePack": 153.514,
+            "branch": 174.874,
+            "checkoutLock": 195.769,
+            "publishedIndex": 385.574
+          }
+        },
+        {
+          "round": 4,
+          "arm": "release",
+          "spawnMs": 456.495,
+          "firstMs": [245.828,248.889,245.855,248.914],
+          "lastMs": [394.792,374.219,394.817,406.133],
+          "setupMs": {
+            "projectId": 22.543,
+            "placed": 115.392,
+            "initHead": 138.354,
+            "privatePack": 174.776,
+            "branch": 196.076,
+            "checkoutLock": 213.633,
+            "publishedIndex": 417.848
+          }
+        },
+        {
+          "round": 5,
+          "arm": "release",
+          "spawnMs": 472.835,
+          "firstMs": [241.582,241.615,241.641,241.666],
+          "lastMs": [384.311,366.923,384.336,396.54],
+          "setupMs": {
+            "projectId": 25.452,
+            "placed": 111.76,
+            "initHead": 136.093,
+            "privatePack": 177.711,
+            "branch": 195.974,
+            "checkoutLock": 214.194,
+            "publishedIndex": 447.824
+          }
+        },
+        {
+          "round": 5,
+          "arm": "candidate",
+          "spawnMs": 1316.69,
+          "firstMs": [1134.243,1137.414,1134.295,1137.446],
+          "lastMs": [1278.094,1259.81,1275.054,1287.17],
+          "setupMs": {
+            "projectId": 192.98,
+            "placed": 1020.703,
+            "initHead": 1041.976,
+            "privatePack": 1074.515,
+            "branch": 1088.99,
+            "checkoutLock": 1107.167,
+            "publishedIndex": 1293.226
+          }
+        },
+        {
+          "round": 6,
+          "arm": "candidate",
+          "spawnMs": 376.576,
+          "firstMs": [206.095,206.116,206.131,206.145],
+          "lastMs": [336.52,321.284,333.477,345.095],
+          "setupMs": {
+            "projectId": 22.442,
+            "placed": 86.401,
+            "initHead": 107.698,
+            "privatePack": 138.086,
+            "branch": 153.306,
+            "checkoutLock": 173.933,
+            "publishedIndex": 351.167
+          }
+        },
+        {
+          "round": 6,
+          "arm": "release",
+          "spawnMs": 398.807,
+          "firstMs": [221.559,221.586,221.608,221.635],
+          "lastMs": [361.192,345.715,361.204,370.307],
+          "setupMs": {
+            "projectId": 20.724,
+            "placed": 101.884,
+            "initHead": 125.453,
+            "privatePack": 158.172,
+            "branch": 173.506,
+            "checkoutLock": 194.38,
+            "publishedIndex": 376.373
+          }
+        }
+      ]
+    },
+    "interruptions": [
+      {
+        "git": "git version 2.56.0",
+        "format": "sha1",
+        "phase": "before-root",
+        "sameRequestRecovered": true,
+        "recordsAfterRetry": 1,
+        "retainedUnjournaledStage": true
+      },
+      {
+        "git": "git version 2.56.0",
+        "format": "sha1",
+        "phase": "root",
+        "sameRequestRecovered": true,
+        "recordsAfterRetry": 1,
+        "retainedUnjournaledStage": true
+      },
+      {
+        "git": "git version 2.56.0",
+        "format": "sha1",
+        "phase": "journal",
+        "sameRequestRecovered": true,
+        "recordsAfterRetry": 1,
+        "retainedUnjournaledStage": false
+      },
+      {
+        "git": "git version 2.56.0",
+        "format": "sha1",
+        "phase": "foreign-root",
+        "sameRequestRecovered": true,
+        "recordsAfterRetry": 1,
+        "retainedUnjournaledStage": true
+      },
+      {
+        "git": "git version 2.56.0",
+        "format": "sha256",
+        "phase": "before-root",
+        "sameRequestRecovered": true,
+        "recordsAfterRetry": 1,
+        "retainedUnjournaledStage": true
+      },
+      {
+        "git": "git version 2.56.0",
+        "format": "sha256",
+        "phase": "root",
+        "sameRequestRecovered": true,
+        "recordsAfterRetry": 1,
+        "retainedUnjournaledStage": true
+      },
+      {
+        "git": "git version 2.56.0",
+        "format": "sha256",
+        "phase": "journal",
+        "sameRequestRecovered": true,
+        "recordsAfterRetry": 1,
+        "retainedUnjournaledStage": false
+      },
+      {
+        "git": "git version 2.56.0",
+        "format": "sha256",
+        "phase": "foreign-root",
+        "sameRequestRecovered": true,
+        "recordsAfterRetry": 1,
+        "retainedUnjournaledStage": true
+      },
+      {
+        "git": "git version 2.46.0",
+        "format": "sha1",
+        "phase": "before-root",
+        "sameRequestRecovered": true,
+        "recordsAfterRetry": 1,
+        "retainedUnjournaledStage": true
+      },
+      {
+        "git": "git version 2.46.0",
+        "format": "sha1",
+        "phase": "root",
+        "sameRequestRecovered": true,
+        "recordsAfterRetry": 1,
+        "retainedUnjournaledStage": true
+      },
+      {
+        "git": "git version 2.46.0",
+        "format": "sha1",
+        "phase": "journal",
+        "sameRequestRecovered": true,
+        "recordsAfterRetry": 1,
+        "retainedUnjournaledStage": false
+      },
+      {
+        "git": "git version 2.46.0",
+        "format": "sha1",
+        "phase": "foreign-root",
+        "sameRequestRecovered": true,
+        "recordsAfterRetry": 1,
+        "retainedUnjournaledStage": true
+      },
+      {
+        "git": "git version 2.46.0",
+        "format": "sha256",
+        "phase": "before-root",
+        "sameRequestRecovered": true,
+        "recordsAfterRetry": 1,
+        "retainedUnjournaledStage": true
+      },
+      {
+        "git": "git version 2.46.0",
+        "format": "sha256",
+        "phase": "root",
+        "sameRequestRecovered": true,
+        "recordsAfterRetry": 1,
+        "retainedUnjournaledStage": true
+      },
+      {
+        "git": "git version 2.46.0",
+        "format": "sha256",
+        "phase": "journal",
+        "sameRequestRecovered": true,
+        "recordsAfterRetry": 1,
+        "retainedUnjournaledStage": false
+      },
+      {
+        "git": "git version 2.46.0",
+        "format": "sha256",
+        "phase": "foreign-root",
+        "sameRequestRecovered": true,
+        "recordsAfterRetry": 1,
+        "retainedUnjournaledStage": true
+      }
+    ],
+    "journalReplay": [
+      {
+        "git": "git version 2.56.0",
+        "format": "sha1",
+        "missingRootRefused": true,
+        "foreignRootPreserved": true,
+        "journalUnchangedDuringConflict": true,
+        "sameLeaseRecovered": true
+      },
+      {
+        "git": "git version 2.56.0",
+        "format": "sha256",
+        "missingRootRefused": true,
+        "foreignRootPreserved": true,
+        "journalUnchangedDuringConflict": true,
+        "sameLeaseRecovered": true
+      },
+      {
+        "git": "git version 2.46.0",
+        "format": "sha1",
+        "missingRootRefused": true,
+        "foreignRootPreserved": true,
+        "journalUnchangedDuringConflict": true,
+        "sameLeaseRecovered": true
+      },
+      {
+        "git": "git version 2.46.0",
+        "format": "sha256",
+        "missingRootRefused": true,
+        "foreignRootPreserved": true,
+        "journalUnchangedDuringConflict": true,
+        "sameLeaseRecovered": true
+      }
+    ],
+    "diagnosticSha256": "5f6e3e35ee0c581e337461c362968aef86cd8177f90c4c505bc849e272646169",
+    "decision": "Do not promote. Two of twelve uninstrumented full checkout pairs improved. Before journaling, interruption or destination collision could leave a private unregistered stage. A retry preserved its contents and completed the same explicit request."
+  },
+  "orderedMarker": {
+    "schedule": "Keep normal placement ordering. On a single device order writes for the marker, .git and stage, then request a hardware flush on the workspace root before journaling. Exercised explicit fallback for unsupported sync operations and failure before journaling for I/O errors.",
+    "sameExecutableColumns": ["round","mode","spawnMs","markerUs","clonedRegularFiles","privateWorkingFileBytes"],
+    "sameExecutable": [
+      [1,"separate",417.871,15007,3318,0],
+      [1,"ordered",414.68,7271,3318,0],
+      [2,"ordered",409.975,6457,3318,0],
+      [2,"separate",409.088,9215,3318,0],
+      [3,"separate",412.549,16037,3318,0],
+      [3,"ordered",403.775,6397,3318,0],
+      [4,"ordered",409.537,4743,3318,0],
+      [4,"separate",416.56,14587,3318,0],
+      [5,"separate",440.994,13005,3318,0],
+      [5,"ordered",412.633,6641,3318,0],
+      [6,"ordered",421.31,5748,3318,0],
+      [6,"separate",436.318,14248,3318,0],
+      [7,"separate",439.264,12602,3318,0],
+      [7,"ordered",839.219,5031,3318,0],
+      [8,"ordered",578.749,7603,3318,0],
+      [8,"separate",587.077,9274,3318,0],
+      [9,"separate",547.586,11337,3318,0],
+      [9,"ordered",505.427,9573,3318,0],
+      [10,"ordered",430.412,11693,3318,0],
+      [10,"separate",433.86,18408,3318,0],
+      [11,"separate",402.564,17039,3318,0],
+      [11,"ordered",409.064,8611,3318,0],
+      [12,"ordered",421.239,10438,3318,0],
+      [12,"separate",412.921,25198,3318,0]
+    ],
+    "emptyOrphanPairs": [
+      {
+        "order": ["release","candidate"],
+        "release": 124.66141699999997,
+        "candidate": 98.41945900000002
+      },
+      {
+        "order": ["candidate","release"],
+        "candidate": 96.53724999999997,
+        "release": 110.06233299999997
+      },
+      {
+        "order": ["release","candidate"],
+        "release": 107.29291699999999,
+        "candidate": 92.58237499999996
+      },
+      {
+        "order": ["candidate","release"],
+        "candidate": 91.76933399999996,
+        "release": 99.21808300000009
+      },
+      {
+        "order": ["release","candidate"],
+        "release": 105.28662499999996,
+        "candidate": 101.425209
+      },
+      {
+        "order": ["candidate","release"],
+        "candidate": 97.40641600000004,
+        "release": 105.87879099999986
+      },
+      {
+        "order": ["release","candidate"],
+        "release": 139.95629199999985,
+        "candidate": 121.97783400000003
+      },
+      {
+        "order": ["candidate","release"],
+        "candidate": 117.24070800000004,
+        "release": 125.64799999999991
+      },
+      {
+        "order": ["release","candidate"],
+        "release": 139.40416699999992,
+        "candidate": 110.48891700000013
+      },
+      {
+        "order": ["candidate","release"],
+        "candidate": 126.21495800000002,
+        "release": 131.93262499999992
+      },
+      {
+        "order": ["release","candidate"],
+        "release": 123.72437499999978,
+        "candidate": 134.51350000000002
+      },
+      {
+        "order": ["candidate","release"],
+        "candidate": 125.25129199999992,
+        "release": 125.5812079999996
+      },
+      {
+        "order": ["release","candidate"],
+        "release": 120.607708,
+        "candidate": 122.56983300000002
+      },
+      {
+        "order": ["candidate","release"],
+        "candidate": 118.82741699999997,
+        "release": 131.01354200000014
+      },
+      {
+        "order": ["release","candidate"],
+        "release": 131.34095799999977,
+        "candidate": 131.29141700000037
+      },
+      {
+        "order": ["candidate","release"],
+        "candidate": 134.6102080000005,
+        "release": 97.66541700000016
+      },
+      {
+        "order": ["release","candidate"],
+        "release": 99.68329199999971,
+        "candidate": 91.4630419999994
+      },
+      {
+        "order": ["candidate","release"],
+        "candidate": 94.95049999999992,
+        "release": 97.28504100000009
+      },
+      {
+        "order": ["release","candidate"],
+        "release": 98.9902919999995,
+        "candidate": 93.79970800000046
+      },
+      {
+        "order": ["candidate","release"],
+        "candidate": 92.98741699999937,
+        "release": 96.95779200000015
+      },
+      {
+        "order": ["release","candidate"],
+        "release": 97.14195800000016,
+        "candidate": 91.84308299999975
+      },
+      {
+        "order": ["candidate","release"],
+        "candidate": 94.230458,
+        "release": 100.45870899999954
+      },
+      {
+        "order": ["release","candidate"],
+        "release": 98.58300000000054,
+        "candidate": 94.53229099999953
+      },
+      {
+        "order": ["candidate","release"],
+        "candidate": 125.2867499999993,
+        "release": 141.75312500000018
+      }
+    ],
+    "injectedFailures": [
+      {
+        "git": "git version 2.56.0",
+        "fault": "unsupported-stage",
+        "originalRequestActive": true,
+        "donorPreserved": true
+      },
+      {
+        "git": "git version 2.56.0",
+        "fault": "unsupported-root",
+        "originalRequestActive": true,
+        "donorPreserved": true
+      },
+      {
+        "git": "git version 2.56.0",
+        "fault": "fail-stage",
+        "originalRequestActive": true,
+        "donorPreserved": true
+      },
+      {
+        "git": "git version 2.56.0",
+        "fault": "fail-root",
+        "originalRequestActive": true,
+        "donorPreserved": true
+      },
+      {
+        "git": "git version 2.46.0",
+        "fault": "unsupported-stage",
+        "originalRequestActive": true,
+        "donorPreserved": true
+      },
+      {
+        "git": "git version 2.46.0",
+        "fault": "unsupported-root",
+        "originalRequestActive": true,
+        "donorPreserved": true
+      },
+      {
+        "git": "git version 2.46.0",
+        "fault": "fail-stage",
+        "originalRequestActive": true,
+        "donorPreserved": true
+      },
+      {
+        "git": "git version 2.46.0",
+        "fault": "fail-root",
+        "originalRequestActive": true,
+        "donorPreserved": true
+      }
+    ],
+    "journalReplay": [
+      {
+        "git": "git version 2.56.0",
+        "format": "sha1",
+        "missingRootRefused": true,
+        "foreignRootPreserved": true,
+        "journalUnchangedDuringConflict": true,
+        "sameLeaseRecovered": true
+      },
+      {
+        "git": "git version 2.56.0",
+        "format": "sha256",
+        "missingRootRefused": true,
+        "foreignRootPreserved": true,
+        "journalUnchangedDuringConflict": true,
+        "sameLeaseRecovered": true
+      },
+      {
+        "git": "git version 2.46.0",
+        "format": "sha1",
+        "missingRootRefused": true,
+        "foreignRootPreserved": true,
+        "journalUnchangedDuringConflict": true,
+        "sameLeaseRecovered": true
+      },
+      {
+        "git": "git version 2.46.0",
+        "format": "sha256",
+        "missingRootRefused": true,
+        "foreignRootPreserved": true,
+        "journalUnchangedDuringConflict": true,
+        "sameLeaseRecovered": true
+      }
+    ],
+    "verificationLimits": "Fault injection and process interruption test control flow. They do not establish power-loss durability. The trial opens directory handles before writing by pathname, so path replacement could separate the marker from the directory flushed. Device equality alone does not rule that out.",
+    "incompleteRuns": [
+      {
+        "runId": "run-01a1f90c-5b08-7084-a264-200e375b6c93",
+        "round": 4,
+        "arm": "release",
+        "outcome": "Sharing assertion failed before row or detailed storage receipt was saved."
+      },
+      {
+        "runId": "run-01a1f90d-7c6a-7229-83c5-e99ab1ac218e",
+        "round": 3,
+        "arm": "candidate",
+        "outcome": "Sharing assertion failed: 3,138 of 3,318 regular files cloned. Native bytes and final index checks for this row were not completed."
+      }
+    ],
+    "followUp": "The 24 same-executable diagnostic spawns and 60 Graft spawns in observed, ordered-all, ordered-all-reverse and ordered-confirm checked paths, index and clean status. All 84 reported 3,318 regular files cloned. The two earlier exceptions remain unexplained. Receipts describe working-file backend counts, not measured physical allocation.",
+    "decision": "Do not promote. Orphan setup was faster, but the median full checkout cost rose by 15 ms per pair in twelve confirmation rounds. The same-device durability assumption and binding of the marker to the flushed directories are unverified."
+  }
+}

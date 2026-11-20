@@ -10,9 +10,19 @@ On a compatible volume, a regular tracked file gets its own writable file identi
 
 If the selected commit itself tracks a symlink, Git's normal checkout rules apply. A trusted npm layer can also contain relative symlinks such as a package's command in `node_modules/.bin`. The layer checks that these links resolve inside the installation.
 
-Git stores earlier revisions separately from checked-out files, often with several branches mixed into one pack. With `--history local`, an eligible full clone supplies its existing packs, pack indexes and loose objects through copy-on-write. The new repository can read even unreferenced objects already in that clone. Repacking the primary leaves the snapshot intact.
+On macOS and Linux, local and tip grafts can share verified files when Git checks them out with LF endings. This includes repositories using `core.autocrlf=input` or `* text=auto` with native LF output. Paths that require CRLF expansion, filters or working-tree encoding go through Git.
 
-With the default isolated history, Graft reuses whole eligible packs. For a suitable mixed pack it keeps the selected records at their existing offsets, rebuilds the index and asks Git to verify the result. Other layouts use Git’s selective export. Later isolated grafts at the same revision can share the verified base.
+With local or tip history, a checkout can share ordinary files alongside a submodule. The private Git index records the selected submodule commit. Its directory starts empty, even when the primary has initialized the submodule and edited its files. Enabling recursive submodule checkout in the workspace’s effective Git configuration delegates checkout to Git.
+
+### History visibility and defaults
+
+For ordinary CLI and MCP spawns, omit the history option to honor the primary repository's `graft.history` setting. In a project without that setting, local history is the default. Existing users who want the previous isolated behavior can set it with `git config --local graft.history isolated` in the primary repository.
+
+Git stores earlier revisions separately from checked-out files, often with several branches mixed into one pack. With `--history local`, an eligible full clone supplies its existing packs, pack indexes and loose objects through copy-on-write. A linked worktree reads the primary’s live object database. Graft takes a snapshot in Git’s own format so the workspace can still read its commits if the primary moves or runs garbage collection. Objects from other branches, staged blobs and dangling objects present at creation are also readable.
+
+On macOS, Graft can check the primary’s tracked files while it reserves the workspace and installs its Git objects. It then verifies the prepared file list and committed attributes against the installed store. If the list is still unavailable, Graft reads the selected tree from the workspace. Before it uses donor files for this checkout, Git must be able to resolve the required blobs. A donor file with the right contents can otherwise conceal a missing object.
+
+Choose isolated history when the workspace should receive only objects reachable from its selected commit. Graft reuses whole eligible packs. For a suitable mixed pack it keeps the selected records at their existing offsets, rebuilds the index and asks Git to verify the result. Other layouts use Git’s selective export. Later isolated grafts at the same revision can share the verified base.
 
 With `--history tip`, Graft gives Git a shallow boundary at the selected commit. Only that commit and the trees and blobs for its checkout are readable at creation. Log and blame stop at the base. New commits retain their real parent IDs, so landing reconnects them to the primary’s history. A mixed primary pack can require a separate pack of selected objects. Additional grafts at the same base can share that pack. When the branch advances, Graft can reuse blocks from the first parent’s cached pack and export the remaining objects. Git verifies the resulting pack set against the new tip before Graft publishes it.
 

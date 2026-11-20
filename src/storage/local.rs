@@ -3,6 +3,12 @@
 use super::*;
 use std::path::PathBuf;
 
+#[derive(Default)]
+struct CheckoutMetadata<'a> {
+    objects: Option<&'a Path>,
+    index: Option<&'a TipIndex>,
+}
+
 pub(crate) fn materialize_local(
     workspace: &Path,
     state: &Path,
@@ -11,17 +17,25 @@ pub(crate) fn materialize_local(
     primary: &Path,
 ) -> Result<Value> {
     let workspace = dunce::canonicalize(workspace)?;
-    materialize(&workspace, state, oid, sparse, primary, None, || Ok(()))
+    materialize(
+        &workspace,
+        state,
+        oid,
+        sparse,
+        primary,
+        CheckoutMetadata::default(),
+        || Ok(()),
+    )
 }
 
-/// Prepare verified donor files while the complete tip pack is installed.
-/// Git uses the proof store only for planning, never for file checkout.
-pub(crate) fn materialize_tip<F: FnOnce() -> Result<()>>(
+/// Prepare files from a verified manifest and join history checks before index publication.
+pub(crate) fn materialize_planned<F: FnOnce() -> Result<()>>(
     workspace: &Path,
     state: &Path,
     oid: &str,
     primary: &Path,
-    proof_objects: &Path,
+    proof_objects: Option<&Path>,
+    manifest: Option<&TipIndex>,
     ready: F,
 ) -> Result<Value> {
     let mut ready = Some(ready);
@@ -33,7 +47,10 @@ pub(crate) fn materialize_tip<F: FnOnce() -> Result<()>>(
             oid,
             &[],
             primary,
-            Some(proof_objects),
+            CheckoutMetadata {
+                objects: proof_objects,
+                index: manifest,
+            },
             || {
                 ready.take().expect("checkout readiness called once")()?;
                 checkout_identity(&workspace, oid)?;
@@ -41,7 +58,7 @@ pub(crate) fn materialize_tip<F: FnOnce() -> Result<()>>(
             },
         )
     })();
-    // Always join the pack installation, including when planning fails early.
+    // Always join the history checks, including when planning fails early.
     if let Some(ready) = ready {
         let joined = ready();
         if result.is_ok() {
@@ -57,45 +74,64 @@ fn materialize<F: FnOnce() -> Result<()>>(
     oid: &str,
     sparse: &[String],
     primary: &Path,
-    proof_objects: Option<&Path>,
+    metadata: CheckoutMetadata<'_>,
     ready: F,
 ) -> Result<Value> {
+    let proof_objects = metadata.objects;
     let oid = checkout_identity_with_objects(workspace, oid, proof_objects)?;
     validate_sparse(workspace, &oid, sparse)?;
-    let files = entries_with_objects(workspace, &oid, proof_objects)?;
-    let checkout = LocalCheckout::reserve(workspace, proof_objects)?;
+    let mut checkout = LocalCheckout::reserve(workspace, proof_objects)?;
+    let listed;
+    let files = if let Some(manifest) = metadata.index {
+        if manifest.prepare(&checkout).is_err() {
+            ready()?;
+            drop(checkout);
+            return materialize_local(workspace, state, &oid, sparse, primary);
+        }
+        checkout.planned = true;
+        &manifest.entries
+    } else {
+        listed = entries_with_objects(workspace, &oid, proof_objects)?;
+        &listed
+    };
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
-    let receipt = match direct::plan(&checkout, &oid, sparse, &files, state, primary)? {
-        Ok(plan) => direct::install(&checkout, &oid, &files, plan, ready)?,
+    let receipt = match direct::plan(&checkout, &oid, sparse, files, state, primary)? {
+        Ok(plan) => direct::install(
+            &checkout,
+            &oid,
+            files,
+            plan,
+            #[cfg(target_os = "macos")]
+            metadata.index.and_then(|index| index.donors.as_ref()),
+            ready,
+        )?,
         Err(reason) => {
             ready()?;
-            checkout.native(&oid, sparse, &files, reason)?
+            checkout.native(&oid, sparse, files, reason)?
         }
     };
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let receipt = {
         let _ = (state, primary);
         ready()?;
-        checkout.native(&oid, sparse, &files, "native clone unavailable")?
+        checkout.native(&oid, sparse, files, "native clone unavailable")?
     };
     checkout.publish()?;
     Ok(receipt)
 }
 
-struct LocalCheckout<'a> {
+pub(super) struct LocalCheckout<'a> {
+    planned: bool,
     worktree: &'a Path,
     scratch: tempfile::TempDir,
     index: PathBuf,
     index_lock: tempfile::TempPath,
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
     proof_objects: Option<&'a Path>,
 }
 
 impl<'a> LocalCheckout<'a> {
     fn reserve(worktree: &'a Path, proof_objects: Option<&'a Path>) -> Result<Self> {
-        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-        let _ = proof_objects;
         ensure_empty(worktree)?;
         let admin = worktree.join(".git");
         let index_lock = admin.join("index.lock");
@@ -114,17 +150,16 @@ impl<'a> LocalCheckout<'a> {
             .tempdir_in(&admin)?;
         let index = scratch.path().join("index");
         Ok(Self {
+            planned: false,
             worktree,
             scratch,
             index,
             index_lock,
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
             proof_objects,
         })
     }
 
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    fn proof_command(&self) -> Command {
+    pub(super) fn proof_command(&self) -> Command {
         let mut command = self.command();
         if let Some(objects) = self.proof_objects {
             command.env("GIT_OBJECT_DIRECTORY", objects);
@@ -158,7 +193,16 @@ impl<'a> LocalCheckout<'a> {
         Ok(())
     }
 
-    fn native(&self, oid: &str, sparse: &[String], files: &[Entry], reason: &str) -> Result<Value> {
+    fn native(
+        &mut self,
+        oid: &str,
+        sparse: &[String],
+        files: &[Entry],
+        reason: &str,
+    ) -> Result<Value> {
+        if self.planned {
+            self.index = self.scratch.path().join("fallback-index");
+        }
         // read-tree verifies untracked paths before using Git's forced
         // checkout. Run it off the live tree so a path created in that gap
         // cannot be overwritten.
@@ -217,7 +261,7 @@ impl<'a> LocalCheckout<'a> {
     }
 }
 
-fn run(mut command: Command) -> Result<()> {
+pub(super) fn run(mut command: Command) -> Result<()> {
     let output = command.output().context("run Git checkout")?;
     ensure!(
         output.status.success(),
@@ -243,10 +287,15 @@ fn count_native<'a>(worktree: &Path, files: impl Iterator<Item = &'a Entry>, cou
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-mod direct {
+pub(super) mod direct {
     use super::*;
     use sha1::Digest;
     use std::{collections::HashMap, fs::File, io::Read, os::unix::fs::MetadataExt};
+
+    #[cfg(target_os = "macos")]
+    mod early;
+    #[cfg(target_os = "macos")]
+    pub(in crate::storage) use early::EarlyDonors;
 
     pub(super) struct Plan {
         donor: native::Root,
@@ -269,9 +318,7 @@ mod direct {
         if files.is_empty() {
             return Ok(Err("empty tree"));
         }
-        if files.iter().any(|entry| entry.mode == 0o160000) {
-            return Ok(Err("submodules"));
-        }
+        let gitlinks = files.iter().any(|entry| entry.mode == 0o160000);
         if !unambiguous_paths(files) {
             return Ok(Err("filesystem-dependent Git paths"));
         }
@@ -295,24 +342,30 @@ mod direct {
 
         // These read-only queries use independent Git processes. Join all
         // workers before using their results to select donor files.
-        let (tracked, reason, conversions) = std::thread::scope(|scope| -> Result<_> {
-            let config = scope.spawn(|| native_reason(checkout.worktree));
+        let (tracked, policy, conversions) = std::thread::scope(|scope| -> Result<_> {
+            let config = scope.spawn(|| raw_file_policy(checkout.worktree, gitlinks));
             // Git also applies info/attributes and user and system rules when
             // the selected tree has no .gitattributes of its own.
-            let attributes =
-                scope.spawn(|| checkout_conversions(checkout.proof_command(), oid, files));
+            let attributes = scope.spawn(|| {
+                checkout_conversions(
+                    checkout.proof_command(),
+                    (!checkout.planned).then_some(oid),
+                    files,
+                )
+            });
             let tracked = donor_index(&primary)?;
-            let reason = config
+            let policy = config
                 .join()
                 .map_err(|_| anyhow::anyhow!("checkout configuration worker failed"))??;
             let conversions = attributes
                 .join()
                 .map_err(|_| anyhow::anyhow!("checkout attribute worker failed"))?;
-            Ok((tracked, reason, conversions))
+            Ok((tracked, policy, conversions))
         })?;
-        if let Some(reason) = reason {
-            return Ok(Err(reason));
-        }
+        let endings = match policy {
+            Ok(value) => value,
+            Err(reason) => return Ok(Err(reason)),
+        };
         let Some(tracked) = tracked else {
             return Ok(Err("primary checkout unavailable"));
         };
@@ -337,7 +390,12 @@ mod direct {
             return Ok(Err("cannot inspect checkout attributes"));
         };
         for (eligible, conversion) in candidates.iter_mut().zip(conversions) {
-            *eligible &= conversion == Conversion::Raw;
+            *eligible &= match conversion {
+                Conversion::Raw => endings.raw_by_default,
+                Conversion::Text => endings.text_uses_lf,
+                Conversion::Lf => true,
+                Conversion::Eol | Conversion::Git => false,
+            };
         }
         if !candidates.contains(&true) {
             return Ok(Err("path-dependent checkout conversion"));
@@ -395,51 +453,85 @@ mod direct {
     }
 
     fn donor_index(primary: &Path) -> Result<Option<Vec<u8>>> {
-        // Git can discover a surrounding repository even if the original one
-        // moved. Only use the index belonging to the selected checkout root.
-        let location = git_command(primary)
-            .args(["rev-parse", "--show-prefix"])
-            .output()?;
+        let location = donor_prefix(primary).output()?;
         if !location.status.success() || location.stdout != b"\n" {
             return Ok(None);
         }
-        let output = git_command(primary)
-            .args([
-                "-c",
-                "core.fsmonitor=false",
-                "ls-files",
-                "--stage",
-                "--full-name",
-                "-z",
-            ])
-            .output()?;
+        let output = donor_listing(primary).output()?;
         Ok(output.status.success().then_some(output.stdout))
     }
 
-    fn native_reason(worktree: &Path) -> Result<Option<&'static str>> {
+    fn donor_prefix(primary: &Path) -> Command {
+        // Git can discover a surrounding repository even if the original one
+        // moved. Only use the index belonging to the selected checkout root.
+        let mut location = git_command(primary);
+        location.args(["rev-parse", "--show-prefix"]);
+        location
+    }
+
+    fn donor_listing(primary: &Path) -> Command {
+        let mut listing = git_command(primary);
+        listing.args([
+            "-c",
+            "core.fsmonitor=false",
+            "ls-files",
+            "--stage",
+            "--full-name",
+            "-z",
+        ]);
+        listing
+    }
+
+    struct LineEndings {
+        raw_by_default: bool,
+        text_uses_lf: bool,
+    }
+
+    fn raw_file_policy(
+        worktree: &Path,
+        gitlinks: bool,
+    ) -> Result<Result<LineEndings, &'static str>> {
+        let settings = if gitlinks {
+            r"^(core\.(autocrlf|eol|sparsecheckout)|submodule\.recurse)$"
+        } else {
+            r"^core\.(autocrlf|eol|sparsecheckout)$"
+        };
         let config = git_command(worktree)
             .args([
                 "config",
                 "--null",
-                "--type=bool",
+                "--type=bool-or-str",
                 "--get-regexp",
-                r"^core\.(autocrlf|sparsecheckout)$",
+                settings,
             ])
             .output()?;
         if !matches!(config.status.code(), Some(0 | 1)) {
-            // A valid core.autocrlf=input is deliberately delegated to Git.
-            return Ok(Some("Git checkout configuration"));
+            return Ok(Err("Git checkout configuration"));
         }
-        let enabled = |key: &[u8]| {
-            config
-                .stdout
-                .split(|&byte| byte == 0)
-                .filter_map(|field| field.strip_prefix(key))
-                .next_back()
-                == Some(b"true")
-        };
-        if enabled(b"core.sparsecheckout\n") || enabled(b"core.autocrlf\n") {
-            return Ok(Some("Git checkout configuration"));
+        let mut autocrlf: &[u8] = b"false";
+        let mut eol_crlf = false;
+        let mut sparse = false;
+        let mut recurse = false;
+        for field in config.stdout.split(|&b| b == 0).filter(|f| !f.is_empty()) {
+            let mut parts = field.splitn(2, |&b| b == b'\n');
+            let key = parts.next().unwrap_or_default();
+            let value = parts.next().unwrap_or_default();
+            let boolean = matches!(value, b"true" | b"false");
+            match key {
+                b"core.autocrlf" if boolean || value.eq_ignore_ascii_case(b"input") => {
+                    autocrlf = value
+                }
+                b"core.eol" => eol_crlf = value.eq_ignore_ascii_case(b"crlf"),
+                b"core.sparsecheckout" if boolean => sparse = value == b"true",
+                b"submodule.recurse" if boolean => recurse = value == b"true",
+                _ => return Ok(Err("Git checkout configuration")),
+            }
+        }
+        if sparse {
+            return Ok(Err("Git checkout configuration"));
+        }
+        if recurse {
+            return Ok(Err("submodules"));
         }
         if !git(
             worktree,
@@ -453,9 +545,15 @@ mod direct {
         .stdout
         .is_empty()
         {
-            return Ok(Some("Git replacement objects"));
+            return Ok(Err("Git replacement objects"));
         }
-        Ok(None)
+        // Both direct-clone platforms use LF natively. Git's input mode also
+        // suppresses checkout expansion when core.eol requests CRLF.
+        Ok(Ok(LineEndings {
+            raw_by_default: autocrlf != b"true",
+            text_uses_lf: autocrlf.eq_ignore_ascii_case(b"input")
+                || (autocrlf == b"false" && !eol_crlf),
+        }))
     }
 
     pub(super) fn install<F: FnOnce() -> Result<()>>(
@@ -463,6 +561,7 @@ mod direct {
         oid: &str,
         files: &[Entry],
         plan: Plan,
+        #[cfg(target_os = "macos")] early: Option<&EarlyDonors>,
         ready: F,
     ) -> Result<Value> {
         let mut command = checkout.proof_command();
@@ -474,18 +573,54 @@ mod direct {
             "read-tree",
             oid,
         ]);
-        run(command)?;
+        if !checkout.planned {
+            run(command)?;
+            // read-tree can create an index even when a referenced blob is missing.
+            // Check the object store before a donor working file can mask that loss.
+            crate::git::require_blobs(
+                checkout.proof_command(),
+                files
+                    .iter()
+                    .filter(|entry| entry.mode != 0o160000)
+                    .map(|entry| entry.blob.as_str()),
+            )?;
+        }
 
         let mut receipt = Receipt::default();
         let sha256 = oid.len() == 64;
+        #[cfg(target_os = "macos")]
+        let reuse_ancestors = native::parents::available();
+        #[cfg(not(target_os = "macos"))]
+        let reuse_ancestors = false;
+        // Leave conversions and submodule directory creation in Git's original order.
+        let overlap_links = checkout.planned
+            && files.len() >= PARALLEL_THRESHOLD
+            && files.iter().any(|entry| entry.mode == 0o120000)
+            && files
+                .iter()
+                .zip(&plan.candidates)
+                .all(|(entry, eligible)| *eligible || entry.mode == 0o120000);
+        let checkout_paths = |input: File| -> Result<()> {
+            let mut command = parallel_checkout(checkout.command());
+            command
+                .env("GIT_ATTR_SOURCE", oid)
+                .env("GIT_NO_REPLACE_OBJECTS", "1")
+                .args(["checkout-index", "--stdin", "-z"])
+                .stdin(Stdio::from(input));
+            run(command)?;
+            Ok(())
+        };
+        let mut ready = Some(ready);
         let batches = std::thread::scope(|scope| -> Result<Vec<_>> {
             let mut tasks = Vec::new();
             let mut flags = plan.candidates.as_slice();
             for chunk in source_chunks(files) {
+                #[cfg(target_os = "macos")]
+                let hints = early.map(|early| early.batch(files.len() - flags.len(), chunk.len()));
                 let (eligible, remaining) = flags.split_at(chunk.len());
                 flags = remaining;
-                let donor = plan.donor.fork()?;
-                let destination = plan.destination.fork()?;
+                let donor = plan.donor.checkout_worker(reuse_ancestors)?;
+                let destination = plan.destination.checkout_worker(reuse_ancestors)?;
                 let mode = plan.mode;
                 #[cfg(target_os = "linux")]
                 let scratch = tempfile::tempdir_in(checkout.scratch.path())?;
@@ -499,10 +634,22 @@ mod direct {
                         &destination,
                         mode,
                         sha256,
+                        #[cfg(target_os = "macos")]
+                        hints,
                         #[cfg(target_os = "linux")]
                         &temporary,
                     )
                 }));
+            }
+            if overlap_links {
+                ready.take().expect("history readiness is checked once")()?;
+                let links = files.iter().filter(|entry| entry.mode == 0o120000);
+                // Git treats EEXIST as a checkout failure if a clone worker
+                // creates a missing directory between Git's lookup and mkdir.
+                for link in links.clone() {
+                    plan.destination.create_parent(link.path()?)?;
+                }
+                checkout_paths(path_input(links)?)?;
             }
             tasks
                 .into_iter()
@@ -517,17 +664,29 @@ mod direct {
             receipt.cloned.merge(cloned);
             missing.extend(paths);
         }
-        // The private index is not published and Git cannot materialize any
-        // missing paths until the full pack and live workspace are verified.
-        ready()?;
+        if let Some(ready) = ready {
+            ready()?;
+        } else {
+            // HEAD can change after native link checkout while regular files are still cloning.
+            checkout_identity(checkout.worktree, oid)?;
+        }
         if !missing.is_empty() {
-            let mut command = parallel_checkout(checkout.command());
-            command
-                .env("GIT_ATTR_SOURCE", oid)
-                .env("GIT_NO_REPLACE_OBJECTS", "1")
-                .args(["checkout-index", "--stdin", "-z"])
-                .stdin(Stdio::from(path_input(missing.iter().copied())?));
-            run(command)?;
+            // checkout-index accepts an existing gitlink directory, including
+            // a populated repository. Reserve each one exclusively first.
+            for entry in missing.iter().filter(|entry| entry.mode == 0o160000) {
+                let path = entry.path()?;
+                plan.destination
+                    .create_empty_directory(path)
+                    .with_context(|| format!("reserve submodule directory {}", path.display()))?;
+            }
+            let mut remaining = missing
+                .iter()
+                .copied()
+                .filter(|e| !overlap_links || e.mode != 0o120000)
+                .peekable();
+            if remaining.peek().is_some() {
+                checkout_paths(path_input(remaining)?)?;
+            }
             count_native(checkout.worktree, missing.into_iter(), &mut receipt.private);
         }
         // Cloned entries retain read-tree's empty stat fields. No later stat
@@ -549,18 +708,34 @@ mod direct {
         destination: &native::Root,
         mode: u32,
         sha256: bool,
+        #[cfg(target_os = "macos")] hints: Option<&[std::sync::OnceLock<early::Verified>]>,
         #[cfg(target_os = "linux")] scratch: &native::Root,
     ) -> Result<(Counts, Vec<&'a Entry>)> {
         let mut counts = Counts::default();
         let mut missing = Vec::new();
         let mut buffer = [0; 64 * 1024];
+        #[cfg(target_os = "macos")]
+        let mut hints = hints.map(|batch| batch.iter());
         for (entry, &eligible) in files.iter().zip(candidates) {
+            #[cfg(target_os = "macos")]
+            let hint = hints
+                .as_mut()
+                .and_then(Iterator::next)
+                .and_then(std::sync::OnceLock::get);
             if !eligible {
                 missing.push(entry);
                 continue;
             }
             let path = entry.path()?;
-            let Ok((mut file, metadata)) = donor.regular_metadata(path) else {
+            #[cfg(target_os = "macos")]
+            let cached = hint.and_then(|verified| verified.reopen(donor, path));
+            #[cfg(target_os = "linux")]
+            let cached = None;
+            let verified = cached.is_some();
+            let Ok((mut file, metadata)) = cached
+                .map(Ok)
+                .unwrap_or_else(|| donor.regular_metadata(path))
+            else {
                 missing.push(entry);
                 continue;
             };
@@ -574,9 +749,8 @@ mod direct {
             // assume-unchanged file or a checkout produced with old filters.
             // Hash the source bytes independently, including same-size edits.
             if !same_mode
-                || !native::plain(&file, &metadata).unwrap_or(false)
-                || !matches_blob(&mut file, metadata.len(), &mut buffer, &entry.blob, sha256)
-                    .unwrap_or(false)
+                || (!verified
+                    && !verified_blob(&mut file, &metadata, &mut buffer, &entry.blob, sha256))
             {
                 missing.push(entry);
                 continue;
@@ -619,6 +793,17 @@ mod direct {
             counts.add(metadata.len());
         }
         Ok((counts, missing))
+    }
+
+    fn verified_blob(
+        file: &mut File,
+        metadata: &fs::Metadata,
+        buffer: &mut [u8],
+        oid: &str,
+        sha256: bool,
+    ) -> bool {
+        native::plain(file, metadata).unwrap_or(false)
+            && matches_blob(file, metadata.len(), buffer, oid, sha256).unwrap_or(false)
     }
 
     fn matches_blob(

@@ -1,6 +1,5 @@
-//! Object transfer between independent repositories. The default exports the
-//! exact requested history. Trusted-local bootstrap can snapshot the complete
-//! object store. Both keep refs private and use an owned object directory.
+//! Object transfer between independent repositories. Local history snapshots
+//! eligible object stores. Selective exports retain the requested history.
 
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
@@ -16,8 +15,10 @@ use super::registry::MARKER;
 pub(super) use super::registry::sync_directory;
 use crate::{api::History, git, recovery::rename_exclusive};
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+mod config_batch;
 mod history;
-pub(super) use history::tip::{needs_tip_proof, prepare_tip_proof};
+pub(super) use history::tip::{CheckoutDiscovery, needs_tip_proof};
 pub(crate) use history::{
     HISTORY_CACHE_DIR, HISTORY_CACHE_MARKER, history_cache_root, verify_history_cache_generation,
 };
@@ -239,13 +240,16 @@ fn copy_config(primary: &Path, root: &Path) -> Result<()> {
         source.filters == destination.filters,
         "effective Git filter settings differ in the independent workspace"
     );
-    for (key, (value, _)) in source.settings {
-        // git init already records filesystem settings such as core.filemode.
-        // Inherited settings still need a private copy for move and recovery.
-        if !matches!(destination.settings.get(&key), Some((local, true)) if local == &value) {
-            run(root, &["config", "--local", "--", &key, &value])?;
-        }
-    }
+    // Inherited settings need a private copy for move and recovery.
+    let missing: Vec<_> = source
+        .settings
+        .into_iter()
+        .filter_map(|(key, (value, _))| {
+            (!matches!(destination.settings.get(&key), Some((local, true)) if local == &value))
+                .then_some((key, value))
+        })
+        .collect();
+    write_settings(root, &missing)?;
     if source.has_attributes_file {
         let raw = git::bytes(
             primary,
@@ -281,6 +285,17 @@ fn repository_path(repo: &Path, path: &str) -> Result<PathBuf> {
         repo,
         &["rev-parse", "--path-format=absolute", "--git-path", path],
     )?))
+}
+
+fn write_settings(root: &Path, settings: &[(String, String)]) -> Result<()> {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    if config_batch::append(root, settings)? {
+        return Ok(());
+    }
+    for (key, value) in settings {
+        run(root, &["config", "--local", "--", key, value])?;
+    }
+    Ok(())
 }
 
 fn copy_attributes(source: &Path, target: &Path) -> Result<()> {
@@ -326,7 +341,7 @@ pub(super) fn initialize(
     base: Option<&str>,
     branch: Option<&str>,
     history: History,
-    proof: Option<Vec<u8>>,
+    mut discovery: Option<CheckoutDiscovery>,
 ) -> Result<(Value, Option<Value>)> {
     require_pristine(root)?;
     let Primary {
@@ -364,40 +379,73 @@ pub(super) fn initialize(
             None,
         ));
     };
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    let snapshot = if history == History::Local {
-        local::bootstrap(primary, root, format, &base)?
-    } else {
-        None
-    };
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    let snapshot = None;
-    let receipt = match snapshot {
-        Some(receipt) => receipt,
-        None => {
-            let boundary = if history == History::Tip {
-                Some(shallow::publish(root, &base, format!("{base}\n"))?)
-            } else {
-                shallow::initialize(primary, root, &base)?
-            };
-            let boundary = boundary.as_ref().map(shallow::Boundary::history);
-            if let Some(proof) = proof
-                && history == History::Tip
-                && let Some(boundary) = &boundary
-            {
-                return history::tip::checkout(
-                    source,
-                    root,
-                    state,
-                    &base,
-                    branch_ref.as_deref().unwrap_or("HEAD"),
-                    boundary,
-                    proof,
-                );
-            }
-            history::bootstrap(primary, root, state, format, &base, boundary)?
+    let tip_boundary = (history == History::Tip)
+        .then(|| shallow::publish(root, &base, format!("{base}\n")))
+        .transpose()?;
+    let transfer = || {
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        if history == History::Local
+            && let Some(receipt) = local::bootstrap(primary, root, format, &base)?
+        {
+            return Ok(receipt);
         }
+        let boundary = match tip_boundary {
+            Some(boundary) => Some(boundary),
+            None => shallow::initialize(primary, root, &base)?,
+        };
+        history::bootstrap(
+            primary,
+            root,
+            state,
+            format,
+            &base,
+            boundary.as_ref().map(shallow::Boundary::history),
+        )
     };
+    if history == History::Tip
+        && let Some(plan) = discovery.take().and_then(CheckoutDiscovery::finish)
+    {
+        return history::tip::checkout(
+            source,
+            root,
+            state,
+            &base,
+            branch_ref.as_deref().unwrap_or("HEAD"),
+            plan,
+            transfer,
+        );
+    }
+    let receipt = transfer()?;
+    #[cfg(target_os = "macos")]
+    if history == History::Local
+        && let Some(plan) = discovery.and_then(CheckoutDiscovery::finish)
+    {
+        let checkout = std::thread::scope(|scope| -> Result<Value> {
+            let verified =
+                std::thread::Builder::new().spawn_scoped(scope, || plan.verify_local(root))?;
+            finish_head(
+                primary,
+                root,
+                branch_ref.as_deref().unwrap_or("HEAD"),
+                &base,
+                None,
+            )?;
+            crate::storage::materialize_planned(
+                root,
+                state,
+                &base,
+                primary,
+                None,
+                Some(&plan.index),
+                || {
+                    verified
+                        .join()
+                        .map_err(|_| anyhow::anyhow!("Git snapshot verification worker failed"))?
+                },
+            )
+        })?;
+        return Ok((receipt, Some(checkout)));
+    }
     finish_head(
         primary,
         root,

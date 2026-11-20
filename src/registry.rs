@@ -472,15 +472,42 @@ pub(crate) fn open_lock(path: &Path) -> Result<File> {
         .open(path)?)
 }
 pub(crate) fn atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    write_atomic(path, bytes, false)
+}
+
+pub(crate) fn publish_marked_directory(
+    stage: tempfile::TempDir,
+    path: &Path,
+    ownership: &[u8],
+) -> Result<()> {
+    let parent = path.parent().context("missing publication directory")?;
+    ensure!(
+        stage.path().parent() == Some(parent),
+        "directory publication requires a sibling stage"
+    );
+    write_atomic(&stage.path().join(CACHE_OWNER), ownership, true)?;
+    // After rename the staging name can belong to someone else.
+    let staged = stage.keep();
+    rename_exclusive(&staged, path)
+        .with_context(|| format!("publish {} from {}", path.display(), staged.display()))?;
+    #[cfg(unix)]
+    File::open(parent)?.sync_all()?;
+    Ok(())
+}
+
+fn write_atomic(path: &Path, bytes: &[u8], _flush_at_directory_publication: bool) -> Result<()> {
     let parent = path.parent().context("missing state directory")?;
     let mut tmp = tempfile::NamedTempFile::new_in(parent)?;
     tmp.write_all(bytes)?;
     #[cfg(target_os = "macos")]
     if apple_sync(tmp.as_file(), libc::F_BARRIERFSYNC)? {
-        // Order the complete contents ahead of the rename even on power loss.
-        // A full flush after the rename makes both durable before returning.
         let file = tmp.persist(path)?;
         let directory = File::open(parent)?;
+        // Order the marker's directory entry before publishing the stage.
+        // Its sibling rename and parent flush complete the same-device write.
+        if _flush_at_directory_publication && apple_sync(&directory, libc::F_BARRIERFSYNC)? {
+            return Ok(());
+        }
         if !apple_sync(&directory, libc::F_FULLFSYNC)? {
             directory.sync_all()?;
             file.sync_all()?;
@@ -781,17 +808,7 @@ impl Project {
                 let _ = fs::remove_dir(staged.keep());
                 return Err(error).context("cannot create a private workspace root");
             }
-            atomic(&staged.path().join(CACHE_OWNER), self.id().as_bytes())?;
-            let staged = staged.keep();
-            rename_exclusive(&staged, &self.root).with_context(|| {
-                format!(
-                    "publish workspace root {} from {}",
-                    self.root.display(),
-                    staged.display()
-                )
-            })?;
-            #[cfg(unix)]
-            File::open(parent)?.sync_all()?;
+            publish_marked_directory(staged, &self.root, self.id().as_bytes())?;
         }
         let metadata =
             owned_directory(&self.root).context("workspace root is not an ordinary directory")?;

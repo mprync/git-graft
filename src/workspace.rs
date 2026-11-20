@@ -110,8 +110,8 @@ fn project_history(project: &Project) -> Result<api::History> {
         ],
     )?;
     match (out.status.code(), out.stdout.as_slice()) {
-        (Some(1), b"") | (Some(0), b"isolated\0") => Ok(api::History::Isolated),
-        (Some(0), b"local\0") => Ok(api::History::Local),
+        (Some(1), b"") | (Some(0), b"local\0") => Ok(api::History::Local),
+        (Some(0), b"isolated\0") => Ok(api::History::Isolated),
         (Some(0), b"tip\0") => Ok(api::History::Tip),
         (Some(0), _) => anyhow::bail!("graft.history must be isolated, tip or local"),
         _ => anyhow::bail!("could not read the project's graft.history setting"),
@@ -197,31 +197,24 @@ fn spawn(p: &Project, origin: &Path, mut args: Spawn) -> Result<Value> {
         Some(oid)
     };
     let source = objects::preflight(origin)?;
-    let (mut r, proof) = std::thread::scope(|scope| -> Result<_> {
-        let preparation = base
-            .as_deref()
-            .filter(|oid| {
-                history == api::History::Tip
-                    && !args.no_checkout
-                    && args.sparse.is_empty()
-                    && objects::needs_tip_proof(&p.state, oid)
-            })
-            .and_then(|oid| {
-                std::thread::Builder::new()
-                    .spawn_scoped(scope, move || objects::prepare_tip_proof(origin, oid))
-                    .ok()
-            });
-        let record = registry::reserve(
-            p,
-            &args.name,
-            args.request_id.as_deref(),
-            base.as_deref(),
-            branch.as_deref(),
-            request,
-        );
-        let proof = preparation.and_then(|task| task.join().ok()?.ok());
-        Ok((record?, proof))
-    })?;
+    let local = history == api::History::Local && cfg!(target_os = "macos");
+    let proof = base
+        .as_deref()
+        .filter(|oid| {
+            !args.no_checkout
+                && args.sparse.is_empty()
+                && (local
+                    || history == api::History::Tip && objects::needs_tip_proof(&p.state, oid))
+        })
+        .and_then(|oid| objects::CheckoutDiscovery::start(origin, oid, local));
+    let mut r = registry::reserve(
+        p,
+        &args.name,
+        args.request_id.as_deref(),
+        base.as_deref(),
+        branch.as_deref(),
+        request,
+    )?;
     if r.status == Status::Active {
         registry::verify(p, &r)?;
         return Ok(with_lease(&r));

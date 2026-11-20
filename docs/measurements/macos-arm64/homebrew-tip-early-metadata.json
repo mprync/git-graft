@@ -1,0 +1,90 @@
+{
+  "fixture": {
+    "commit": "bc63375ac3a4d6debb1ceb441ae6e22854f0909a",
+    "tree": "ee570b9dbb122c6b6f0f609b83402c1f8eaca195",
+    "sha256": {
+      "release": "e928cf1ba7881c7072d22bc488649b1b8e4a079164d47fc29379a54dec0caac3",
+      "candidate": "b1bd0b95d068278dcc334262650c1b840be5d9d8285ac11e662a3ef9eec84240"
+    },
+    "git": "2.56.0",
+    "platform": "macOS arm64, APFS"
+  },
+  "candidate": "Start bounded metadata export before project opening and join after full history export starts. Index and verify the metadata inside the reserved workspace.",
+  "method": "Fresh populated local clones with an empty Graft registry and cache. Each series uses all six orders twice. Time through child exit. Each round checks clean status, selected HEAD and tree in all three arms, plus 3318 cloned files and zero private worktree bytes in both Graft arms.",
+  "columns": [
+    "runOrder",
+    "releaseMs",
+    "candidateMs",
+    "nativeWorktreeAddMs"
+  ],
+  "series": [
+    {
+      "run": "run-01a1f5ce-87b6-70e5-a2f4-b477632f7494",
+      "rows": [
+        ["release/candidate/native", 544.99, 634.1, 481.41],
+        ["candidate/native/release", 622.69, 592.3, 334.53],
+        ["native/release/candidate", 598.92, 569.05, 364.36],
+        ["release/native/candidate", 563.95, 636.28, 304.93],
+        ["candidate/release/native", 829.48, 693.99, 336.1],
+        ["native/candidate/release", 665.93, 567.34, 328.68],
+        ["release/candidate/native", 590.06, 580.83, 305.37],
+        ["candidate/native/release", 589.74, 623.68, 335.93],
+        ["native/release/candidate", 582.98, 530.87, 306.68],
+        ["release/native/candidate", 658.89, 625.61, 390.82],
+        ["candidate/release/native", 709.36, 552.84, 326.49],
+        ["native/candidate/release", 524.56, 551.97, 303.05]
+      ]
+    },
+    {
+      "run": "run-01a1f5d0-d910-7182-9cb0-124c7627df19",
+      "rows": [
+        ["native/candidate/release", 521.98, 542.01, 319.49],
+        ["release/native/candidate", 535.37, 541.43, 300.91],
+        ["candidate/release/native", 514.91, 540.01, 311.02],
+        ["candidate/native/release", 631.47, 567.21, 307.65],
+        ["native/release/candidate", 542.34, 527.04, 298.37],
+        ["release/candidate/native", 524.98, 513.23, 304.17],
+        ["native/candidate/release", 522.93, 529.63, 315.88],
+        ["release/native/candidate", 540.48, 533.81, 294.98],
+        ["candidate/release/native", 539.58, 576.98, 314.19],
+        ["candidate/native/release", 551.64, 571.7, 305.67],
+        ["native/release/candidate", 546.6, 525.69, 298.57],
+        ["release/candidate/native", 550.67, 535.93, 310.46]
+      ]
+    }
+  ],
+  "adverseCase": {
+    "run": "run-01a1f5d0-9edb-76b6-856e-47cfa5a19994",
+    "checks": "Changed the selected branch after the speculative read and repacked the donor during workspace metadata indexing. Compared index entries and CRLF bytes with a native worktree. Checked the donor's dirty file and index.",
+    "cases": [
+      {
+        "git": "git version 2.56.0",
+        "format": "sha1",
+        "readSequence": "old then new",
+        "published": "new tip",
+        "dirtyDonorPreserved": true
+      },
+      {
+        "git": "git version 2.56.0",
+        "format": "sha256",
+        "readSequence": "old then new",
+        "published": "new tip",
+        "dirtyDonorPreserved": true
+      },
+      {
+        "git": "git version 2.46.0",
+        "format": "sha1",
+        "readSequence": "old then new",
+        "published": "new tip",
+        "dirtyDonorPreserved": true
+      },
+      {
+        "git": "git version 2.46.0",
+        "format": "sha256",
+        "readSequence": "old then new",
+        "published": "new tip",
+        "dirtyDonorPreserved": true
+      }
+    ]
+  }
+}

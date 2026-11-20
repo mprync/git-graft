@@ -1,0 +1,176 @@
+{
+  "commit": "bc63375ac3a4d6debb1ceb441ae6e22854f0909a",
+  "tree": "ee570b9dbb122c6b6f0f609b83402c1f8eaca195",
+  "git": "git version 2.56.0",
+  "platform": "macOS arm64, APFS",
+  "method": "Twelve rotating triples, reversed order. Separate fresh, clean, populated clones. Cold Graft registry and history cache. OS cache left as found. Timed public git graft spawn --history tip --base <commit> and git worktree add -b graft/agent <workspace> <commit>. First status timed separately after all three commands. Each graft shared 3,318 regular files, had a clean status, the selected tree, exactly one visible commit and passed git fsck --strict.",
+  "binaries": {
+    "before": {
+      "sha256": "5129dab837a15d0511cd51d5c973d054d0b5090495bb105cdb6e36ed48c7da91",
+      "bytes": 4182496
+    },
+    "after": {
+      "bytes": 4284032,
+      "sha256": "dc0651825567cfb2a0a6ebfc4b7b361582928b09c90a3aeb62f1f8edb7097cad"
+    }
+  },
+  "unit": "milliseconds",
+  "phaseTrace": {
+    "method": "Six fresh comparisons with alternating order. Instrumented Git children of the release binary were launched through a Trace2 wrapper. Direct git-graft or git worktree invocation to subprocess event, in milliseconds. These trace times are separate from the uninstrumented public command timings below. Attribute lookup completes before Graft can begin cloning. The complete pack index runs concurrently.",
+    "medianGraftMs": {"elapsedMs":616.75,"gitInitStart":185.54,"privateIndexEnd":269.86,"attributesEnd":300.51,"packIndexEnd":454.59,"remainingFilesStart":587.63},
+    "medianWorktreeMs": {"elapsedMs":322.3,"resetStart":27.02}
+  },
+  "verifiedReleaseTrace": {
+    "gitProcessCount": 31,
+    "fullPackWriters": 1,
+    "fullPackIndexers": 1,
+    "privateIndexPreparation": "update-index --info-only",
+    "committedAttributes": "check-attr --cached"
+  },
+  "columns": [
+    "order",
+    "before",
+    "after",
+    "worktree",
+    "beforeFirstStatus",
+    "afterFirstStatus",
+    "worktreeFirstStatus"
+  ],
+  "samples": [
+    [
+      "worktree/after/before",
+      550,
+      555.28,
+      335.02,
+      348.28,
+      309.37,
+      131.56
+    ],
+    [
+      "before/worktree/after",
+      542.06,
+      486.99,
+      291.15,
+      315.34,
+      332.07,
+      132.94
+    ],
+    [
+      "after/before/worktree",
+      503.31,
+      478.67,
+      289.66,
+      322.91,
+      334.38,
+      135.77
+    ],
+    [
+      "after/worktree/before",
+      525.24,
+      495.98,
+      290.41,
+      334.27,
+      324.02,
+      137.77
+    ],
+    [
+      "worktree/before/after",
+      525.8,
+      513.43,
+      298.88,
+      326.21,
+      322.77,
+      133.37
+    ],
+    [
+      "before/after/worktree",
+      544.75,
+      459.98,
+      303.73,
+      325.8,
+      313.12,
+      129.72
+    ],
+    [
+      "worktree/after/before",
+      543.13,
+      493,
+      348.71,
+      416.05,
+      414.81,
+      132.74
+    ],
+    [
+      "before/worktree/after",
+      544.1,
+      489.13,
+      283.77,
+      335.01,
+      335.26,
+      132.26
+    ],
+    [
+      "after/before/worktree",
+      525.78,
+      531.88,
+      297.37,
+      330.44,
+      326.05,
+      134.42
+    ],
+    [
+      "after/worktree/before",
+      555.75,
+      474.32,
+      285.52,
+      353.21,
+      409.48,
+      151.06
+    ],
+    [
+      "worktree/before/after",
+      517.01,
+      501.35,
+      284.09,
+      320.59,
+      312.87,
+      132.38
+    ],
+    [
+      "before/after/worktree",
+      536.84,
+      476.29,
+      327.12,
+      344.06,
+      471.45,
+      143.52
+    ]
+  ],
+  "separateAllocationRun": {
+    "note": "Unique APFS file data after first status, relative to a populated primary. Excludes filesystem metadata. CPU and peak RSS are from this one release run.",
+    "firstGraftBytes": 5677056,
+    "firstGraftByPurpose": {
+      "primaryChange": "0",
+      "historyPacks": "5246976",
+      "historyIndexes": "106496",
+      "checkoutIndexes": "270336",
+      "sourceFiles": "0",
+      "records": "53248"
+    },
+    "repeatGraftBytes": 319488,
+    "advancedGraftBytes": 442368,
+    "firstWorktreeBytes": 29941760,
+    "resources": {
+      "graft": {
+        "userSeconds": 0.5,
+        "systemSeconds": 0.91,
+        "peakRssBytes": 78807040
+      },
+      "worktree": {
+        "userSeconds": 0.05,
+        "systemSeconds": 0.23,
+        "peakRssBytes": 52166656
+      }
+    }
+  }
+}

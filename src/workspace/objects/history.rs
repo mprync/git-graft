@@ -19,6 +19,7 @@ use super::{
 use crate::{git, recovery::rename_exclusive};
 
 pub(super) mod cache;
+mod discovery;
 mod mixed;
 pub(super) mod tip;
 pub(crate) use cache::{
@@ -86,9 +87,81 @@ struct Pack {
 
 #[derive(Default)]
 struct DonorReuse {
+    proof: Option<VerifiedClosure>,
     whole: usize,
     filtered: usize,
     unchanged_bytes: u64,
+}
+
+#[derive(Default)]
+struct VerifiedInputs(Vec<(PathBuf, fs::File, Option<cache::Stamp>)>);
+
+struct VerifiedClosure {
+    count: u64,
+    inputs: VerifiedInputs,
+    retried: bool,
+}
+
+#[derive(Debug)]
+struct UnusablePreview;
+
+impl std::fmt::Display for UnusablePreview {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("cannot use preliminary Git closure verification")
+    }
+}
+
+impl VerifiedInputs {
+    fn clone_to(&self, path: &Path, destination: &Path) -> Result<(cache::PublishedFile, String)> {
+        let (_, file, stamp) = self
+            .0
+            .iter()
+            .find(|(name, _, _)| name == path)
+            .context("missing verified input")?;
+        let links = u64::from(stamp.is_some());
+        let before = cache::Stamp::read_with_links(file, links)?;
+        ensure!(
+            stamp.is_none_or(|stamp| stamp == before),
+            "verified input changed"
+        );
+        let digest = cache::digest(file)?;
+        ensure!(
+            cache::Stamp::read_with_links(file, links)? == before,
+            "verified input changed while hashing"
+        );
+        let output = clone_verified_output(file, destination)?;
+        let published = cache::PublishedFile::verify(output, &digest)?;
+        ensure!(
+            cache::Stamp::read_with_links(file, links)? == before,
+            "verified input changed while cloning"
+        );
+        published.check(destination)?;
+        Ok((published, digest))
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn clone_verified_output(source: &fs::File, destination: &Path) -> Result<fs::File> {
+    // FICLONE needs an existing destination. Keep that file private until
+    // the ioctl and sync complete so a failed clone leaves no final name.
+    let parent = destination.parent().context("missing Git pack directory")?;
+    let stage = cache::private_tempdir_in(parent)?;
+    let staged = stage.path().join("clone");
+    clone_file(source, &staged)?;
+    let output = open_regular(&staged)?;
+    output
+        .sync_all()
+        .context("sync verified Git file before install")?;
+    rename_exclusive(&staged, destination)?;
+    Ok(output)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn clone_verified_output(source: &fs::File, destination: &Path) -> Result<fs::File> {
+    // fclonefileat creates the final name atomically and has no output fd.
+    // The caller checks the bytes and identity of the descriptor we open.
+    clone_file(source, destination)?;
+    Ok(open_regular(destination)?)
 }
 
 impl Pack {
@@ -169,11 +242,12 @@ pub(super) fn bootstrap(
         }
     };
 
+    let inputs = donor_reuse.proof.as_ref().map(|proof| &proof.inputs);
     let cache_bytes = if source == "cache" {
         0
     } else {
         let publish = Instant::now();
-        let size = match cache.publish(&packs) {
+        let size = match cache.publish(&packs, inputs) {
             Ok(size) => size,
             Err(error) => {
                 cache_errors["publish"] = json!(format!("{error:#}"));
@@ -184,21 +258,49 @@ pub(super) fn bootstrap(
         size
     };
     let (mut pack_bytes, mut index_bytes, mut reused_bytes) = (0, 0, 0);
+    let objects = destination
+        .parent()
+        .context("missing workspace Git object directory")?;
+    let verified_directories = inputs
+        .map(|_| {
+            Ok::<_, anyhow::Error>((
+                cache::PublishedDirectory::open(&destination)?,
+                cache::PublishedDirectory::open(objects)?,
+            ))
+        })
+        .transpose()?;
+    let mut published = Vec::new();
+    let mut install_input = |path: &Path| -> Result<u64> {
+        if let Some(inputs) = inputs {
+            let name = path.file_name().context("missing verified Git filename")?;
+            let target = destination.join(name);
+            let (file, _) = inputs.clone_to(path, &target)?;
+            let bytes = file.stamp().size();
+            published.push((name.to_owned(), file));
+            return Ok(bytes);
+        }
+        install(path, &destination)
+    };
     for (index, pack) in packs.iter().enumerate() {
-        let written_pack = install(&pack.pack, &destination)?;
-        let written_index = install(&pack.index, &destination)?;
+        let written_pack = install_input(&pack.pack)?;
+        let written_index = install_input(&pack.index)?;
         pack_bytes += written_pack;
         index_bytes += written_index;
         if index < shared_count {
             reused_bytes += written_pack + written_index;
         }
     }
-    sync_directory(&destination).context("sync workspace Git pack directory")?;
-    sync_directory(
-        destination
-            .parent()
-            .context("missing workspace Git object directory")?,
-    )?;
+    if let Some((directory, parent)) = verified_directories {
+        directory
+            .sync()
+            .context("sync workspace Git pack directory")?;
+        parent.sync()?;
+        directory.check(&destination, &published)?;
+        parent.check(objects, &[])?;
+    } else {
+        sync_directory(&destination).context("sync workspace Git pack directory")?;
+        sync_directory(objects)?;
+    }
     let bytes = pack_bytes + index_bytes;
     timings["total_seconds"] = json!(started.elapsed().as_secs_f64());
     let mut receipt = json!({
@@ -256,13 +358,23 @@ fn cold_transfer(
     timings: &mut Value,
 ) -> Result<(Vec<Pack>, &'static str, DonorReuse)> {
     let shallow = boundary.as_ref().map(|boundary| boundary.file);
+    let transaction = stage;
     let mut attempt = |stage: &Path, accelerated: bool| -> Result<_> {
         let reachability = Instant::now();
         let mut discovery = transfer_git(source.primary);
         if accelerated {
             discovery.args(["-c", "core.commitGraph=true"]);
         }
-        let expected = reachable(discovery, oid, width, None, shallow, accelerated)?;
+        let parallel = if accelerated && shallow.is_none() {
+            discovery::parallel(source.primary, transaction, oid, width)
+        } else {
+            None
+        };
+        let used_parallel = parallel.is_some();
+        let expected = match parallel {
+            Some(ids) => ids,
+            None => reachable(discovery, oid, width, None, shallow, accelerated)?,
+        };
         timings["reachability_seconds"] = json!(reachability.elapsed().as_secs_f64());
         let transfer = Instant::now();
         let (packs, source, objects, shared) = stage_cold_packs(
@@ -271,11 +383,20 @@ fn cold_transfer(
             stage,
             &expected,
             width,
+            shallow.is_none().then_some(oid),
             shallow.map(|file| (oid, file)),
         )?;
         timings["transfer_seconds"] = json!(transfer.elapsed().as_secs_f64());
         let verify = Instant::now();
-        verify_staged_closure(root, &objects, &packs, oid, shallow)?;
+        let proof = shared.proof.as_ref();
+        verify_staged_closure(root, &objects, &packs, oid, shallow, proof.map(|p| p.count))?;
+        if used_parallel {
+            timings["parallel_tree_discovery"] = json!(true);
+        }
+        timings["early_graph_verified"] = json!(proof.is_some_and(|p| !p.retried));
+        if proof.is_some_and(|p| p.retried) {
+            timings["retried_graph_verification"] = json!(true);
+        }
         timings["verify_seconds"] = json!(verify.elapsed().as_secs_f64());
         Ok((packs, source, shared))
     };
@@ -303,14 +424,40 @@ fn stage_cold_packs(
     stage: &Path,
     expected: &[ObjectId],
     width: usize,
+    full_tip: Option<&str>,
     shallow_tip: Option<(&str, &Path)>,
 ) -> Result<(Vec<Pack>, &'static str, PathBuf, DonorReuse)> {
     // Separate staging directories ensure a partial failed attempt cannot
     // interfere with the selective export.
-    let donor = stage.join("donor");
+    let mut donor = stage.join("donor");
     let exported = stage.join("exported");
     fs::create_dir_all(donor.join("pack"))?;
-    match pack_with_donors(source, root, &donor.join("pack"), expected, width, None) {
+    let mut selected = pack_with_donors(
+        source,
+        root,
+        &donor.join("pack"),
+        expected,
+        width,
+        None,
+        full_tip,
+    );
+    if selected
+        .as_ref()
+        .is_err_and(|error| error.is::<UnusablePreview>())
+    {
+        donor = stage.join("verified-serially");
+        fs::create_dir_all(donor.join("pack"))?;
+        selected = pack_with_donors(
+            source,
+            root,
+            &donor.join("pack"),
+            expected,
+            width,
+            None,
+            None,
+        );
+    }
+    match selected {
         Ok((packs, reused)) => {
             let source = if reused.whole == packs.len() {
                 "primary-pack"
@@ -371,6 +518,7 @@ fn verify_staged_closure(
     packs: &[Pack],
     oid: &str,
     shallow: Option<&Path>,
+    early_count: Option<u64>,
 ) -> Result<()> {
     let pack_dir = objects.join("pack");
     ensure!(
@@ -398,7 +546,10 @@ fn verify_staged_closure(
     // the sum of physical index entries rules out extra or duplicate objects
     // even when the source traversal supplied an incorrect set.
     ensure!(
-        graph_count(isolated, oid)? == packed,
+        match early_count {
+            Some(count) => count,
+            None => graph_count(isolated, oid)?,
+        } == packed,
         "Git pack set does not exactly cover the requested history"
     );
     Ok(())
@@ -630,6 +781,7 @@ fn pack_with_donors(
     expected: &[ObjectId],
     width: usize,
     parent_objects: Option<&Path>,
+    full_tip: Option<&str>,
 ) -> Result<(Vec<Pack>, DonorReuse)> {
     ensure!(
         cfg!(any(target_os = "macos", target_os = "linux")),
@@ -700,71 +852,136 @@ fn pack_with_donors(
         whole: packs.len(),
         ..Default::default()
     };
-    // Start verifying whole packs while planning the mixed transfers. Source
-    // indexes are hints, so any failed verification discards this staging set.
-    let (filtered, new) =
-        thread::scope(|scope| {
-            let whole = &packs;
-            let verify = scope.spawn(move || {
-                for pack in whole {
-                    let mut verify = transfer_git(root);
-                    verify.args(["index-pack", "--verify"]).arg(&pack.pack);
-                    checked(verify).context("verify cloned primary Git pack")?;
-                }
-                Ok::<_, anyhow::Error>(())
-            });
+    let (filtered, new, proof) = thread::scope(|scope| {
+        let whole = &packs;
+        let verify_whole = move || {
+            for pack in whole {
+                let mut verify = transfer_git(root);
+                verify.args(["index-pack", "--verify"]).arg(&pack.pack);
+                checked(verify).context("verify cloned primary Git pack")?;
+            }
+            Ok::<_, anyhow::Error>(())
+        };
+        // A private graph walk verifies all companion packs through the same
+        // descriptors it traverses. Other paths still need their own verifier.
+        let may_walk =
+            cfg!(target_os = "macos") && full_tip.is_some() && !candidates_to_filter.is_empty();
+        let verify = (!may_walk).then(|| scope.spawn(verify_whole));
 
-            let mut filtered = Vec::new();
-            let mut pending = None;
-            for donor in candidates_to_filter {
-                if remaining.is_empty() {
-                    break;
+        let mut filtered = Vec::new();
+        let mut pending = None;
+        for donor in candidates_to_filter {
+            if remaining.is_empty() {
+                break;
+            }
+            if let Ok(candidate) = mixed::prepare(
+                if full_tip.is_some() && cfg!(target_os = "macos") {
+                    stage
+                        .parent()
+                        .and_then(Path::parent)
+                        .context("missing transaction staging")?
+                } else {
+                    parent_objects.unwrap_or(source.state)
+                },
+                &donor,
+                &remaining,
+                width,
+                parent_objects.is_some(),
+                full_tip.is_some() && cfg!(target_os = "macos"),
+            ) {
+                for id in &candidate.ids {
+                    ensure!(remaining.remove(id), "duplicate filtered Git object");
                 }
-                if let Ok(candidate) = mixed::prepare(
-                    parent_objects.unwrap_or(source.state),
-                    &donor,
-                    &remaining,
-                    width,
-                    parent_objects.is_some(),
-                ) {
-                    for id in &candidate.ids {
-                        ensure!(remaining.remove(id), "duplicate filtered Git object");
-                    }
-                    // Retain at most one pending verification between candidates.
-                    if let Some(previous) = pending.replace(candidate) {
-                        filtered.push(previous.verify(root, stage, width)?);
-                    }
+                // Retain at most one pending verification between candidates.
+                if let Some(previous) = pending.replace(candidate) {
+                    filtered.push(previous.verify(root, stage, width)?);
                 }
             }
-            ensure!(
-                !whole.is_empty() || pending.is_some(),
-                "no complete primary pack belongs to the requested history"
-            );
-            let pending =
-                pending.map(|candidate| scope.spawn(move || candidate.verify(root, stage, width)));
-            let residual: Vec<_> = expected
-                .iter()
-                .copied()
-                .filter(|id| remaining.contains(id))
-                .collect();
-            // Git can export the remaining objects while it rehashes the last
-            // mixed pack. Use the output only if both operations succeed.
-            let new = if residual.is_empty() {
-                Ok(Vec::new())
-            } else {
-                export(source.primary, root, stage, &residual, width)
-            };
-            if let Some(pending) = pending {
-                filtered.push(pending.join().map_err(|_| {
-                    anyhow::anyhow!("Git mixed pack verification worker panicked")
-                })??);
-            }
+        }
+        ensure!(
+            !whole.is_empty() || pending.is_some(),
+            "no complete primary pack belongs to the requested history"
+        );
+        #[cfg(target_os = "macos")]
+        let preview = pending
+            .as_mut()
+            .and_then(|p| p.preview.take())
+            .filter(|_| mixed::default_delta_cache(root))
+            .map(std::sync::Arc::new);
+        #[cfg(target_os = "macos")]
+        let verifier = preview.clone();
+        #[cfg(target_os = "macos")]
+        let will_walk = preview.is_some() && full_tip.is_some();
+        #[cfg(not(target_os = "macos"))]
+        let will_walk = false;
+        let verify = verify.or_else(|| (!will_walk).then(|| scope.spawn(verify_whole)));
+        let pending = pending.map(|candidate| {
+            scope.spawn(move || {
+                #[cfg(target_os = "macos")]
+                if let Some(view) = verifier {
+                    return view
+                        .verify_mixed(root, stage, width, candidate)
+                        .context(UnusablePreview);
+                }
+                candidate.verify(root, stage, width)
+            })
+        });
+        let residual: Vec<_> = expected
+            .iter()
+            .copied()
+            .filter(|id| remaining.contains(id))
+            .collect();
+        // Git can export the remaining objects while it rehashes the last
+        // mixed pack. Use the output only if both operations succeed.
+        let new = if residual.is_empty() {
+            Ok(Vec::new())
+        } else {
+            export(source.primary, root, stage, &residual, width)
+        };
+        if let Some(verify) = verify {
             verify
                 .join()
                 .map_err(|_| anyhow::anyhow!("Git pack verification worker panicked"))??;
-            Ok::<_, anyhow::Error>((filtered, new?))
-        })?;
+        }
+        let new = new?;
+        if let Some(pending) = pending {
+            let join = || {
+                pending
+                    .join()
+                    .map_err(|_| anyhow::anyhow!("Git mixed pack verification worker panicked"))?
+            };
+            #[cfg(target_os = "macos")]
+            if let Some((view, tip)) = preview.as_ref().zip(full_tip) {
+                let others: Vec<_> = whole
+                    .iter()
+                    .chain(filtered.iter().map(|(p, _)| p))
+                    .chain(&new)
+                    .collect();
+                let walk = || view.walk(root, stage, &others, tip);
+                let first = walk();
+                let result = join()?;
+                let retried = first.is_err();
+                // A failed walk has no authority. Retry in fresh private scratch
+                // after native verification, keeping the independently verified pack.
+                let count = first.or_else(|_| walk()).context(UnusablePreview)?;
+                let (count, inputs) = count.finish(&result.0, view).context(UnusablePreview)?;
+                filtered.push(result);
+                return Ok((
+                    filtered,
+                    new,
+                    Some(VerifiedClosure {
+                        count,
+                        inputs,
+                        retried,
+                    }),
+                ));
+            }
+            filtered.push(join()?);
+        }
+        Ok::<_, anyhow::Error>((filtered, new, None))
+    })?;
     reuse.filtered = filtered.len();
+    reuse.proof = proof;
     for (pack, unchanged_bytes) in filtered {
         reuse.unchanged_bytes += unchanged_bytes;
         packs.push(pack);
@@ -954,6 +1171,48 @@ fn export_pack(
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn verified_publication_uses_pinned_pack_and_index_without_overwriting() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let installed = temp.path().join("installed");
+        fs::create_dir(&installed)?;
+        let hash = "0123456789012345678901234567890123456789";
+        let pack = Pack::at(temp.path(), hash, 20)?;
+        let mut inputs = VerifiedInputs::default();
+        for (path, bytes) in [
+            (&pack.pack, b"verified pack"),
+            (&pack.index, b"verified idx!"),
+        ] {
+            fs::write(path, b"unverified pathname")?;
+            let mut file = tempfile::tempfile_in(temp.path())?;
+            file.write_all(bytes)?;
+            let mut permissions = file.metadata()?.permissions();
+            permissions.set_readonly(true);
+            file.set_permissions(permissions)?;
+            // Leave the offset at EOF as a Git reader may have done.
+            inputs.0.push((path.clone(), file, None));
+            let target = installed.join(path.file_name().unwrap());
+            let (published, _) = inputs.clone_to(path, &target)?;
+            assert_eq!(fs::read(&target)?, bytes);
+            assert!(inputs.clone_to(path, &target).is_err());
+            published.check(&target)?;
+        }
+
+        let cache = cache::Cache::new(temp.path(), "sha1", hash);
+        let packs = [pack];
+        assert_eq!(cache.publish(&packs, Some(&inputs))?, 26);
+        assert_eq!(cache.publish(&packs, Some(&inputs))?, 0);
+        let restored = temp.path().join("restored");
+        fs::create_dir(&restored)?;
+        let restored = cache
+            .restore(&restored, 20)?
+            .context("missing cache generation")?;
+        assert_eq!(fs::read(&restored[0].pack)?, b"verified pack");
+        assert_eq!(fs::read(&restored[0].index)?, b"verified idx!");
+        Ok(())
+    }
+
     #[test]
     fn staged_closure_rejects_bad_discovery_and_duplicate_pack_entries() -> Result<()> {
         let temporary = tempfile::tempdir()?;
@@ -996,7 +1255,7 @@ mod tests {
             for ids in input {
                 staged.extend(export(&source, &root, &packs, &ids, 20)?);
             }
-            let result = verify_staged_closure(&root, &objects, &staged, tip, None);
+            let result = verify_staged_closure(&root, &objects, &staged, tip, None, None);
             assert_eq!(result.is_ok(), name == "exact", "{name}: {result:?}");
         }
         Ok(())

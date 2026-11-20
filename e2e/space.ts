@@ -179,7 +179,7 @@ export const cases: Scenario[] = [{
       const name = `space-${String(index + 1).padStart(3, "0")}`;
       const before = disk(ctx);
       const started = performance.now();
-      const spawned = ctx.spawn(name);
+      const spawned = ctx.spawn(name, ['--history', 'local']);
       const wallSeconds = (performance.now() - started) / 1000;
       const after = disk(ctx);
       const path = resolve(spawned.path);
@@ -207,6 +207,7 @@ export const cases: Scenario[] = [{
       : null;
     const isolation = checkWriteIsolation(ctx, graftPaths, nativePaths);
     const report = {
+      historyPolicy: 'local',
       platform: process.platform,
       architecture: process.arch,
       filesystem: {

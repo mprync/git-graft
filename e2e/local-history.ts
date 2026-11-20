@@ -53,6 +53,140 @@ function read(path: string, file: string): string {
 }
 
 export const cases: Scenario[] = [
+  {
+    name: 'private checkout settings retain branch-selected values after a move',
+    run(ctx) {
+      const settings = new Map([
+        ['user.name', ' #"quoted" \\ name; '],
+        ['user.email', 'workspace@example.invalid'],
+        ['author.name', 'Workspace Author'],
+        ['core.safecrlf', 'false'],
+      ]);
+      const include = join(ctx.root, 'primary-config');
+      for (const [key, value] of settings) ctx.git(['config', '--file', include, key, value]);
+      ctx.git(['config', '--global', 'includeIf.onbranch:main.path', include]);
+      const name = 'private-settings';
+      const ws = ctx.spawn(name, ['--history', 'tip']);
+      const moved = join(ctx.root, 'moved-private-settings');
+      ctx.cli(['move', name, moved, '--lease', ws.lease]);
+      for (const [key, value] of settings) {
+        assert.equal(ctx.git(['config', '--no-includes', '--local', '--get-all', key], moved), value);
+      }
+      assert.equal(ctx.git(['status', '--porcelain'], moved), '');
+    },
+  },
+  {
+    name: 'tip checkout installs committed symlinks alongside regular files from a dirty primary',
+    run(ctx) {
+      const nested = join(ctx.repo, 'nested');
+      mkdirSync(nested);
+      for (let i = 0; i < 260; i++) writeFileSync(join(nested, String(i)), String(i));
+      ctx.git(['add', 'nested']);
+      const links = [['nested/link', '42'], ['links/deep/dangling', 'missing']];
+      for (const [path, target] of links) {
+        const blob = looseBlob(ctx, ctx.repo, 'link-target', target);
+        ctx.git(['update-index', '--add', '--cacheinfo', `120000,${blob},${path}`]);
+      }
+      ctx.git(['commit', '-qm', 'regular files and symlinks']);
+      const reference = join(ctx.root, 'native-links');
+      ctx.git(['worktree', 'add', '-q', '--detach', reference, 'HEAD']);
+      writeFileSync(join(nested, 'link'), 'elsewhere');
+      writeFileSync(join(nested, '42'), 'xx');
+      const originalPath = ctx.env.PATH;
+      const observe = process.platform === 'darwin' && objectResult(ctx.cli(['doctor']).source_storage).native_clone;
+      if (observe) {
+        const bin = join(ctx.root, 'observe-link-checkout');
+        mkdirSync(bin);
+        ctx.env.GRAFT_TEST_GIT = ctx.command('sh', ['-c', 'command -v git']).stdout.trim();
+        ctx.env.GRAFT_TEST_PARENT = join(ctx.repo + '.graft', 'links', 'links', 'deep');
+        ctx.env.GRAFT_TEST_OBSERVED = join(ctx.root, 'link-checkout-observed');
+        writeFileSync(join(bin, 'git'), `#!/bin/sh
+case " $* " in
+  *" checkout-index --stdin -z "*)
+    test -d "$GRAFT_TEST_PARENT" || exit 77
+    touch "$GRAFT_TEST_OBSERVED";;
+esac
+exec "$GRAFT_TEST_GIT" "$@"
+`, {mode: 0o700});
+        ctx.env.PATH = bin + ':' + originalPath;
+      }
+      const ws = ctx.spawn('links', ['--history', 'tip']);
+      ctx.env.PATH = originalPath;
+      if (observe) assert(existsSync(join(ctx.root, 'link-checkout-observed')));
+      for (const [name] of links) {
+        const path = join(ws.path, name);
+        const expected = join(reference, name);
+        const symlink = lstatSync(expected).isSymbolicLink();
+        assert.equal(lstatSync(path).isSymbolicLink(), symlink);
+        if (symlink) assert.equal(readlinkSync(path), readlinkSync(expected));
+        else assert.deepEqual(readFileSync(path), readFileSync(expected));
+      }
+      assert.equal(read(ws.path, 'nested/42'), '42');
+      assert.equal(ctx.git(['status', '--porcelain'], ws.path), '');
+      assert.equal(ctx.git(['rev-list', '--all', '--count'], ws.path), '1');
+      assert.equal(read(ctx.repo, 'nested/link'), 'elsewhere');
+      assert.equal(read(ctx.repo, 'nested/42'), 'xx');
+    },
+  },
+  {
+    name: 'first status detects edits to files cloned through the verified tip index',
+    run(ctx) {
+      const supportsClones = objectResult(ctx.cli(['doctor']).source_storage).native_clone;
+      const trace = join(ctx.root, 'tip-checkout.trace');
+      ctx.env.GIT_TRACE2_EVENT = trace;
+      const workspace = ctx.spawn('verified-index', ['--history', 'tip']);
+      delete ctx.env.GIT_TRACE2_EVENT;
+      if (supportsClones) {
+        const calls = readFileSync(trace, 'utf8').trimEnd().split('\n').map(line => JSON.parse(line));
+        assert(calls.some(call => call.event === 'start' &&
+          call.argv.includes('check-attr') && call.argv.includes('--cached')));
+        assert.equal(objectResult(workspace.result.storage).cloned_files, 2);
+      }
+      const index = join(workspace.path, '.git', 'index');
+      const initialIndex = readFileSync(index);
+      assert.equal(ctx.git(['--no-optional-locks', 'status', '--porcelain'], workspace.path), '');
+      assert.deepEqual(readFileSync(index), initialIndex);
+      writeFileSync(join(workspace.path, 'tracked.txt'), 'changed\n');
+      assert.equal(ctx.git(['status', '--porcelain'], workspace.path), ' M tracked.txt');
+      assert.equal(ctx.git(['show', ':tracked.txt'], workspace.path), 'initial');
+      assert.equal(read(ctx.repo, 'tracked.txt'), 'initial\n');
+    },
+  },
+  {
+    name: 'ordinary files share blocks beside an uninitialized submodule',
+    run(ctx) {
+      const moduleName = 'vendor/module';
+      const module = join(ctx.repo, moduleName);
+      mkdirSync(module, {recursive:true});
+      ctx.git(['init', '-q', module]);
+      const revision = commitFile(ctx, module, 'child.txt', 'submodule content\n');
+      writeFileSync(join(ctx.repo, '.gitmodules'), '[submodule "example"]\n\tpath = vendor/module\n\turl = ./unused\n');
+      ctx.git(['add', '.gitmodules']);
+      ctx.git(['update-index', '--add', '--cacheinfo', '160000,' + revision + ',' + moduleName]);
+      ctx.git(['commit', '-qm', 'record submodule']);
+      writeFileSync(join(module, 'child.txt'), 'private donor edit\n');
+      const native = join(ctx.root, 'native-gitlink');
+      ctx.git(['worktree', 'add', '--detach', native, 'HEAD']);
+      assert.deepEqual(readdirSync(join(native, moduleName)), []);
+      const expectedIndex = ctx.git(['ls-files', '--stage'], native);
+      const nativeClone = objectResult(ctx.cli(['doctor']).source_storage).native_clone;
+      for (const history of ['local', 'tip']) {
+        const ws = ctx.spawn('module-' + history, ['--history', history]);
+        assert.deepEqual(readdirSync(join(ws.path, moduleName)), []);
+        assert.equal(ctx.git(['ls-files', '--stage'], ws.path), expectedIndex);
+        assert.equal(ctx.git(['status', '--porcelain'], ws.path), '');
+        assert.equal(read(ws.path, '.gitmodules'), read(native, '.gitmodules'));
+        if (nativeClone) assert(Number(objectResult(ws.result.storage).cloned_files) > 0);
+        assert([1,128].includes(ctx.command('git', ['cat-file', '-e', revision], ws.path).status ?? -1));
+      }
+      ctx.git(['config', '--global', 'submodule.recurse', 'true']);
+      const recursive = ctx.spawn('recursive-gitlink', ['--history', 'tip']);
+      assert.equal(objectResult(recursive.result.storage).backend, 'git');
+      assert.equal(ctx.git(['ls-files', '--stage'], recursive.path), expectedIndex);
+      assert.deepEqual(readdirSync(join(recursive.path, moduleName)), []);
+      assert.equal(read(module, 'child.txt'), 'private donor edit\n');
+    },
+  },
   ...['sha1', 'sha256'].map((format): Scenario => ({
     name: `advancing a cached tip excludes replaced, deleted and parent objects (${format})`,
     run(ctx) {
@@ -255,6 +389,9 @@ export const cases: Scenario[] = [
       const first = ctx.spawn('cold-tip', ['--history', 'tip', '--base', base]);
       check(first.path, 'cold-tip');
       assertSeparateRegularFiles([dirty, join(first.path, 'tracked.txt')]);
+      writeFileSync(join(first.path, 'plain'), 'new edit\n');
+      assert.equal(ctx.git(['status', '--porcelain'], first.path).trim(), 'M plain');
+      assert.equal(read(ctx.repo, 'plain'), 'modified\n');
 
       const fallback = ctx.spawn('missing-tip', ['--history', 'tip', '--base', base]);
       check(fallback.path, 'missing-tip');
@@ -310,18 +447,20 @@ export const cases: Scenario[] = [
       const plain = randomBytes(1024 * 1024);
       writeFileSync(join(ctx.repo, 'plain.bin'), plain);
       writeFileSync(join(ctx.repo, 'other.txt'), 'other\n');
-      ctx.git(['add', 'plain.bin', 'other.txt']);
+      writeFileSync(join(ctx.repo, 'expanded.txt'), '$Id$\n');
+      ctx.git(['add', 'plain.bin', 'other.txt', 'expanded.txt']);
       ctx.git(['commit', '-qm', 'raw and converted files']);
       const attributes = join(ctx.repo, 'custom attrs');
       writeFileSync(attributes, '*.txt text eol=crlf\n');
       mkdirSync(join(ctx.repo, '.git/info'), { recursive: true });
-      writeFileSync(join(ctx.repo, '.git/info/attributes'), 'other.txt text eol=lf\n');
+      writeFileSync(join(ctx.repo, '.git/info/attributes'), 'other.txt text=auto eol=lf\nexpanded.txt ident eol=lf\n');
       ctx.git(['config', '--local', 'core.attributesFile', 'custom attrs']);
       ctx.git(['config', '--local', 'core.autocrlf', 'false']);
       const reference = join(ctx.root, 'native');
       ctx.git(['-c', 'core.attributesFile=' + attributes, 'worktree', 'add', '-q', '--detach', reference, 'HEAD']);
       assert.equal(read(reference, 'tracked.txt'), 'initial\r\n');
       assert.equal(read(reference, 'other.txt'), 'other\n');
+      assert.match(read(reference, 'expanded.txt'), /^\$Id: [a-f0-9]+ \$\n$/);
       const nativeClone = objectResult(ctx.cli(['doctor']).source_storage).native_clone;
       for (const history of ['local', 'tip']) {
         if (history === 'tip') {
@@ -331,14 +470,16 @@ export const cases: Scenario[] = [
           writeFileSync(join(config, 'attributes'), readFileSync(attributes));
         }
         const ws = ctx.spawn('external-' + history, ['--history', history]);
-        for (const file of ['tracked.txt', 'other.txt', 'plain.bin']) {
+        for (const file of ['tracked.txt', 'other.txt', 'expanded.txt', 'plain.bin']) {
           assert.deepEqual(readFileSync(join(ws.path, file)), readFileSync(join(reference, file)));
         }
         assert.equal(ctx.git(['write-tree'], ws.path), ctx.git(['rev-parse', 'HEAD^{tree}']));
         assert.equal(ctx.git(['status', '--porcelain'], ws.path), '');
         if (nativeClone && ['darwin', 'linux'].includes(process.platform)) {
           const bytes = objectResult(ws.result.storage).cloned_bytes;
-          assert(typeof bytes === 'number' && bytes >= plain.length, 'expected the raw donor file to be cloned');
+          const expected = ['.gitignore', 'plain.bin', 'other.txt']
+            .reduce((sum, name) => sum + readFileSync(join(reference, name)).length, 0);
+          assert.equal(bytes, expected, 'expected the unchanged files to share donor data');
         }
         writeFileSync(join(ws.path, 'plain.bin'), 'private edit');
         assert.deepEqual(readFileSync(join(ctx.repo, 'plain.bin')), plain);
@@ -378,12 +519,20 @@ export const cases: Scenario[] = [
       const probe = objectResult(ctx.cli(['doctor']).source_storage);
       assert.equal(typeof probe.native_clone, 'boolean');
       const a = ctx.spawn('local-a', ['--history', 'local', '--base', 'main', '--branch', 'work']);
-      ctx.git(['config', '--local', 'graft.history', 'local']);
+      ctx.command('git', ['config', '--local', '--unset-all', 'graft.history'], ctx.repo);
       const retry = ['--base', 'main', '--detach', '--request-id', randomUUID()];
       const b = ctx.spawn('local-b', retry);
+      ctx.git(['config', '--local', 'graft.history', 'isolated']);
+      assert.equal(ctx.spawn('local-b', retry).lease, b.lease, 'retry must retain the original history choice');
+      const legacyRetry = ['--base', 'main', '--request-id', randomUUID()];
+      const configured = ctx.spawn('configured-isolated', legacyRetry);
+      assert.deepEqual(objects(ctx, configured.path), selected, 'project default must exclude unrelated objects');
+      const overridden = ctx.spawn('override-local', ['--history', 'local', '--base', 'main']);
+      assert.deepEqual(objects(ctx, overridden.path), probe.native_clone ? donorObjects : selected, 'explicit policy must override project default');
+      ctx.git(['config', '--local', 'graft.history', 'local']);
+      assert.equal(ctx.spawn('configured-isolated', legacyRetry).lease, configured.lease, 'legacy isolated reservation must retry after reconfiguration');
       const isolated = ctx.spawn('exact', ['--history', 'isolated', '--base', 'main', '--branch', 'work']);
       ctx.git(['config', '--local', '--unset', 'graft.history']);
-      assert.equal(ctx.spawn('local-b', retry).lease, b.lease, 'retry must retain the original history choice');
       const workspaces = [a, b, isolated];
       for (const ws of workspaces) {
         const local = ws !== isolated && probe.native_clone;

@@ -364,12 +364,13 @@ function run(arm: Arm | 'nativeConventional', fixture: Fixture, apfsCalibration?
       const label = index ? 'repeat' : 'first';
       let path = join(ctx.root,name);
       let lease = '';
+      let localSnapshot = false;
       stage(label, () => {
         if (isNative) {
           git(['worktree','add','-b',name,path,'main']);
           npm(['ci','--offline'],path);
         } else {
-          const result = graft(['spawn',name]);
+          const result = graft(['spawn',name,'--history','local']);
           const checkout = result.path;
           assert(typeof checkout === 'string' && typeof result.lease === 'string');
           path = checkout;
@@ -381,6 +382,7 @@ function run(arm: Arm | 'nativeConventional', fixture: Fixture, apfsCalibration?
           if (copiedLayer) assert.equal(dependencies.action,'restore');
           else assert.equal(dependencies.status,'attached');
           const objects = objectResult(storage.objects);
+          localSnapshot = objects.source === 'local-snapshot';
           if (objects) assert(typeof objects.pack_bytes === 'number' && objects.pack_bytes > 0);
           receipts.spawn = {...counters(storage),dependencies:counters(dependencies),
             ...(objects ? {objects:objectBootstrap(objects)} : {})};
@@ -396,8 +398,8 @@ function run(arm: Arm | 'nativeConventional', fixture: Fixture, apfsCalibration?
       if (privateTip) {
         const visibility = ctx.command(gitExe,['cat-file','-e',privateTip],path);
         assert.ifError(visibility.error);
-        if (!isNative) assert([1,128].includes(visibility.status ?? -1),'Unrequested primary commit is present');
-        else assert.equal(visibility.status,0,visibility.stderr);
+        if (isNative || localSnapshot) assert.equal(visibility.status,0,visibility.stderr);
+        else assert([1,128].includes(visibility.status ?? -1),'Fallback export exposed an unrelated primary commit');
       }
       return {name,path,lease};
     });
@@ -608,7 +610,7 @@ try {
       calibrated:apfsCalibration.available, observerSeconds:apfsCalibration.observerSeconds,
       ...(!apfsCalibration.available ? {reason:apfsCalibration.reason} : {}),
     } : undefined,
-    fixture:{repeats,smallFiles,largeFiles:fixture.source.length,largeMiB,dependencyMiB,historyCommits,historyKiB,workspaces:2,
+    historyPolicy:'local',fixture:{repeats,smallFiles,largeFiles:fixture.source.length,largeMiB,dependencyMiB,historyCommits,historyKiB,workspaces:2,
       additionalPackedBranchTips:values['mixed-history'] ? 1 : 0},
     filesystem:{typeCode:fs.type.toString(),blockSize:fs.bsize.toString()},
     scope:{

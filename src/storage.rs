@@ -4,7 +4,7 @@ use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 #[cfg(target_os = "linux")]
 use std::fs::{File, OpenOptions};
 #[cfg(test)]
@@ -20,11 +20,14 @@ use std::{
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod cache;
 mod local;
+mod tip_index;
+pub(crate) use tip_index::TipIndex;
+pub(crate) use tip_index::object_digest;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod native;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 mod verify;
-pub(crate) use local::{materialize_local, materialize_tip};
+pub(crate) use local::{materialize_local, materialize_planned};
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub(crate) use native::Root as NoFollowRoot;
 
@@ -247,8 +250,11 @@ fn entries_with_objects(worktree: &Path, oid: &str, objects: Option<&Path>) -> R
         "read Git checkout tree: {}",
         String::from_utf8_lossy(&tree.stderr).trim()
     );
-    tree.stdout
-        .split(|b| *b == 0)
+    parse_entries(&tree.stdout)
+}
+
+fn parse_entries(rows: &[u8]) -> Result<Vec<Entry>> {
+    rows.split(|b| *b == 0)
         .filter(|record| !record.is_empty())
         .map(|record| {
             let tab = record
@@ -525,7 +531,8 @@ impl FrozenGit {
             .prefix(".graft-checkout-")
             .tempdir_in(worktree.join(".git"))?;
         let admin = directory.path();
-        fs::create_dir(admin.join("objects"))?;
+        // Every command uses the workspace object directory. Keeping a second
+        // one here would leave a standalone Git repository on interruption.
         fs::create_dir(admin.join("refs"))?;
         fs::write(admin.join("HEAD"), format!("{oid}\n"))?;
         if oid.len() == 64 {
@@ -618,7 +625,7 @@ fn conversion_reason(checkout: &mut Checkout<'_>) -> Result<Option<&'static str>
     if !checkout.inspect_attributes {
         return Ok(None);
     }
-    let Ok(conversions) = checkout_conversions(checkout.command(), oid, entries) else {
+    let Ok(conversions) = checkout_conversions(checkout.command(), Some(oid), entries) else {
         return Ok(Some("cannot inspect committed attributes"));
     };
     if conversions.contains(&Conversion::Git) {
@@ -626,7 +633,9 @@ fn conversion_reason(checkout: &mut Checkout<'_>) -> Result<Option<&'static str>
     }
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
-        checkout.may_convert_eol |= conversions.contains(&Conversion::Eol);
+        checkout.may_convert_eol |= conversions
+            .iter()
+            .any(|c| matches!(c, Conversion::Text | Conversion::Eol | Conversion::Lf));
     }
     Ok(None)
 }
@@ -634,7 +643,10 @@ fn conversion_reason(checkout: &mut Checkout<'_>) -> Result<Option<&'static str>
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum Conversion {
     Raw,
+    Text,
     Eol,
+    // Explicit LF suppresses checkout CRLF expansion, including text=auto.
+    Lf,
     Git,
 }
 
@@ -642,19 +654,14 @@ enum Conversion {
 // still routes the file to Git. Keep names as bytes throughout.
 fn checkout_conversions(
     mut command: Command,
-    oid: &str,
+    oid: Option<&str>,
     files: &[Entry],
 ) -> Result<Vec<Conversion>> {
+    let source = oid.map_or_else(|| "--cached".into(), |oid| format!("--source={oid}"));
     let output = crate::git::bounded_stdout(
         command
             .env("GIT_NO_REPLACE_OBJECTS", "1")
-            .args([
-                "check-attr",
-                &format!("--source={oid}"),
-                "--all",
-                "-z",
-                "--stdin",
-            ])
+            .args(["check-attr", &source, "--all", "-z", "--stdin"])
             .stdin(Stdio::from(path_input(files.iter())?)),
         16 * 1024 * 1024,
     )?;
@@ -668,10 +675,12 @@ fn checkout_conversions(
         .split(|&b| b == 0);
     while let Some(path) = fields.next() {
         let attr = fields.next().context("missing checkout attribute")?;
-        fields.next().context("missing checkout attribute value")?;
+        let value = fields.next().context("missing checkout attribute value")?;
         let conversion = match attr {
             b"filter" | b"ident" | b"working-tree-encoding" => Conversion::Git,
-            b"text" | b"eol" | b"crlf" => Conversion::Eol,
+            b"eol" if value == b"lf" => Conversion::Lf,
+            b"text" | b"crlf" => Conversion::Text,
+            b"eol" => Conversion::Eol,
             _ => continue,
         };
         let current = paths.entry(path).or_insert(Conversion::Raw);
@@ -859,10 +868,14 @@ fn prepare(checkout: &Checkout<'_>, state: &Path, primary: Option<&Path>) -> Res
         tree: &tree,
     };
     staged.run(&["read-tree", oid], None)?;
-    let snapshot = match fs::symlink_metadata(&base) {
+    stage_parents(&tree, entries)?;
+    let (snapshot, installed) = match fs::symlink_metadata(&base) {
         Ok(_) => {
             receipt.warm = true;
-            cache::Snapshot::load(&base, &secret, oid, settings)?
+            (
+                cache::Snapshot::load(&base, &secret, oid, settings)?,
+                BTreeSet::new(),
+            )
         }
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
             let parent = parent_candidate(checkout, &bases, settings, &secret);
@@ -887,7 +900,6 @@ fn prepare(checkout: &Checkout<'_>, state: &Path, primary: Option<&Path>) -> Res
         "source snapshot differs from the Git tree"
     );
     let destination = native::Root::open(&tree)?;
-    stage_parents(&tree, entries)?;
     // Each worker pins the source and destination roots independently. Files
     // still pass the same stamp checks before and after every clone.
     let records = snapshot.records();
@@ -897,12 +909,35 @@ fn prepare(checkout: &Checkout<'_>, state: &Path, primary: Option<&Path>) -> Res
             let source = snapshot.fork_root()?;
             let destination = destination.fork()?;
             let tree = &tree;
+            let installed = &installed;
             tasks.push(scope.spawn(move || -> Result<Counts> {
                 let mut counts = Counts::default();
+                #[cfg(target_os = "macos")]
+                let mut read_budget = if records.len() >= PARALLEL_THRESHOLD {
+                    8 * 1024 * 1024
+                } else {
+                    0
+                };
                 for record in chunk {
-                    let target = tree.join(record.entry.path()?);
-                    if let Some(size) = record.clone_into(&source, &destination, &target, mode)? {
+                    let path = record.entry.path()?;
+                    let target = tree.join(path);
+                    let size = if installed.contains(record.entry.name.as_slice()) {
+                        Some(record.checked_size(&source)?)
+                    } else {
+                        record.clone_into(&source, &destination, &target, mode)?
+                    };
+                    if let Some(size) = size {
                         counts.add(size);
+                        // Git reads fresh APFS clones serially to refresh the index.
+                        // Warm small files here while their directories are already open.
+                        #[cfg(target_os = "macos")]
+                        if size > 0 && size <= read_budget && size <= 1024 * 1024 {
+                            read_budget -= size;
+                            if let Ok(file) = destination.regular(path) {
+                                let mut bytes = std::io::Read::take(file, size);
+                                let _ = io::copy(&mut bytes, &mut io::sink());
+                            }
+                        }
                     }
                 }
                 Ok(counts)
@@ -974,15 +1009,15 @@ fn parent_candidate(
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-fn build_snapshot(
-    staged: &StagedCheckout<'_>,
+fn build_snapshot<'a>(
+    staged: &StagedCheckout<'a>,
     secret: &cache::Key,
     base: &Path,
     parent: Option<&cache::Snapshot>,
     primary: Option<&Path>,
     mode: u32,
     receipt: &mut Receipt,
-) -> Result<cache::Snapshot> {
+) -> Result<(cache::Snapshot, BTreeSet<&'a [u8]>)> {
     let checkout = staged.checkout;
     let entries = checkout.entries;
     let base_parent = base.parent().context("missing snapshot directory")?;
@@ -997,6 +1032,19 @@ fn build_snapshot(
 
     let donor = primary.and_then(|primary| native::Root::open(primary).ok());
     let private = native::Root::open(&tree)?;
+    let install = cfg!(target_os = "macos")
+        && entries.len() >= PARALLEL_THRESHOLD
+        && !checkout.may_convert_eol
+        && parent.is_none()
+        && donor.is_some();
+    let destination = install
+        .then(|| native::Root::open(staged.tree))
+        .transpose()?;
+    let generation_checkout = StagedCheckout {
+        checkout,
+        index: staged.index,
+        tree: &tree,
+    };
     let previous: BTreeMap<_, _> = parent
         .into_iter()
         .flat_map(cache::Snapshot::records)
@@ -1008,14 +1056,15 @@ fn build_snapshot(
             let donor = donor.as_ref().map(native::Root::fork).transpose()?;
             let parent = parent.map(cache::Snapshot::fork_root).transpose()?;
             let private = private.fork()?;
-            let tree = &tree;
+            let destination = destination.as_ref().map(native::Root::fork).transpose()?;
+            let generation_checkout = &generation_checkout;
             let previous = &previous;
             tasks.push(scope.spawn(move || {
                 reuse_snapshot_files(
-                    checkout,
+                    generation_checkout,
                     chunk,
                     &private,
-                    tree,
+                    destination.as_ref(),
                     parent.as_ref().map(|root| (root, previous)),
                     donor.as_ref(),
                     mode,
@@ -1031,9 +1080,13 @@ fn build_snapshot(
             .collect()
     })?;
     let mut reused = BTreeMap::new();
+    let mut installed = BTreeSet::new();
     for batch in batches {
         receipt.parent.merge(batch.parent);
         receipt.primary.merge(batch.primary);
+        if install {
+            installed.extend(batch.files.iter().map(|(name, _)| *name));
+        }
         reused.extend(batch.files);
     }
 
@@ -1042,12 +1095,7 @@ fn build_snapshot(
             .iter()
             .filter(|entry| !reused.contains_key(entry.name.as_slice()))
             .collect();
-        StagedCheckout {
-            checkout,
-            index: staged.index,
-            tree: &tree,
-        }
-        .run(
+        generation_checkout.run(
             &["checkout-index", "--stdin", "-z"],
             Some(path_input(missing.iter().copied())?),
         )?;
@@ -1055,7 +1103,7 @@ fn build_snapshot(
             receipt.private.add(private.regular_size(entry.path()?)?);
         }
     }
-    cache::Snapshot::publish(
+    let snapshot = cache::Snapshot::publish(
         &generation,
         base,
         entries,
@@ -1063,7 +1111,8 @@ fn build_snapshot(
         secret,
         checkout.oid,
         &checkout.settings,
-    )
+    )?;
+    Ok((snapshot, installed))
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -1076,14 +1125,18 @@ struct Reused<'a> {
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 fn reuse_snapshot_files<'a>(
-    checkout: &Checkout<'_>,
+    staged: &StagedCheckout<'_>,
     entries: &'a [Entry],
     private: &native::Root,
-    tree: &Path,
+    destination: Option<&native::Root>,
     parent: Option<(&native::Root, &BTreeMap<&[u8], &cache::Record>)>,
     donor: Option<&native::Root>,
     mode: u32,
 ) -> Result<Reused<'a>> {
+    let (checkout, tree) = (staged.checkout, staged.tree);
+    if let (Some(destination), Some(donor)) = (destination, donor) {
+        return stage_raw_files(checkout, entries, private, destination, donor, mode);
+    }
     let mut reused = Reused::default();
     let mut primary_clones = Vec::new();
     for entry in entries.iter().filter(|entry| entry.regular()) {
@@ -1128,6 +1181,63 @@ fn reuse_snapshot_files<'a>(
             private.discard(path)?;
         }
     }
+    Ok(reused)
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn stage_raw_files<'a>(
+    checkout: &Checkout<'_>,
+    entries: &'a [Entry],
+    private: &native::Root,
+    destination: &native::Root,
+    donor: &native::Root,
+    mode: u32,
+) -> Result<Reused<'a>> {
+    let mut reused = Reused::default();
+    let regular: Vec<_> = entries.iter().filter(|entry| entry.regular()).collect();
+    if regular.is_empty() {
+        return Ok(reused);
+    }
+    let mut batch = verify::RawBatch::start(checkout, &regular)?;
+    for entry in regular {
+        let path = entry.path()?;
+        let mode = entry.creation_mode(mode);
+        let created = donor
+            .regular_metadata(path)
+            .and_then(|(source, metadata)| {
+                private.clone_regular(path, &source, &metadata, mode, false)
+            })
+            .is_ok();
+        let mut copy = if created {
+            private.open_primary_clone(path, mode).ok()
+        } else {
+            None
+        };
+        let matched = batch.matches(
+            entry,
+            copy.as_mut().map(|(file, metadata)| (file, metadata.len())),
+        )?;
+        if let Some((file, metadata)) = copy.filter(|_| matched) {
+            let stamp = cache::Stamp::from(&metadata);
+            // Stage only bytes already compared with Git. Both copies remain
+            // private until the signed generation passes publication checks.
+            ensure!(
+                cache::Stamp::from(&file.metadata()?) == stamp,
+                "source changed before cloning"
+            );
+            destination.clone_regular(path, &file, &metadata, mode, true)?;
+            ensure!(
+                cache::Stamp::from(&file.metadata()?) == stamp,
+                "source changed during cloning"
+            );
+            reused.primary.add(metadata.len());
+            reused.files.push((entry.name.as_slice(), Some(stamp)));
+        } else if created {
+            private.discard(path)?;
+        }
+    }
+    batch.finish()?;
+
     Ok(reused)
 }
 
@@ -1287,12 +1397,13 @@ mod tests {
         // Force the native path regardless of filesystem cloning support.
         command(&workspace, &["config", "core.autocrlf", "true"]);
         let mut calls = 0;
-        let result = materialize_tip(
+        let result = materialize_planned(
             &workspace,
             &temp.path().join("state"),
             &oid,
             &repo,
-            &repo.join(".git/objects"),
+            Some(&repo.join(".git/objects")),
+            None,
             || {
                 calls += 1;
                 assert!(!workspace.join(".git/index").exists());
@@ -1320,12 +1431,13 @@ mod tests {
         command(&workspace, &["config", "core.autocrlf", "false"]);
         fs::write(workspace.join(".git/HEAD"), format!("{oid}\n")).unwrap();
         let mut calls = 0;
-        materialize_tip(
+        materialize_planned(
             &workspace,
             &temp.path().join("state"),
             &oid,
             &repo,
-            &repo.join(".git/objects"),
+            Some(&repo.join(".git/objects")),
+            None,
             || {
                 calls += 1;
                 assert!(!workspace.join(".git/index").exists());
@@ -1386,6 +1498,55 @@ mod tests {
         );
         command(workspace, &["config", "core.autocrlf", "false"]);
         command(workspace, &["config", "core.symlinks", "true"]);
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn local_checkout_requires_blobs_even_when_donor_files_match() -> Result<()> {
+        for format in ["sha1", "sha256"] {
+            let (temp, repo, oid) = fixture_with_format(format);
+            let workspace = temp.path().join("workspace");
+            command(
+                &repo,
+                &[
+                    "clone",
+                    "-q",
+                    "--local",
+                    "--no-checkout",
+                    ".",
+                    workspace.to_str().unwrap(),
+                ],
+            );
+            let blob = command(&repo, &["rev-parse", "HEAD:sub/file"]);
+            let (prefix, name) = blob.split_at(2);
+            fs::remove_file(workspace.join(".git/objects").join(prefix).join(name))?;
+            assert!(
+                materialize_local(&workspace, &temp.path().join("state"), &oid, &[], &repo)
+                    .is_err()
+            );
+            assert!(!workspace.join(".git/index").exists());
+            assert_eq!(fs::read(repo.join("sub/file"))?, b"committed\n");
+        }
+        Ok(())
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn frozen_checkout_reads_workspace_objects_and_allows_relocation() -> Result<()> {
+        for format in ["sha1", "sha256"] {
+            let (temp, repo, oid) = fixture_with_format(format);
+            let workspace = temp.path().join("workspace");
+            independent(&repo, &workspace);
+            let workspace = dunce::canonicalize(workspace)?;
+            let frozen = FrozenGit::new(&workspace, &oid, &[])?;
+            let status = frozen
+                .configure(git_command(&workspace), &workspace, &oid)
+                .args(["cat-file", "-e", "HEAD^{tree}"])
+                .status()?;
+            assert!(status.success());
+            crate::registry::check_relocation_tree(&workspace)?;
+        }
+        Ok(())
     }
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -1469,7 +1630,7 @@ mod tests {
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
-    fn local_defers_auto_crlf_to_native_git() {
+    fn local_shares_explicit_lf_and_defers_auto_crlf_to_git() {
         let (temp, repo, _) = fixture();
         fs::write(repo.join(".gitattributes"), b"explicit eol=lf\n").unwrap();
         fs::write(repo.join("explicit"), b"explicit\n").unwrap();
@@ -1513,9 +1674,61 @@ mod tests {
         );
         assert_eq!(fs::read(workspace.join("explicit")).unwrap(), b"explicit\n");
         assert_eq!(command(&workspace, &["status", "--porcelain"]), "");
-        assert_eq!(result["backend"], "git");
-        assert_eq!(result["primary_reused_files"], 0, "{result}");
-        assert_eq!(result["private_files"], 7, "{result}");
+        let shared = u64::from(probe(&donor, &workspace).unwrap());
+        assert_eq!(result["primary_reused_files"], shared, "{result}");
+        assert_eq!(result["private_files"], 7 - shared, "{result}");
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn local_shares_matching_text_and_preserves_native_line_endings() {
+        let (temp, repo, _) = fixture();
+        fs::write(
+            repo.join(".gitattributes"),
+            b"script text=auto\nsub/file text\nwindows text eol=crlf\n",
+        )
+        .unwrap();
+        fs::write(repo.join("windows"), b"windows\n").unwrap();
+        fs::write(repo.join("mixed"), b"mixed\r\nend\n").unwrap();
+        command(&repo, &["add", "."]);
+        command(&repo, &["commit", "-qm", "text checkout settings"]);
+        let oid = command(&repo, &["rev-parse", "HEAD"]);
+        for (autocrlf, eol, raw_files) in [
+            ("InPuT", "crlf", 4),
+            ("false", "native", 4),
+            ("false", "CRLF", 2),
+            ("true", "lf", 0),
+        ] {
+            let donor = temp.path().join(format!("donor-{autocrlf}-{eol}"));
+            let workspace = temp.path().join(format!("workspace-{autocrlf}-{eol}"));
+            for path in [&donor, &workspace] {
+                independent(&repo, path);
+                command(path, &["config", "--add", "core.autocrlf", autocrlf]);
+                command(path, &["config", "core.eol", eol]);
+            }
+            command(&donor, &["read-tree", "-u", "-m", &oid]);
+            let result =
+                materialize_local(&workspace, &temp.path().join("state"), &oid, &[], &donor)
+                    .unwrap();
+            for name in [".gitattributes", "mixed", "script", "sub/file", "windows"] {
+                assert_eq!(
+                    fs::read(workspace.join(name)).unwrap(),
+                    fs::read(donor.join(name)).unwrap(),
+                    "{autocrlf}/{eol} {name}"
+                );
+            }
+            assert_eq!(fs::read(workspace.join("windows")).unwrap(), b"windows\r\n");
+            assert_eq!(
+                fs::read(workspace.join("mixed")).unwrap(),
+                b"mixed\r\nend\n"
+            );
+            let shared = u64::from(probe(&donor, &workspace).unwrap());
+            assert_eq!(
+                result["primary_reused_files"],
+                raw_files * shared,
+                "{result}"
+            );
+        }
     }
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -2163,6 +2376,49 @@ mod tests {
         assert_eq!(result["reason"], "submodules");
         assert_eq!(command(&wt, &["status", "--porcelain"]), "");
         assert_eq!(fs::read_dir(wt.join("module")).unwrap().count(), 0);
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[test]
+    fn direct_checkout_preserves_a_directory_that_appears_at_a_gitlink() -> Result<()> {
+        let (temp, repo, base) = fixture();
+        if !probe(&repo, &repo)? {
+            return Ok(());
+        }
+        command(
+            &repo,
+            &[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                &format!("160000,{base},module"),
+            ],
+        );
+        command(&repo, &["commit", "-qm", "record submodule"]);
+        let oid = command(&repo, &["rev-parse", "HEAD"]);
+        let workspace = temp.path().join("workspace");
+        independent(&repo, &workspace);
+        command(&workspace, &["config", "core.autocrlf", "false"]);
+        command(&workspace, &["config", "submodule.recurse", "false"]);
+        let module = workspace.join("module");
+        let error = materialize_planned(
+            &workspace,
+            &temp.path().join("state"),
+            &oid,
+            &repo,
+            Some(&repo.join(".git/objects")),
+            None,
+            || {
+                fs::create_dir(&module)?;
+                fs::write(module.join("mine"), b"keep")?;
+                Ok(())
+            },
+        )
+        .unwrap_err();
+        assert!(format!("{error:#}").contains("reserve submodule directory"));
+        assert_eq!(fs::read(module.join("mine"))?, b"keep");
+        assert!(!workspace.join(".git/index").exists());
+        Ok(())
     }
 
     #[test]

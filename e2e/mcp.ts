@@ -216,6 +216,10 @@ async function discover(client: McpClient, allowExec: boolean): Promise<Map<stri
     if (executionTools.includes(name)) assert.match(description, /--allow-exec/);
   }
   assert.deepEqual([...catalog.keys()].sort(), expected.sort());
+  const spawnDescription = string(catalog.get('workspace_spawn')?.description, 'spawn description');
+  assert.match(spawnDescription, /omit history/i);
+  assert.match(spawnDescription, /defaults to local/i);
+  assert.match(spawnDescription, /isolated.*(?:unrelated|excluded)/i);
   const spawnSchema = object(catalog.get('workspace_spawn')?.inputSchema, 'spawn schema');
   assert.deepEqual(spawnSchema.required, ['name']);
   assert.deepEqual(Object.keys(object(spawnSchema.properties, 'spawn properties')).sort(), spawnOptions);
@@ -804,11 +808,38 @@ export const cases: Scenario[] = [
     }),
   },
   {
-    name: 'MCP supports the standalone CLI spawn modes',
+    name: 'MCP advertises local history and honors overrides and retries',
     run: async (ctx) => withClient(ctx, true, async (client) => {
       const initialized = await initialize(client);
       assert.match(string(initialized.instructions, 'instructions'), /enabled by the host/);
+      const guidance = string(initialized.instructions, 'history instructions');
+      assert.match(guidance, /history omitted.*project setting.*default: local/i);
+      assert.match(guidance, /isolated.*selected commit.s reachable history/i);
 
+      ctx.command('git', ['config', '--local', '--unset-all', 'graft.history'], ctx.repo);
+      const unrelated = ctx.git(['commit-tree', 'HEAD^{tree}', '-p', 'HEAD', '-m', 'unrelated']);
+      ctx.git(['update-ref', 'refs/heads/unrelated', unrelated]);
+      const probe = object(ctx.cli(['doctor']).source_storage, 'source filesystem capability');
+      const defaultArgs = { name: 'mcp-default-history', request_id: randomUUID() };
+      const defaultWorkspace = await call(client, 'workspace_spawn', defaultArgs);
+      const visibility = (workspace: JsonObject) => ctx.command('git', ['cat-file', '-e', unrelated], workspacePath(workspace)).status;
+      assert.equal(visibility(defaultWorkspace) === 0, probe.native_clone, 'unconfigured local history visibility');
+      ctx.git(['config', '--local', 'graft.history', 'isolated']);
+      assert.deepEqual(await call(client, 'workspace_spawn', defaultArgs), defaultWorkspace, 'retry must preserve original policy');
+      const configured = await call(client, 'workspace_spawn', { name: 'mcp-configured-history' });
+      assert.notEqual(visibility(configured), 0, 'configured isolated policy must exclude unrelated objects');
+      const override = await call(client, 'workspace_spawn', { name: 'mcp-override-history', history: 'local' });
+      assert.equal(visibility(override) === 0, probe.native_clone, 'explicit local policy must override project setting');
+      ctx.git(['config', '--local', 'graft.history', 'local']);
+      const isolated = await call(client, 'workspace_spawn', { name: 'mcp-isolated-history', history: 'isolated' });
+      assert.notEqual(visibility(isolated), 0, 'explicit isolated policy must exclude unrelated objects');
+    }),
+  },
+  {
+    name: 'MCP supports the standalone CLI spawn modes',
+    run: async (ctx) => withClient(ctx, true, async (client) => {
+      await initialize(client);
+      const probe = object(ctx.cli(['doctor']).source_storage, 'source filesystem capability');
       for (const options of [
         { branch: 'chosen', detach: true },
         { branch: 'chosen', orphan: 'root' },
@@ -830,7 +861,6 @@ export const cases: Scenario[] = [
       };
       ctx.git(['config', '--local', 'graft.history', 'local']);
       const locked = await call(client, 'workspace_spawn', args);
-      const probe = object(ctx.cli(['doctor']).source_storage, 'source filesystem capability');
       if (probe.native_clone) {
         assert.equal(object(object(locked.storage, 'workspace storage').objects, 'workspace history').source, 'local-snapshot');
       }

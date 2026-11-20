@@ -12,6 +12,9 @@ use std::{
 
 use crate::api::fault;
 
+#[cfg(target_os = "macos")]
+pub(crate) mod optional;
+
 pub(crate) const MINIMUM_VERSION: &str = "2.46.0";
 
 pub(crate) fn supported_version(version: &str) -> bool {
@@ -84,6 +87,40 @@ pub(crate) fn bounded_stdout(command: &mut Command, limit: u64) -> Result<Vec<u8
         "cannot read bounded Git metadata"
     );
     Ok(bytes)
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(crate) fn require_blobs<'a>(
+    mut command: Command,
+    blobs: impl Iterator<Item = &'a str>,
+) -> Result<()> {
+    use io::{BufWriter, Seek, Write};
+    let mut names = BufWriter::new(tempfile::tempfile()?);
+    let mut count = 0;
+    for blob in blobs {
+        writeln!(names, "{blob}")?;
+        count += 1;
+    }
+    let mut names = names.into_inner()?;
+    names.rewind()?;
+    let kinds = bounded_stdout(
+        command
+            .env("GIT_NO_REPLACE_OBJECTS", "1")
+            .args(["cat-file", "--batch-check=%(objecttype)", "--buffer"])
+            .stdin(names),
+        count * 5,
+    )
+    .context("verify installed Git checkout blobs")?;
+    ensure!(
+        kinds.len() as u64 == count * 5
+            && kinds
+                .as_chunks::<5>()
+                .0
+                .iter()
+                .all(|kind| kind == b"blob\n"),
+        "installed Git checkout blob missing or invalid"
+    );
+    Ok(())
 }
 
 /// Read and write the owned object database of a private bare repository while

@@ -9,6 +9,8 @@ keywords = ["git", "workspace", "mcp", "reflink"]
 categories = ["command-line-utilities", "development-tools"]
 
 [dependencies]
+flate2 = "1"
+sha1-checked = { version = "0.10", default-features = false }
 anyhow = "1"
 blake3 = "1"
 clap = { version = "4", features = ["derive", "env"] }

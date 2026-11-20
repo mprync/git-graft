@@ -259,7 +259,7 @@ fn shallow_object_cache_tracks_deepen_and_excludes_disconnected_objects() -> Res
         assert_eq!(f.git(root, &["rev-list", "HEAD"])?, base);
 
         f.git(&f.primary, &["fetch", "--unshallow", "origin", "main"])?;
-        let full = f.graft(&["spawn", "complete", "--no-deps"])?;
+        let full = f.graft(&["spawn", "complete", "--history", "isolated", "--no-deps"])?;
         assert_eq!(field(&full, "base")?, base);
         let full = Path::new(field(&full, "path")?);
         assert_eq!(f.git(full, &["rev-list", "--count", "HEAD"])?, "5");

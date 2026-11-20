@@ -1,0 +1,268 @@
+{
+  "platform": "darwin",
+  "architecture": "arm64",
+  "os": {
+    "type": "Darwin",
+    "release": "25.5.0",
+    "version": "Darwin Kernel Version 25.5.0: Mon Apr 27 20:41:15 PDT 2026; root:xnu-12377.121.6~2/RELEASE_ARM64_T6041"
+  },
+  "git": "git version 2.56.0",
+  "binary": {
+    "bytes": 4401328,
+    "sha256": "746cf460ecfb7ac6503a0b55715dc2b8fefc915cbce2d432709dd1daa88fa1fb"
+  },
+  "head": "bc63375ac3a4d6debb1ceb441ae6e22854f0909a",
+  "tree": "ee570b9dbb122c6b6f0f609b83402c1f8eaca195",
+  "commits": 53716,
+  "reachableObjects": 371804,
+  "method": "Three arms in rotating order, each in a fresh populated primary clone. Only the public command is timed. Each Graft must expose exactly the selected object set, exclude an unrelated object, have no alternates, reuse all 3318 regular files and leave both worktrees clean. The first candidate per series also passes git fsck --strict. Allocation is a separate run. CPU and RSS use /usr/bin/time -l.",
+  "columns": ["round", "arm", "elapsedMs", "userCpuSeconds", "systemCpuSeconds", "peakRssBytes", "privateHistorySeconds", "prepareIndexMs", "buildSnapshotMs", "snapshotToTreeMs", "publishTreeMs", "refreshIndexMs"],
+  "phases": {
+    "controlSha256": "1334b0f3675798d1297f13ac88c279ba1b1dec0fd8fc55b3350427c7444c2bcb",
+    "candidateSha256": "7ec0556fb54de815dcced4e4f278ea1219e8cd8f094130d255bfe8a99b834990",
+    "rows": [
+      [1, "release", 3996.018, 7.8, 3.91, 288866304, 2.729206167, null, null, null, null, null],
+      [1, "candidate", 4055.638, 8, 3.92, 288882688, 2.775463125, 14.985, 480.417, 263.007, 2.665, 292.319],
+      [1, "worktree", 288.793, 0.05, 0.22, 52150272, null, null, null, null, null, null],
+      [2, "candidate", 4065.716, 7.77, 3.92, 288866304, 2.736285417, 14.127, 497.685, 277.822, 1.928, 340.313],
+      [2, "worktree", 289.208, 0.05, 0.22, 52150272, null, null, null, null, null, null],
+      [2, "release", 4083.342, 7.82, 3.9, 288817152, 2.754552542, null, null, null, null, null],
+      [3, "worktree", 293.724, 0.05, 0.23, 52150272, null, null, null, null, null, null],
+      [3, "release", 4223.942, 7.92, 4.11, 288931840, 2.815261083, null, null, null, null, null],
+      [3, "candidate", 4079.889, 7.81, 3.88, 288882688, 2.746061, 13.979, 501.189, 256.396, 2.52, 349.969]
+    ]
+  },
+  "disableIndexPreload": {
+    "controlSha256": "7ec0556fb54de815dcced4e4f278ea1219e8cd8f094130d255bfe8a99b834990",
+    "candidateSha256": "1f0c5e9962f13e5a3802de81de68c853fed6169bd890998ab64ab561a6d8abac",
+    "rows": [
+      [1, "release", 4053.874, 7.79, 3.94, 288817152, 2.7313325, 14.528, 492.082, 279.68, 2.278, 322.57],
+      [1, "candidate", 4031.095, 7.81, 3.85, 288800768, 2.7387259999999998, 15.165, 488.085, 260.968, 2.584, 315.525],
+      [1, "worktree", 292.774, 0.05, 0.22, 52232192, null, null, null, null, null, null],
+      [2, "candidate", 4150.603, 7.97, 3.87, 288882688, 2.801200667, 16.166, 497.609, 269.118, 2.056, 344.767],
+      [2, "worktree", 290.69, 0.05, 0.22, 52035584, null, null, null, null, null, null],
+      [2, "release", 4106.631, 7.84, 3.9, 288866304, 2.7576592079999998, 13.296, 507.141, 254.03, 2.51, 363.075],
+      [3, "worktree", 286.508, 0.05, 0.22, 52133888, null, null, null, null, null, null],
+      [3, "release", 4164.787, 7.84, 3.94, 288849920, 2.784405125, 14.207, 502.414, 271.696, 2.316, 378.457],
+      [3, "candidate", 4121.293, 7.85, 3.9, 288849920, 2.7504695, 14.574, 510.667, 268.894, 1.849, 369.675],
+      [4, "worktree", 297.795, 0.05, 0.23, 52232192, null, null, null, null, null, null],
+      [4, "candidate", 4177.259, 7.99, 3.95, 288866304, 2.815733125, 16.099, 508.14, 264.556, 2.221, 360.036],
+      [4, "release", 4105.723, 7.84, 3.88, 288833536, 2.775141, 13.573, 499.411, 262.342, 2.355, 356.076],
+      [5, "release", 4294.533, 7.82, 4.05, 288866304, 2.740797875, 14.471, 539.549, 358.772, 2.478, 426.008],
+      [5, "worktree", 292.124, 0.05, 0.22, 52215808, null, null, null, null, null, null],
+      [5, "candidate", 4099.259, 7.78, 3.9, 288882688, 2.741469792, 14.794, 508.86, 264.801, 1.839, 356.922],
+      [6, "candidate", 4143.965, 7.86, 3.9, 288849920, 2.776456917, 13.75, 515.031, 256.378, 2.358, 364.314],
+      [6, "release", 4144.263, 7.84, 3.86, 288915456, 2.784117208, 14.157, 498.904, 260.517, 2.573, 387.888],
+      [6, "worktree", 303.815, 0.05, 0.23, 52314112, null, null, null, null, null, null]
+    ]
+  },
+  "emptyAttributeTreeOnRawCheckout": {
+    "controlSha256": "7ec0556fb54de815dcced4e4f278ea1219e8cd8f094130d255bfe8a99b834990",
+    "candidateSha256": "9791fed74182a9b4c6f20a2a2b2c728fd41cad0e049c6390c8fda4ac29ee64c5",
+    "rows": [
+      [1, "release", 4032.417, 7.86, 3.84, 288784384, 2.747192333, 15.253, 484.16, 260.448, 2.368, 313.945],
+      [1, "candidate", 4119.707, 7.77, 3.84, 288849920, 2.845535416, 15.46, 491.723, 262.678, 2.362, 302.125],
+      [1, "worktree", 292.434, 0.05, 0.22, 52150272, null, null, null, null, null, null],
+      [2, "candidate", 4083.416, 7.9, 3.82, 288964608, 2.76986325, 15.563, 498.902, 258.677, 2.533, 334.847],
+      [2, "worktree", 290.493, 0.05, 0.22, 52051968, null, null, null, null, null, null],
+      [2, "release", 4183.111, 7.79, 4.02, 288931840, 2.734025583, 14.632, 568.805, 283.672, 2.362, 371.012],
+      [3, "worktree", 295.667, 0.05, 0.23, 52051968, null, null, null, null, null, null],
+      [3, "release", 4106.94, 7.78, 3.85, 288833536, 2.728987, 13.565, 507.403, 257.489, 2.215, 373.164],
+      [3, "candidate", 4043.781, 7.81, 3.88, 288899072, 2.757100084, 14.406, 493.567, 261.819, 2.427, 315.67],
+      [4, "worktree", 292.111, 0.05, 0.22, 52215808, null, null, null, null, null, null],
+      [4, "candidate", 4132.179, 7.77, 3.88, 288849920, 2.739593166, 15.698, 503.412, 262.814, 1.753, 399.876],
+      [4, "release", 4108.456, 7.79, 3.89, 288915456, 2.7393257909999997, 13.599, 500.278, 266.564, 2.353, 363.5],
+      [5, "release", 4131.814, 7.81, 3.96, 288849920, 2.73858875, 15.289, 507.707, 313.107, 2.541, 349.952],
+      [5, "worktree", 285.847, 0.05, 0.22, 52051968, null, null, null, null, null, null],
+      [5, "candidate", 4105.546, 7.81, 3.86, 288866304, 2.747335542, 15.299, 505.591, 256.505, 2.547, 361.138],
+      [6, "candidate", 4074.409, 7.82, 3.87, 288899072, 2.749198583, 12.933, 490.444, 266.973, 2.012, 351.66],
+      [6, "release", 4136.584, 7.82, 3.89, 288931840, 2.78552525, 13.52, 497.773, 263.636, 2.546, 370.25],
+      [6, "worktree", 314.382, 0.05, 0.23, 52199424, null, null, null, null, null, null]
+    ]
+  },
+  "parallelFirstReads": {
+    "controlSha256": "7ec0556fb54de815dcced4e4f278ea1219e8cd8f094130d255bfe8a99b834990",
+    "candidateSha256": "6b6e3ad1e9248b333e37cae8878d2c02a55f08693af45baa818e281129b30716",
+    "rows": [
+      [1, "release", 4228.987, 7.79, 4.3, 288751616, 2.7147145, 15.214, 693.106, 256.809, 2.254, 340.51],
+      [1, "candidate", 3949.798, 7.78, 3.9, 288899072, 2.751400834, 12.995, 493.985, 352.232, 2.244, 136.415],
+      [1, "worktree", 319.664, 0.05, 0.24, 52461568, null, null, null, null, null, null],
+      [2, "candidate", 4006.428, 7.87, 3.86, 288915456, 2.79525525, 14.069, 498.115, 358.791, 1.963, 137.073],
+      [2, "worktree", 306.197, 0.05, 0.24, 52215808, null, null, null, null, null, null],
+      [2, "release", 4223.109, 8.07, 3.94, 288817152, 2.8618648330000003, 14.039, 509.37, 267.55, 2.299, 373.44],
+      [3, "worktree", 306.967, 0.05, 0.24, 52330496, null, null, null, null, null, null],
+      [3, "release", 4104.943, 7.82, 3.91, 288817152, 2.752318959, 14.1, 504.062, 264.176, 1.771, 361.655],
+      [3, "candidate", 3993.75, 7.8, 3.94, 288866304, 2.740425041, 14.841, 535.098, 371.776, 1.858, 137.365],
+      [4, "worktree", 304.339, 0.05, 0.24, 52494336, null, null, null, null, null, null],
+      [4, "candidate", 4012.488, 7.81, 3.83, 288833536, 2.758889334, 15.243, 510.202, 382.813, 1.795, 142.749],
+      [4, "release", 4060.733, 7.79, 3.87, 288915456, 2.735690542, 14.456, 500.349, 259.36, 2.507, 348.756],
+      [5, "release", 4143.576, 7.91, 3.86, 288882688, 2.78916375, 14.603, 507.213, 258.343, 2.145, 368.004],
+      [5, "worktree", 309.248, 0.05, 0.24, 52199424, null, null, null, null, null, null],
+      [5, "candidate", 4136.543, 7.87, 4.12, 288899072, 2.796593542, 14.397, 495.591, 477.467, 1.853, 136.402],
+      [6, "candidate", 3974.071, 7.84, 3.88, 288899072, 2.758835542, 13.893, 498.66, 364.973, 1.745, 136.318],
+      [6, "release", 4205.292, 7.93, 3.94, 288833536, 2.855600792, 15.349, 502.67, 261.085, 2.56, 357.965],
+      [6, "worktree", 295.654, 0.05, 0.23, 52232192, null, null, null, null, null, null]
+    ]
+  },
+  "standard": {
+    "controlSha256": "1334b0f3675798d1297f13ac88c279ba1b1dec0fd8fc55b3350427c7444c2bcb",
+    "candidateSha256": "746cf460ecfb7ac6503a0b55715dc2b8fefc915cbce2d432709dd1daa88fa1fb",
+    "rows": [
+      [1, "release", 4111.417, 7.87, 3.92, 288931840, 2.78528225, null, null, null, null, null],
+      [1, "candidate", 4072.311, 7.81, 4.05, 288899072, 2.755834917, null, null, null, null, null],
+      [1, "worktree", 302.476, 0.05, 0.23, 52150272, null, null, null, null, null, null],
+      [2, "candidate", 3967.323, 7.8, 3.88, 288882688, 2.751285375, null, null, null, null, null],
+      [2, "worktree", 292.339, 0.05, 0.22, 52232192, null, null, null, null, null, null],
+      [2, "release", 4137.521, 7.81, 3.88, 288964608, 2.755630125, null, null, null, null, null],
+      [3, "worktree", 293.012, 0.05, 0.23, 52199424, null, null, null, null, null, null],
+      [3, "release", 4120.252, 7.82, 3.91, 288866304, 2.743133458, null, null, null, null, null],
+      [3, "candidate", 4113.509, 7.81, 4.23, 288768000, 2.7450445, null, null, null, null, null],
+      [4, "worktree", 300.642, 0.05, 0.23, 52035584, null, null, null, null, null, null],
+      [4, "candidate", 4025.429, 7.82, 3.93, 288833536, 2.7785745, null, null, null, null, null],
+      [4, "release", 4232.603, 7.83, 3.98, 288751616, 2.7816862909999998, null, null, null, null, null],
+      [5, "release", 4167.418, 7.94, 3.89, 288784384, 2.814381416, null, null, null, null, null],
+      [5, "worktree", 296.171, 0.05, 0.23, 52150272, null, null, null, null, null, null],
+      [5, "candidate", 4023.839, 7.81, 3.91, 288849920, 2.770366, null, null, null, null, null],
+      [6, "candidate", 4058.628, 7.9, 3.95, 288915456, 2.818108167, null, null, null, null, null],
+      [6, "release", 4138.903, 7.83, 3.88, 288931840, 2.7731693330000002, null, null, null, null, null],
+      [6, "worktree", 345.169, 0.05, 0.26, 52330496, null, null, null, null, null, null],
+      [7, "release", 4132.161, 7.81, 3.83, 288866304, 2.767884667, null, null, null, null, null],
+      [7, "candidate", 4027.691, 7.88, 3.92, 288931840, 2.793829083, null, null, null, null, null],
+      [7, "worktree", 296.452, 0.05, 0.22, 52232192, null, null, null, null, null, null],
+      [8, "candidate", 4006.243, 7.81, 3.91, 288915456, 2.754957959, null, null, null, null, null],
+      [8, "worktree", 298.059, 0.05, 0.23, 52035584, null, null, null, null, null, null],
+      [8, "release", 4134.05, 7.81, 3.92, 288915456, 2.767942875, null, null, null, null, null],
+      [9, "worktree", 312.387, 0.05, 0.24, 52412416, null, null, null, null, null, null],
+      [9, "release", 4143.384, 7.86, 3.93, 288899072, 2.773387458, null, null, null, null, null],
+      [9, "candidate", 4135.983, 7.9, 4.08, 288784384, 2.819490166, null, null, null, null, null]
+    ]
+  },
+  "probeColumns": ["pair", "condition", "elapsedMs", "preloadLstat", "refreshLstat", "refreshScan"],
+  "indexProbes": {
+    "method": "Saved empty-stat v4 index from read-tree restored before every invocation on the clean primary. Twelve alternating pairs. ls-files --stage and diff-files checked after each refresh. The preload probe toggles core.preloadIndex. In the attributes probe true selects the commit, false selects Git's empty tree. Files had no conversion attributes.",
+    "preload": [
+      [1, true, 104.063, 3484, 3484, 3484],
+      [1, false, 99.131, 0, 3484, 3484],
+      [2, false, 92.306, 0, 3484, 3484],
+      [2, true, 94.737, 3484, 3484, 3484],
+      [3, true, 95.261, 3484, 3484, 3484],
+      [3, false, 92.244, 0, 3484, 3484],
+      [4, false, 97.053, 0, 3484, 3484],
+      [4, true, 95.841, 3484, 3484, 3484],
+      [5, true, 97.052, 3484, 3484, 3484],
+      [5, false, 90.634, 0, 3484, 3484],
+      [6, false, 92.098, 0, 3484, 3484],
+      [6, true, 94.18, 3484, 3484, 3484],
+      [7, true, 96.638, 3484, 3484, 3484],
+      [7, false, 93.389, 0, 3484, 3484],
+      [8, false, 91.135, 0, 3484, 3484],
+      [8, true, 97.693, 3484, 3484, 3484],
+      [9, true, 93.978, 3484, 3484, 3484],
+      [9, false, 90.746, 0, 3484, 3484],
+      [10, false, 94.223, 0, 3484, 3484],
+      [10, true, 94.079, 3484, 3484, 3484],
+      [11, true, 95.552, 3484, 3484, 3484],
+      [11, false, 91.712, 0, 3484, 3484],
+      [12, false, 93.574, 0, 3484, 3484],
+      [12, true, 96.853, 3484, 3484, 3484]
+    ],
+    "committedAttributes": [
+      [1, true, 108.411, 3484, 3484, 3484],
+      [1, false, 91.742, 3484, 3484, 3484],
+      [2, false, 89.436, 3484, 3484, 3484],
+      [2, true, 97.141, 3484, 3484, 3484],
+      [3, true, 96.507, 3484, 3484, 3484],
+      [3, false, 93.124, 3484, 3484, 3484],
+      [4, false, 95.975, 3484, 3484, 3484],
+      [4, true, 97.735, 3484, 3484, 3484],
+      [5, true, 96.819, 3484, 3484, 3484],
+      [5, false, 88.728, 3484, 3484, 3484],
+      [6, false, 87.15, 3484, 3484, 3484],
+      [6, true, 98.381, 3484, 3484, 3484],
+      [7, true, 97.082, 3484, 3484, 3484],
+      [7, false, 87.763, 3484, 3484, 3484],
+      [8, false, 88.98, 3484, 3484, 3484],
+      [8, true, 98.096, 3484, 3484, 3484],
+      [9, true, 97.45, 3484, 3484, 3484],
+      [9, false, 87.441, 3484, 3484, 3484],
+      [10, false, 87.801, 3484, 3484, 3484],
+      [10, true, 96.334, 3484, 3484, 3484],
+      [11, true, 95.914, 3484, 3484, 3484],
+      [11, false, 99.261, 3484, 3484, 3484],
+      [12, false, 89.123, 3484, 3484, 3484],
+      [12, true, 96.389, 3484, 3484, 3484]
+    ],
+    "changedPathsBeforeRefreshOnCleanTree": 3484
+  },
+  "allocation": {
+    "native": {
+      "first": 29941760,
+      "repeat": 29941760,
+      "oneFileAdvance": 29945856
+    },
+    "graft": {
+      "first": 15482880,
+      "repeat": 315392,
+      "oneFileAdvance": 1814528,
+      "firstFileDataByPurpose": {
+        "primaryChange": "0",
+        "historyPacks": "4317184",
+        "historyIndexes": "9338880",
+        "checkoutIndexes": "286720",
+        "sourceFiles": "0",
+        "records": "1540096"
+      }
+    }
+  },
+  "validation": {
+    "rustTests": 153,
+    "formatAndStrictLint": true,
+    "crossLint": ["x86_64-unknown-linux-gnu", "x86_64-pc-windows-gnu"],
+    "minimumRust": "1.89 check --all-targets",
+    "suites": {
+      "git version 2.46.0": {
+        "passed": 148,
+        "failed": 0,
+        "unavailable": 0,
+        "total": 148
+      },
+      "git version 2.56.0": {
+        "passed": 148,
+        "failed": 0,
+        "unavailable": 0,
+        "total": 148
+      }
+    },
+    "failedRefreshRecoveryAndSameSizeEdits": [
+      {
+        "git": "git version 2.56.0",
+        "format": "sha1",
+        "cloned": 323,
+        "recovered": true,
+        "editDetected": true
+      },
+      {
+        "git": "git version 2.56.0",
+        "format": "sha256",
+        "cloned": 323,
+        "recovered": true,
+        "editDetected": true
+      },
+      {
+        "git": "git version 2.46.0",
+        "format": "sha1",
+        "cloned": 323,
+        "recovered": true,
+        "editDetected": true
+      },
+      {
+        "git": "git version 2.46.0",
+        "format": "sha256",
+        "cloned": 323,
+        "recovered": true,
+        "editDetected": true
+      }
+    ],
+    "descriptorLimit": 64
+  }
+}

@@ -101,7 +101,7 @@ function run(arm: Arm, source: Source, measureApfs: boolean) {
       let path = join(ctx.root,name);
       const argv = arm === 'native' ? ['worktree','add','-b',branch,path,source.head] :
         ['graft','--repo',ctx.repo,'--json',
-          'spawn',name,'--base',source.head,'--no-deps'];
+          'spawn',name,'--history','local','--base',source.head,'--no-deps'];
       const start = performance.now();
       const result = ctx.command('git',argv);
       const seconds = (performance.now()-start)/1000;
@@ -209,7 +209,7 @@ try {
   const report = {
     schemaVersion:1, platform:process.platform, architecture:process.arch, node:process.version, git:fixture.git(['--version']),
     graftBinary:{name:basename(bin),bytes:binary.length,sha256:createHash('sha256').update(binary).digest('hex')},
-    fixture:{head,tree,sha256,trackedFiles:files.length,smallFiles,largeFiles:3,largeMiB,historyCommits,historyKiB,repeats},
+    historyPolicy:'local',fixture:{head,tree,sha256,trackedFiles:files.length,smallFiles,largeFiles:3,largeMiB,historyCommits,historyKiB,repeats},
     apfsCalibration:calibration,
     scope:'Cold is the first spawn in a fresh primary with no workspace state. Repeat follows immediately in that primary. Wall time covers only the Git or Graft CLI process. Fixture creation, validation, mutation after spawn, and disk observations are excluded. Signed disk deltas use volume-wide statfs. Optional APFS deltas count mapped regular-file allocation blocks once and exclude metadata, xattrs, and forks. Omit APFS scans for timing-only runs because scans can warm metadata caches.',
     summary,runs,

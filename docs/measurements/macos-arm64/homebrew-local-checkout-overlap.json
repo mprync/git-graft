@@ -1,0 +1,371 @@
+{
+  "fixture": {
+    "commit": "bc63375ac3a4d6debb1ceb441ae6e22854f0909a",
+    "tree": "ee570b9dbb122c6b6f0f609b83402c1f8eaca195",
+    "reachableObjects": 371804,
+    "commits": 53716,
+    "platform": "macOS arm64, APFS, Git 2.56.0"
+  },
+  "method": "A fresh populated Homebrew clone for each command. No history argument, unconfigured Git, default spawn including project registration. Nine rotating triples and nine reverse-order triples. OS caches were uncontrolled. Subsequent status and integrity checks were outside checkout timing. CPU and RSS are reported by /usr/bin/time -l, with OS-specific child accounting.",
+  "binaries": {
+    "previousLocal": {
+      "sha256": "c197b54d9c1d1e0f3eeb0c37492dcaeab8847dc7a202af2b7a44412e265a6cd5",
+      "bytes": 4417920
+    },
+    "local": {
+      "sha256": "ec84778faf7c85b9b90638681c86d5702211a164b7f9538c02413d1319e704e9",
+      "bytes": 4434464
+    }
+  },
+  "checks": "Each graft exposed selected history and an unrelated loose object, had no alternates, cloned 3318 regular files and used zero private working-file bytes. Each command produced the selected tree and a clean status. Strict fsck ran on the first new release checkout of each series.",
+  "sampleColumns": ["round", "command", "elapsedMs", "userSeconds", "systemSeconds", "peakRssBytes"],
+  "series": {
+    "forward": [
+      [1, "previousLocal", 485.413, 0.09, 0.75, 16891904],
+      [1, "local", 405.146, 0.11, 0.83, 28803072],
+      [1, "worktree", 293.79, 0.05, 0.23, 52248576],
+      [2, "local", 413.821, 0.12, 0.87, 28819456],
+      [2, "worktree", 302.195, 0.05, 0.23, 52199424],
+      [2, "previousLocal", 475.217, 0.09, 0.73, 17022976],
+      [3, "worktree", 288.858, 0.05, 0.23, 52051968],
+      [3, "previousLocal", 477.995, 0.09, 0.76, 16990208],
+      [3, "local", 414.001, 0.12, 0.83, 28803072],
+      [4, "worktree", 291.554, 0.05, 0.23, 52150272],
+      [4, "local", 414.116, 0.12, 0.82, 28786688],
+      [4, "previousLocal", 474.631, 0.08, 0.74, 17022976],
+      [5, "previousLocal", 470.154, 0.09, 0.74, 16891904],
+      [5, "worktree", 309.583, 0.05, 0.24, 52461568],
+      [5, "local", 423.674, 0.12, 0.83, 28803072],
+      [6, "local", 429.83, 0.12, 0.84, 28803072],
+      [6, "previousLocal", 479.93, 0.09, 0.72, 16924672],
+      [6, "worktree", 286.613, 0.05, 0.22, 52150272],
+      [7, "previousLocal", 480.842, 0.09, 0.75, 17006592],
+      [7, "local", 401.949, 0.12, 0.83, 28819456],
+      [7, "worktree", 285.718, 0.05, 0.22, 52215808],
+      [8, "local", 406.241, 0.12, 0.82, 28786688],
+      [8, "worktree", 291.981, 0.05, 0.23, 52215808],
+      [8, "previousLocal", 475.8, 0.09, 0.74, 16990208],
+      [9, "worktree", 323.283, 0.05, 0.23, 52183040],
+      [9, "previousLocal", 486.206, 0.09, 0.74, 16924672],
+      [9, "local", 415.64, 0.12, 0.82, 28786688]
+    ],
+    "reverse": [
+      [1, "worktree", 293.525, 0.05, 0.22, 52215808],
+      [1, "local", 419.246, 0.12, 0.83, 28786688],
+      [1, "previousLocal", 466.834, 0.09, 0.74, 17022976],
+      [2, "previousLocal", 483.089, 0.09, 0.75, 17022976],
+      [2, "worktree", 313.933, 0.05, 0.22, 52051968],
+      [2, "local", 418.708, 0.12, 0.86, 28786688],
+      [3, "local", 403.969, 0.12, 0.83, 28786688],
+      [3, "previousLocal", 469.623, 0.09, 0.74, 16990208],
+      [3, "worktree", 302.611, 0.05, 0.23, 52199424],
+      [4, "previousLocal", 482.33, 0.09, 0.74, 16990208],
+      [4, "local", 403.856, 0.12, 0.84, 28786688],
+      [4, "worktree", 293.503, 0.05, 0.22, 52150272],
+      [5, "local", 432.255, 0.12, 0.83, 28786688],
+      [5, "worktree", 296.159, 0.05, 0.23, 52051968],
+      [5, "previousLocal", 484.429, 0.09, 0.73, 16990208],
+      [6, "worktree", 297.383, 0.05, 0.23, 52363264],
+      [6, "previousLocal", 493.207, 0.09, 0.75, 16990208],
+      [6, "local", 412.057, 0.12, 0.84, 28803072],
+      [7, "worktree", 288.825, 0.05, 0.22, 52019200],
+      [7, "local", 393.727, 0.12, 0.82, 28803072],
+      [7, "previousLocal", 473.879, 0.09, 0.74, 17022976],
+      [8, "previousLocal", 473.246, 0.09, 0.75, 16990208],
+      [8, "worktree", 311.568, 0.05, 0.23, 52150272],
+      [8, "local", 425.307, 0.12, 0.82, 28803072],
+      [9, "local", 417.584, 0.12, 0.81, 28819456],
+      [9, "previousLocal", 492.638, 0.09, 0.75, 17055744],
+      [9, "worktree", 286.676, 0.05, 0.22, 52346880]
+    ]
+  },
+  "medians": {
+    "previousLocal": {
+      "elapsedMs": 478.962,
+      "userSeconds": 0.09,
+      "systemSeconds": 0.74,
+      "peakRssBytes": 16990208.0
+    },
+    "local": {
+      "elapsedMs": 414.058,
+      "userSeconds": 0.12,
+      "systemSeconds": 0.83,
+      "peakRssBytes": 28803072.0
+    },
+    "worktree": {
+      "elapsedMs": 293.658,
+      "userSeconds": 0.05,
+      "systemSeconds": 0.23,
+      "peakRssBytes": 52191232.0
+    }
+  },
+  "paired": {
+    "rounds": 18,
+    "winsAgainstPreviousLocal": 18,
+    "winsAgainstWorktree": 0,
+    "medianSavingAgainstPreviousMs": 65.017,
+    "medianGapToWorktreeMs": 114.175
+  },
+  "apfsUniqueRegularFileData": {
+    "scope": "Additional physical regular-file bytes. Filesystem metadata excluded. The allocation run included a first checkout, a second checkout and a checkout after a one-file commit.",
+    "native": {
+      "first": 29941760,
+      "second": 29941760,
+      "advanced": 29945856
+    },
+    "graft": {
+      "first": 311296,
+      "second": 299008,
+      "advanced": 299008,
+      "firstByPurpose": {
+        "primaryChange": 0,
+        "historyPacks": 0,
+        "historyIndexes": 0,
+        "checkoutIndexes": 270336,
+        "sourceFiles": 0,
+        "records": 40960
+      }
+    }
+  },
+  "validation": {
+    "rustTestsPassed": 158,
+    "crossChecks": ["Windows x86_64 GNU and Linux x86_64 GNU strict Clippy", "Rust 1.89 all-targets check"],
+    "cliAndMcp": {
+      "git version 2.46.0": {
+        "passed": 149,
+        "failed": 0,
+        "unavailable": 0,
+        "total": 149
+      },
+      "git version 2.56.0": {
+        "passed": 149,
+        "failed": 0,
+        "unavailable": 0,
+        "total": 149
+      }
+    },
+    "recovery": [
+      {
+        "format": "sha1",
+        "git": "git version 2.56.0",
+        "case": "missing-tree",
+        "status": "pending",
+        "exit": 1,
+        "index": false,
+        "liveTreeReadable": false
+      },
+      {
+        "format": "sha1",
+        "git": "git version 2.56.0",
+        "case": "missing-blob",
+        "status": "pending",
+        "exit": 1,
+        "index": false,
+        "liveTreeReadable": true
+      },
+      {
+        "format": "sha1",
+        "git": "git version 2.56.0",
+        "case": "corrupt-attributes",
+        "status": "pending",
+        "exit": 1,
+        "index": false,
+        "liveTreeReadable": true
+      },
+      {
+        "format": "sha1",
+        "git": "git version 2.56.0",
+        "case": "interrupt",
+        "status": "pending",
+        "exit": -9,
+        "index": false,
+        "headBeforeSnapshot": false,
+        "checkoutFilesBeforeSnapshot": false,
+        "archived": true,
+        "restored": true
+      },
+      {
+        "format": "sha1",
+        "git": "git version 2.56.0",
+        "case": "stalled-read",
+        "status": "active",
+        "exit": 0,
+        "index": true,
+        "optionalChildReaped": true
+      },
+      {
+        "format": "sha256",
+        "git": "git version 2.56.0",
+        "case": "missing-tree",
+        "status": "pending",
+        "exit": 1,
+        "index": false,
+        "liveTreeReadable": false
+      },
+      {
+        "format": "sha256",
+        "git": "git version 2.56.0",
+        "case": "missing-blob",
+        "status": "pending",
+        "exit": 1,
+        "index": false,
+        "liveTreeReadable": true
+      },
+      {
+        "format": "sha256",
+        "git": "git version 2.56.0",
+        "case": "corrupt-attributes",
+        "status": "pending",
+        "exit": 1,
+        "index": false,
+        "liveTreeReadable": true
+      },
+      {
+        "format": "sha256",
+        "git": "git version 2.56.0",
+        "case": "interrupt",
+        "status": "pending",
+        "exit": -9,
+        "index": false,
+        "headBeforeSnapshot": false,
+        "checkoutFilesBeforeSnapshot": false,
+        "archived": true,
+        "restored": true
+      },
+      {
+        "format": "sha256",
+        "git": "git version 2.56.0",
+        "case": "stalled-read",
+        "status": "active",
+        "exit": 0,
+        "index": true,
+        "optionalChildReaped": true
+      },
+      {
+        "format": "sha1",
+        "git": "git version 2.46.0",
+        "case": "missing-tree",
+        "status": "pending",
+        "exit": 1,
+        "index": false,
+        "liveTreeReadable": false
+      },
+      {
+        "format": "sha1",
+        "git": "git version 2.46.0",
+        "case": "missing-blob",
+        "status": "pending",
+        "exit": 1,
+        "index": false,
+        "liveTreeReadable": true
+      },
+      {
+        "format": "sha1",
+        "git": "git version 2.46.0",
+        "case": "corrupt-attributes",
+        "status": "pending",
+        "exit": 1,
+        "index": false,
+        "liveTreeReadable": true
+      },
+      {
+        "format": "sha1",
+        "git": "git version 2.46.0",
+        "case": "interrupt",
+        "status": "pending",
+        "exit": -9,
+        "index": false,
+        "headBeforeSnapshot": false,
+        "checkoutFilesBeforeSnapshot": false,
+        "archived": true,
+        "restored": true
+      },
+      {
+        "format": "sha1",
+        "git": "git version 2.46.0",
+        "case": "stalled-read",
+        "status": "active",
+        "exit": 0,
+        "index": true,
+        "optionalChildReaped": true
+      },
+      {
+        "format": "sha256",
+        "git": "git version 2.46.0",
+        "case": "missing-tree",
+        "status": "pending",
+        "exit": 1,
+        "index": false,
+        "liveTreeReadable": false
+      },
+      {
+        "format": "sha256",
+        "git": "git version 2.46.0",
+        "case": "missing-blob",
+        "status": "pending",
+        "exit": 1,
+        "index": false,
+        "liveTreeReadable": true
+      },
+      {
+        "format": "sha256",
+        "git": "git version 2.46.0",
+        "case": "corrupt-attributes",
+        "status": "pending",
+        "exit": 1,
+        "index": false,
+        "liveTreeReadable": true
+      },
+      {
+        "format": "sha256",
+        "git": "git version 2.46.0",
+        "case": "interrupt",
+        "status": "pending",
+        "exit": -9,
+        "index": false,
+        "headBeforeSnapshot": false,
+        "checkoutFilesBeforeSnapshot": false,
+        "archived": true,
+        "restored": true
+      },
+      {
+        "format": "sha256",
+        "git": "git version 2.46.0",
+        "case": "stalled-read",
+        "status": "active",
+        "exit": 0,
+        "index": true,
+        "optionalChildReaped": true
+      }
+    ]
+  },
+  "checkoutAndFirstStatus": {
+    "method": "Six additional rotating triples. First git status --porcelain ran immediately after spawn, before other Git commands. Total is the median of paired sums.",
+    "sampleColumns": ["round", "command", "checkoutMs", "firstStatusMs"],
+    "samples": [
+      [1, "previousLocal", 473.061, 334.922],
+      [1, "local", 399.783, 361.009],
+      [1, "worktree", 295.851, 108.046],
+      [2, "local", 429.529, 384.701],
+      [2, "worktree", 299.271, 106.255],
+      [2, "previousLocal", 465.627, 332.003],
+      [3, "worktree", 289.625, 106.642],
+      [3, "previousLocal", 486.915, 335.611],
+      [3, "local", 415.933, 364.885],
+      [4, "worktree", 291.93, 105.851],
+      [4, "local", 418.751, 375.44],
+      [4, "previousLocal", 487.829, 357.919],
+      [5, "previousLocal", 470.668, 344.965],
+      [5, "worktree", 295.506, 77.573],
+      [5, "local", 422.753, 367.641],
+      [6, "local", 399.426, 374.642],
+      [6, "previousLocal", 482.053, 376.899],
+      [6, "worktree", 287.789, 106.209]
+    ],
+    "medianTotalMs": {
+      "previousLocal": 819.08,
+      "local": 785.606,
+      "worktree": 397.024
+    }
+  }
+}

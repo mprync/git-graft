@@ -1,0 +1,344 @@
+{
+  "fixture": "Pinned Homebrew on macOS APFS. Six alternating pairs per primary comparison. Phase measurements reuse the filtered pack and residual packs produced by a completed cold default graft. These samples exclude creating those packs and the remaining checkout.",
+  "baseline": "Git index-pack reads the filtered pack into an empty repository. A separate Git process counts the reachable objects in an isolated store. Source graph comparisons check the actual object IDs against an unaccelerated walk.",
+  "preview": "Build a tentative SHA-1 v2 index from the donor index, original offsets, retained delta bases, selected IDs and CRCs of the filtered compressed records. Walk a private view concurrently with native indexing. Compare the two complete index files and the exact set of reachable IDs. The compiled probe rereads the already prepared packs. It was restricted to this fixture and did not run inside the release.",
+  "descriptorCheck": "Separate read handles for the native indexer and graph walker. The descriptor-view trials address both pack and index by inherited descriptors. On macOS a repeated walk must rewind the descriptors before launching a new Git process.",
+  "control": {
+    "head": "bc63375ac3a4d6debb1ceb441ae6e22854f0909a",
+    "release": "09db3c3698be90d4bda5222b1f8a5cde18e56de3dd7251beef7c2860e5710ebf",
+    "walk": [
+      [
+        1,
+        true,
+        562.964
+      ],
+      [
+        1,
+        false,
+        813.318
+      ],
+      [
+        2,
+        false,
+        847.69
+      ],
+      [
+        2,
+        true,
+        564.811
+      ],
+      [
+        3,
+        true,
+        553.324
+      ],
+      [
+        3,
+        false,
+        808.609
+      ],
+      [
+        4,
+        false,
+        834.556
+      ],
+      [
+        4,
+        true,
+        552.048
+      ],
+      [
+        5,
+        true,
+        575.539
+      ],
+      [
+        5,
+        false,
+        833.803
+      ],
+      [
+        6,
+        false,
+        824.415
+      ],
+      [
+        6,
+        true,
+        578.604
+      ]
+    ],
+    "pair": [
+      [
+        1,
+        "serial",
+        2309.416,
+        1569.787,
+        739.597
+      ],
+      [
+        1,
+        "overlap",
+        1583.196,
+        1582.895,
+        734.743
+      ],
+      [
+        2,
+        "overlap",
+        1577.327,
+        1577.021,
+        719.93
+      ],
+      [
+        2,
+        "serial",
+        2253.568,
+        1566.561,
+        686.977
+      ],
+      [
+        3,
+        "serial",
+        2258.737,
+        1569.903,
+        688.799
+      ],
+      [
+        3,
+        "overlap",
+        1571.226,
+        1570.847,
+        702.66
+      ],
+      [
+        4,
+        "overlap",
+        1579.857,
+        1579.55,
+        701.157
+      ],
+      [
+        4,
+        "serial",
+        2265.206,
+        1567.675,
+        697.499
+      ],
+      [
+        5,
+        "serial",
+        2255.949,
+        1561.119,
+        694.8
+      ],
+      [
+        5,
+        "overlap",
+        1584.231,
+        1583.984,
+        730.213
+      ],
+      [
+        6,
+        "overlap",
+        1574.24,
+        1573.96,
+        716.418
+      ],
+      [
+        6,
+        "serial",
+        2289.068,
+        1571.115,
+        717.92
+      ]
+    ],
+    "sourceIndexes": [
+      "info/commit-graphs/graph-2cea726dffe5d38bbebcdf5a35d590e55cc37ea5.graph",
+      "info/commit-graphs/graph-5e854a30ba581780e5dfbfb02450178d6f87ae1c.graph",
+      "info/commit-graphs/graph-8137e9e9aef6b386092c5fc3a6a5647c2db1ab82.graph",
+      "pack/multi-pack-index"
+    ],
+    "objectCount": 371804,
+    "spawnTimings": {
+      "cache_publish_seconds": 0.137943209,
+      "reachability_seconds": 0.604115917,
+      "total_seconds": 3.260843875,
+      "transfer_seconds": 1.7120991669999999,
+      "verify_seconds": 0.772521291
+    },
+    "pack": [
+      "pack-8f45472cc17a6b9d311b31bc96704cf8d3be254c.pack",
+      111582478,
+      "dabcad7e77a55eafae962a6d566bfff116cc2b67b48ed2633d341898d85181be"
+    ]
+  },
+  "privateView": {
+    "head": "bc63375ac3a4d6debb1ceb441ae6e22854f0909a",
+    "releaseSha256": "09db3c3698be90d4bda5222b1f8a5cde18e56de3dd7251beef7c2860e5710ebf",
+    "git": "git version 2.56.0",
+    "selectedObjects": 371804,
+    "pack": "pack-8f45472cc17a6b9d311b31bc96704cf8d3be254c.pack",
+    "indexBytes": 9232448,
+    "indexSha256": "dabcad7e77a55eafae962a6d566bfff116cc2b67b48ed2633d341898d85181be",
+    "rows": [
+      {
+        "round": 1,
+        "mode": "serial",
+        "totalMs": 2290.606,
+        "previewReadyMs": null
+      },
+      {
+        "round": 1,
+        "mode": "preview",
+        "totalMs": 1600.773,
+        "previewReadyMs": 119.969
+      },
+      {
+        "round": 2,
+        "mode": "preview",
+        "totalMs": 1585.417,
+        "previewReadyMs": 118.315
+      },
+      {
+        "round": 2,
+        "mode": "serial",
+        "totalMs": 2308.253,
+        "previewReadyMs": null
+      },
+      {
+        "round": 3,
+        "mode": "serial",
+        "totalMs": 2327.598,
+        "previewReadyMs": null
+      },
+      {
+        "round": 3,
+        "mode": "preview",
+        "totalMs": 1649.966,
+        "previewReadyMs": 115.996
+      },
+      {
+        "round": 4,
+        "mode": "preview",
+        "totalMs": 1673.578,
+        "previewReadyMs": 139.355
+      },
+      {
+        "round": 4,
+        "mode": "serial",
+        "totalMs": 2302.001,
+        "previewReadyMs": null
+      },
+      {
+        "round": 5,
+        "mode": "serial",
+        "totalMs": 2265.722,
+        "previewReadyMs": null
+      },
+      {
+        "round": 5,
+        "mode": "preview",
+        "totalMs": 1650.179,
+        "previewReadyMs": 116.298
+      },
+      {
+        "round": 6,
+        "mode": "preview",
+        "totalMs": 1587.068,
+        "previewReadyMs": 117.739
+      },
+      {
+        "round": 6,
+        "mode": "serial",
+        "totalMs": 2339.508,
+        "previewReadyMs": null
+      }
+    ]
+  },
+  "descriptorView": [
+    {
+      "head": "bc63375ac3a4d6debb1ceb441ae6e22854f0909a",
+      "releaseSha256": "09db3c3698be90d4bda5222b1f8a5cde18e56de3dd7251beef7c2860e5710ebf",
+      "git": "git version 2.56.0",
+      "selectedObjects": 371804,
+      "pack": "pack-8f45472cc17a6b9d311b31bc96704cf8d3be254c.pack",
+      "indexBytes": 9232448,
+      "indexSha256": "dabcad7e77a55eafae962a6d566bfff116cc2b67b48ed2633d341898d85181be",
+      "rows": [
+        {
+          "round": 1,
+          "mode": "serial",
+          "totalMs": 2287.109,
+          "previewReadyMs": null
+        },
+        {
+          "round": 1,
+          "mode": "preview",
+          "totalMs": 1569.973,
+          "previewReadyMs": 113.114
+        },
+        {
+          "round": 2,
+          "mode": "preview",
+          "totalMs": 1597.686,
+          "previewReadyMs": 117.198
+        },
+        {
+          "round": 2,
+          "mode": "serial",
+          "totalMs": 2304.772,
+          "previewReadyMs": null
+        },
+        {
+          "round": 3,
+          "mode": "serial",
+          "totalMs": 2257.27,
+          "previewReadyMs": null
+        },
+        {
+          "round": 3,
+          "mode": "preview",
+          "totalMs": 1588.138,
+          "previewReadyMs": 116.257
+        }
+      ]
+    },
+    {
+      "head": "bc63375ac3a4d6debb1ceb441ae6e22854f0909a",
+      "releaseSha256": "09db3c3698be90d4bda5222b1f8a5cde18e56de3dd7251beef7c2860e5710ebf",
+      "git": "git version 2.46.0",
+      "selectedObjects": 371804,
+      "pack": "pack-8f45472cc17a6b9d311b31bc96704cf8d3be254c.pack",
+      "indexBytes": 9232448,
+      "indexSha256": "dabcad7e77a55eafae962a6d566bfff116cc2b67b48ed2633d341898d85181be",
+      "rows": [
+        {
+          "round": 1,
+          "mode": "serial",
+          "totalMs": 2953.08,
+          "previewReadyMs": null
+        },
+        {
+          "round": 1,
+          "mode": "preview",
+          "totalMs": 2211.263,
+          "previewReadyMs": 116.489
+        },
+        {
+          "round": 2,
+          "mode": "preview",
+          "totalMs": 2193.51,
+          "previewReadyMs": 114.49
+        },
+        {
+          "round": 2,
+          "mode": "serial",
+          "totalMs": 2919.573,
+          "previewReadyMs": null
+        }
+      ]
+    }
+  ]
+}

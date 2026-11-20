@@ -1,0 +1,323 @@
+{
+  "fixture": "Fresh, populated Homebrew clone on macOS arm64 APFS. No history override. Each order rotates through all three arms six times. Every timing is an end-to-end command in a new clone; first status is timed separately.",
+  "decision": "Retain the release. Preparing pinned directory handles on extra threads and reusing them inline both lost in most paired comparisons overall.",
+  "validation": "Compared HEAD, root tree, index entries, clean status and primary state; checked full local object visibility and no alternate for Graft. Ran strict Git fsck on the first candidate per series. All Graft samples reported sharing all 3318 regular files.",
+  "binaries": {
+    "release": {
+      "sha256": "6ffd18bf52a6a0433d6450367d4ae53c323b952a8b401f63e1edfa5fb956400a",
+      "bytes": 4451040
+    },
+    "pipeline": {
+      "sha256": "eef79fe03f80f0babb016a8adf566700f3eedb9dc70feb0fb386aac31b49571f",
+      "bytes": 4468288
+    },
+    "inline": {
+      "sha256": "c106f001e84385130fb34c895d28fd3d505f2f7a8fdcf1fc64933e51b79ab7cf",
+      "bytes": 4468288
+    },
+    "placement": {
+      "sha256": "d2414cc020f44b963f91b74593cea4483963681d48d40d2731b4accec6a90ea1",
+      "bytes": 4468288
+    }
+  },
+  "series": {
+    "forward": {
+      "candidate": "pipeline",
+      "candidateFasterPairs": 0,
+      "medianPairedCandidateMinusReleaseMs": 30.036,
+      "medianSpawnMs": {
+        "release": 429.865,
+        "candidate": 465.288,
+        "worktree": 301.648
+      },
+      "columns": [
+        "round",
+        "arm",
+        "spawnMs",
+        "firstStatusMs",
+        "userSeconds",
+        "systemSeconds",
+        "peakRssBytes"
+      ],
+      "rows": [
+        [1, "release", 434.606, 337.853, 0.12, 0.83, 28803072],
+        [1, "candidate", 470.69, 338.33, 0.13, 1.02, 28803072],
+        [1, "worktree", 305.324, 64.152, 0.05, 0.22, 52412416],
+        [2, "candidate", 459.886, 313.727, 0.12, 0.97, 28803072],
+        [2, "worktree", 371.504, 121.316, 0.05, 0.25, 52510720],
+        [2, "release", 409.139, 331.432, 0.12, 0.78, 28819456],
+        [3, "worktree", 351.737, 117.292, 0.05, 0.26, 52461568],
+        [3, "release", 404.94, 320.841, 0.12, 0.8, 28803072],
+        [3, "candidate", 423.668, 319.514, 0.12, 0.93, 28803072],
+        [4, "worktree", 287.675, 107.039, 0.05, 0.22, 52199424],
+        [4, "candidate", 482.371, 429.608, 0.12, 1.1, 28803072],
+        [4, "release", 453.845, 333.739, 0.13, 0.87, 28835840],
+        [5, "release", 425.125, 345.609, 0.12, 0.82, 28819456],
+        [5, "worktree", 297.972, 116.213, 0.05, 0.22, 52494336],
+        [5, "candidate", 448.2, 338.826, 0.12, 0.94, 28803072],
+        [6, "candidate", 490.979, 340.881, 0.12, 0.94, 28819456],
+        [6, "release", 459.432, 365.665, 0.12, 0.85, 28803072],
+        [6, "worktree", 295.227, 116.37, 0.05, 0.23, 52477952]
+      ]
+    },
+    "reverse": {
+      "candidate": "pipeline",
+      "candidateFasterPairs": 2,
+      "medianPairedCandidateMinusReleaseMs": 48.135,
+      "medianSpawnMs": {
+        "release": 434.005,
+        "candidate": 458.474,
+        "worktree": 339.338
+      },
+      "columns": [
+        "round",
+        "arm",
+        "spawnMs",
+        "firstStatusMs",
+        "userSeconds",
+        "systemSeconds",
+        "peakRssBytes"
+      ],
+      "rows": [
+        [1, "worktree", 281.277, 109.399, 0.05, 0.21, 52035584],
+        [1, "candidate", 448.998, 341.416, 0.12, 0.94, 28803072],
+        [1, "release", 401.824, 321.003, 0.11, 0.79, 28803072],
+        [2, "release", 444.493, 340.331, 0.12, 0.83, 28852224],
+        [2, "worktree", 350.266, 116.636, 0.05, 0.25, 52330496],
+        [2, "candidate", 510.767, 317.353, 0.13, 1.22, 28819456],
+        [3, "candidate", 415.969, 320.273, 0.12, 0.99, 28803072],
+        [3, "release", 423.516, 330.696, 0.12, 0.84, 28835840],
+        [3, "worktree", 356.301, 153.861, 0.05, 0.27, 52314112],
+        [4, "release", 638.218, 389.375, 0.13, 0.94, 28835840],
+        [4, "candidate", 453.991, 328.256, 0.13, 1.04, 28803072],
+        [4, "worktree", 290.428, 109.206, 0.05, 0.22, 52232192],
+        [5, "candidate", 931.694, 506.006, 0.16, 2.92, 28852224],
+        [5, "worktree", 1922.943, 205.2, 0.06, 1.63, 52723712],
+        [5, "release", 507.862, 330.877, 0.13, 1.07, 28803072],
+        [6, "worktree", 328.41, 115.833, 0.05, 0.24, 52576256],
+        [6, "release", 413.86, 345.17, 0.12, 0.86, 28803072],
+        [6, "candidate", 462.956, 367.776, 0.13, 1.0, 28819456]
+      ]
+    },
+    "sibling-forward": {
+      "candidate": "inline",
+      "candidateFasterPairs": 4,
+      "medianPairedCandidateMinusReleaseMs": -31.398,
+      "medianSpawnMs": {
+        "release": 558.832,
+        "candidate": 500.379,
+        "worktree": 323.284
+      },
+      "columns": [
+        "round",
+        "arm",
+        "spawnMs",
+        "firstStatusMs",
+        "userSeconds",
+        "systemSeconds",
+        "peakRssBytes"
+      ],
+      "rows": [
+        [1, "release", 463.317, 345.118, 0.12, 0.82, 28803072],
+        [1, "candidate", 484.112, 334.341, 0.12, 0.9, 28819456],
+        [1, "worktree", 318.723, 125.639, 0.05, 0.23, 52264960],
+        [2, "candidate", 436.199, 317.546, 0.12, 0.9, 28803072],
+        [2, "worktree", 299.301, 109.658, 0.05, 0.22, 52248576],
+        [2, "release", 439.216, 301.797, 0.12, 0.79, 28819456],
+        [3, "worktree", 284.656, 185.686, 0.05, 0.22, 52051968],
+        [3, "release", 547.385, 372.739, 0.13, 0.96, 28835840],
+        [3, "candidate", 487.605, 362.343, 0.13, 0.99, 28819456],
+        [4, "worktree", 327.845, 120.045, 0.05, 0.25, 52248576],
+        [4, "candidate", 587.747, 412.356, 0.13, 0.98, 28786688],
+        [4, "release", 690.626, 336.008, 0.14, 0.84, 28803072],
+        [5, "release", 612.998, 356.369, 0.15, 0.83, 28819456],
+        [5, "worktree", 333.685, 118.188, 0.05, 0.24, 52297728],
+        [5, "candidate", 513.152, 318.325, 0.13, 0.92, 28819456],
+        [6, "candidate", 834.708, 386.456, 0.16, 0.91, 28884992],
+        [6, "release", 570.279, 370.423, 0.14, 0.84, 28803072],
+        [6, "worktree", 328.487, 130.202, 0.05, 0.24, 52117504]
+      ]
+    },
+    "sibling-reverse": {
+      "candidate": "inline",
+      "candidateFasterPairs": 1,
+      "medianPairedCandidateMinusReleaseMs": 42.341,
+      "medianSpawnMs": {
+        "release": 479.898,
+        "candidate": 514.422,
+        "worktree": 318.296
+      },
+      "columns": [
+        "round",
+        "arm",
+        "spawnMs",
+        "firstStatusMs",
+        "userSeconds",
+        "systemSeconds",
+        "peakRssBytes"
+      ],
+      "rows": [
+        [1, "worktree", 310.885, 114.987, 0.05, 0.23, 52330496],
+        [1, "candidate", 442.773, 401.709, 0.13, 0.92, 28819456],
+        [1, "release", 427.831, 320.563, 0.12, 0.87, 28819456],
+        [2, "release", 424.359, 320.323, 0.12, 0.84, 28803072],
+        [2, "worktree", 359.65, 121.833, 0.05, 0.26, 52625408],
+        [2, "candidate", 468.397, 347.817, 0.12, 0.92, 28803072],
+        [3, "candidate", 664.846, 363.856, 0.16, 0.85, 28803072],
+        [3, "release", 528.295, 382.185, 0.13, 0.88, 28835840],
+        [3, "worktree", 316.891, 160.813, 0.05, 0.23, 52576256],
+        [4, "release", 547.719, 368.936, 0.15, 0.85, 28803072],
+        [4, "candidate", 494.984, 306.428, 0.12, 0.94, 28803072],
+        [4, "worktree", 319.7, 116.063, 0.05, 0.23, 52543488],
+        [5, "candidate", 690.688, 393.111, 0.16, 0.87, 28835840],
+        [5, "worktree", 292.885, 117.139, 0.05, 0.22, 52150272],
+        [5, "release", 650.045, 342.122, 0.16, 0.81, 28803072],
+        [6, "worktree", 370.418, 126.275, 0.05, 0.24, 52330496],
+        [6, "release", 431.501, 331.532, 0.12, 0.83, 28819456],
+        [6, "candidate", 533.86, 394.075, 0.13, 1.09, 28803072]
+      ]
+    }
+  },
+  "head": "bc63375ac3a4d6debb1ceb441ae6e22854f0909a",
+  "tree": "ee570b9dbb122c6b6f0f609b83402c1f8eaca195",
+  "reachableObjects": 371804,
+  "commits": 53716,
+  "recoveryFixtures": {
+    "parent-cli": [
+      {
+        "git": "git version 2.56.0",
+        "format": "sha1",
+        "collision": false,
+        "nativeFallbackInIndexOrder": true,
+        "status": "active"
+      },
+      {
+        "git": "git version 2.56.0",
+        "format": "sha1",
+        "collision": true,
+        "nativeFallbackInIndexOrder": true,
+        "status": "pending"
+      },
+      {
+        "git": "git version 2.56.0",
+        "format": "sha256",
+        "collision": false,
+        "nativeFallbackInIndexOrder": true,
+        "status": "active"
+      },
+      {
+        "git": "git version 2.56.0",
+        "format": "sha256",
+        "collision": true,
+        "nativeFallbackInIndexOrder": true,
+        "status": "pending"
+      },
+      {
+        "git": "git version 2.46.0",
+        "format": "sha1",
+        "collision": false,
+        "nativeFallbackInIndexOrder": true,
+        "status": "active"
+      },
+      {
+        "git": "git version 2.46.0",
+        "format": "sha1",
+        "collision": true,
+        "nativeFallbackInIndexOrder": true,
+        "status": "pending"
+      },
+      {
+        "git": "git version 2.46.0",
+        "format": "sha256",
+        "collision": false,
+        "nativeFallbackInIndexOrder": true,
+        "status": "active"
+      },
+      {
+        "git": "git version 2.46.0",
+        "format": "sha256",
+        "collision": true,
+        "nativeFallbackInIndexOrder": true,
+        "status": "pending"
+      }
+    ],
+    "sibling-cli": [
+      {
+        "git": "git version 2.56.0",
+        "format": "sha1",
+        "collision": false,
+        "nativeFallbackInIndexOrder": true,
+        "status": "active"
+      },
+      {
+        "git": "git version 2.56.0",
+        "format": "sha1",
+        "collision": true,
+        "nativeFallbackInIndexOrder": true,
+        "status": "pending"
+      },
+      {
+        "git": "git version 2.56.0",
+        "format": "sha256",
+        "collision": false,
+        "nativeFallbackInIndexOrder": true,
+        "status": "active"
+      },
+      {
+        "git": "git version 2.56.0",
+        "format": "sha256",
+        "collision": true,
+        "nativeFallbackInIndexOrder": true,
+        "status": "pending"
+      },
+      {
+        "git": "git version 2.46.0",
+        "format": "sha1",
+        "collision": false,
+        "nativeFallbackInIndexOrder": true,
+        "status": "active"
+      },
+      {
+        "git": "git version 2.46.0",
+        "format": "sha1",
+        "collision": true,
+        "nativeFallbackInIndexOrder": true,
+        "status": "pending"
+      },
+      {
+        "git": "git version 2.46.0",
+        "format": "sha256",
+        "collision": false,
+        "nativeFallbackInIndexOrder": true,
+        "status": "active"
+      },
+      {
+        "git": "git version 2.46.0",
+        "format": "sha256",
+        "collision": true,
+        "nativeFallbackInIndexOrder": true,
+        "status": "pending"
+      }
+    ]
+  },
+  "placement": {
+    "description": "Timed the existing second pending record write after exclusive placement, with the ordinary checkout worker schedule. Every write ran to completion.",
+    "writeMs": [
+      8.427,
+      5.064,
+      5.755,
+      5.433,
+      8.238,
+      7.654
+    ],
+    "medianWriteMs": 6.7044999999999995,
+    "spawnMs": [
+      449.28,
+      495.794,
+      433.701,
+      453.515,
+      636.38,
+      701.32
+    ]
+  }
+}

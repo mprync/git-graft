@@ -16,7 +16,7 @@ import { Context, objectResult } from './harness.ts';
 import { objectBootstrap } from './benchmark-receipts.ts';
 
 const {values} = parseArgs({options:{repo:{type:'string'},bin:{type:'string'},output:{type:'string'},history:{type:'string'},'project-history':{type:'string'},
-  rounds:{type:'string'},'apfs-file-data':{type:'boolean'},'advance-base':{type:'boolean'},'include-revisions':{type:'boolean'},'clean-primary':{type:'boolean'},'no-deps':{type:'boolean'},'global-attribute':{type:'string'}}});
+  rounds:{type:'string'},'apfs-file-data':{type:'boolean'},'advance-base':{type:'boolean'},'include-revisions':{type:'boolean'},'clean-primary':{type:'boolean'},'no-deps':{type:'boolean'},'global-attribute':{type:'string'},autocrlf:{type:'string'}}});
 const repo = resolve(values.repo ?? '/opt/homebrew');
 const bin = resolve(values.bin ?? process.env.GIT_GRAFT_BIN ?? join(import.meta.dirname,'../target/release',
   process.platform === 'win32' ? 'git-graft.exe' : 'git-graft'));
@@ -24,6 +24,8 @@ const output = resolve(values.output ?? 'target/e2e/real-source-bench.json');
 const rounds = Number(values.rounds ?? 4);
 const history = values.history;
 const projectHistory = values['project-history'];
+const autocrlf = values.autocrlf;
+assert(autocrlf === undefined || ['true', 'false', 'input'].includes(autocrlf), 'Expected true, false or input for --autocrlf');
 for (const policy of [projectHistory, history]) {
   assert(policy === undefined || ['isolated', 'local', 'tip'].includes(policy), 'Expected isolated, local or tip history');
 }
@@ -35,6 +37,7 @@ assert(existsSync(repo), 'Source repository does not exist');
 
 const fixture = new Context(bin);
 try {
+  if (autocrlf !== undefined) fixture.git(['config', '--global', 'core.autocrlf', autocrlf]);
   const globalAttribute = values['global-attribute'];
   if (globalAttribute !== undefined) {
     const configDir = join(fixture.root, 'home', '.config', 'git');
@@ -91,6 +94,18 @@ try {
     catch { return {available:false,reason:'observer-failed',observerSeconds}; }
   };
   const calibration = values['apfs-file-data'] ? observe(fixture.root,true) : undefined;
+  const fileDataDelta = (before: ReturnType<typeof observe> | undefined, after: ReturnType<typeof observe> | undefined) => {
+    if (!before?.groups || !after?.groups || typeof before.bytes !== 'string' || typeof after.bytes !== 'string') return undefined;
+    const delta: Record<string,string> = {};
+    let total = 0n;
+    for (const [group,bytes] of Object.entries(after.groups)) {
+      const change = BigInt(bytes) - BigInt(before.groups[group]);
+      delta[group === 'primary' ? 'primaryChange' : group] = change.toString();
+      total += change;
+    }
+    assert.equal(total,BigInt(after.bytes)-BigInt(before.bytes),'APFS attribution must reconcile to the measured delta');
+    return delta;
+  };
   const probe = process.platform === 'darwin' ? 'bsd' : process.platform === 'linux' ? 'gnu' : null;
   const timeArgs = probe === 'bsd' ? ['-l','-p'] : ['-f','graft-bench %U %S %M'];
   const useResources = probe !== null && existsSync('/usr/bin/time') &&
@@ -151,7 +166,7 @@ try {
     };
     const metadata = ['HEAD','index','config','info/exclude'].map(file => [file,readMetadata(file)] as const);
     const before = free();
-    const beforeApfs = calibration?.available === true ? observe(root) : undefined;
+    const beforeApfs = calibration?.available === true ? observe(root,false,arm === 'graft') : undefined;
     let firstApfs: ReturnType<typeof observe> | undefined;
     const workspacePaths: string[] = [];
     const firstStatus = (path: string) => {
@@ -162,7 +177,7 @@ try {
     const checkHistory = (path: string, storage: Record<string,unknown>) => {
       const objects = objectResult(storage.objects);
       const local = objects.source === 'local-snapshot';
-      const policy = history ?? projectHistory ?? 'isolated';
+      const policy = history ?? projectHistory ?? 'local';
       if (policy !== 'local') assert(!local, 'Restricted history used the whole donor database');
       if (policy === 'tip') assert.equal(command(['rev-list','--count','HEAD'],path),'1');
       for (const oid of [branch,...(existingUnrelated ? [existingUnrelated] : [])]) {
@@ -194,7 +209,7 @@ try {
       const storage = receipt ? objectResult(receipt.storage) : undefined;
       if (storage) checkHistory(path, storage);
       const objectStorage = storage ? objectBootstrap(storage.objects,values['include-revisions'] === true) : undefined;
-      if (index === 0 && beforeApfs?.available === true) firstApfs = observe(root);
+      if (index === 0 && beforeApfs?.available === true) firstApfs = observe(root,false,arm === 'graft');
       return {seconds,firstStatusSeconds,resources:useResources ? resources(result.stderr) : null,bytesSincePopulatedCheckout:usedBytes,
         sourceStorage:storage ? sourceReceipt(storage) : undefined,objectBootstrap:objectStorage};
     });
@@ -207,18 +222,14 @@ try {
     for (const [file,expected] of donorFiles)
       assert.equal(readFileSync(join(primary,file),'utf8'),expected,`Primary data changed: ${file}`);
     const afterApfs = beforeApfs?.available === true ? observe(root,false,arm === 'graft') : undefined;
-    let fileDataByPurpose;
-    if (afterApfs?.groups && typeof beforeApfs?.bytes === 'string' && typeof afterApfs.bytes === 'string') {
-      const {primary,...added} = afterApfs.groups;
-      fileDataByPurpose = {...added,primaryChange:(BigInt(primary)-BigInt(beforeApfs.bytes)).toString()};
-      assert.equal(Object.values(fileDataByPurpose).reduce((sum,value)=>sum+BigInt(value),0n),
-        BigInt(afterApfs.bytes)-BigInt(beforeApfs.bytes),'APFS attribution must reconcile to the measured delta');
-    }
     const apfs = typeof beforeApfs?.bytes === 'string' && typeof firstApfs?.bytes === 'string' && typeof afterApfs?.bytes === 'string'
       ? {bytesSincePopulatedCheckout:(BigInt(afterApfs.bytes)-BigInt(beforeApfs.bytes)).toString(),
         firstCheckoutBytes:(BigInt(firstApfs.bytes)-BigInt(beforeApfs.bytes)).toString(),
         additionalSecondCheckoutBytes:(BigInt(afterApfs.bytes)-BigInt(firstApfs.bytes)).toString(),
-        fileDataByPurpose,observerSeconds:beforeApfs.observerSeconds+firstApfs.observerSeconds+afterApfs.observerSeconds}
+        firstCheckoutFileDataByPurpose:fileDataDelta(beforeApfs,firstApfs),
+        additionalSecondCheckoutFileDataByPurpose:fileDataDelta(firstApfs,afterApfs),
+        fileDataByPurpose:fileDataDelta(beforeApfs,afterApfs),
+        observerSeconds:beforeApfs.observerSeconds+firstApfs.observerSeconds+afterApfs.observerSeconds}
       : values['apfs-file-data'] ? {unavailable:calibration?.reason ?? beforeApfs?.reason ?? firstApfs?.reason ?? afterApfs?.reason ?? 'observer-failed'} : undefined;
     let advanceBase;
     if (values['advance-base']) {
@@ -331,8 +342,8 @@ try {
     source:{...(values['include-revisions'] ? {head,tree} : {}),packCount:packs.length,packBytes:packs.reduce((n,p)=>n+statSync(join(sourceObjects,'pack',p)).size,0),
       commits:Number(command(['rev-list','--count',head],template)),hasUnrelatedSourceCommit:Boolean(existingUnrelated)},
     preparation:{templateCloneSeconds:prepSeconds,method:'local clone --no-hardlinks; source pack layout preserved; no source configuration copied'},
-    requestedHistory:history ?? 'default',primaryCheckout:values['clean-primary'] ? 'clean' : 'dirty',apfsCalibration:calibration,summary,runs,
-    projectHistory,globalAttribute,dependencyDiscovery:!values['no-deps'],
+    requestedHistory:history ?? 'default',effectiveHistory:history ?? projectHistory ?? 'local',primaryCheckout:values['clean-primary'] ? 'clean' : 'dirty',apfsCalibration:calibration,summary,runs,
+    projectHistory,globalAttribute,autocrlf,dependencyDiscovery:!values['no-deps'],
     scope:'Each round starts from a fresh populated clone. Spawn timings include the entire CLI process and cold object setup. The first git status is timed separately for each workspace. Clone preparation and advanced commit creation are outside both timers. Checks verify source contents, primary state and object visibility for the actual history mode. Signed statfs deltas cover the volume. Separately timed APFS scans can warm caches and exclude metadata, forks and xattrs.'};
   mkdirSync(dirname(output),{recursive:true});
   writeFileSync(output,JSON.stringify(report,null,2)+'\n');

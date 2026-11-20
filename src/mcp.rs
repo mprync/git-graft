@@ -86,7 +86,7 @@ impl ServerHandler for Server {
                 env!("CARGO_PKG_VERSION"),
             ))
             .with_instructions(format!(
-                "{instructions} Each newline-delimited message may contain up to {MAX_REQUEST_BYTES} bytes. Larger messages are discarded."
+                "{instructions} For ordinary work in a trusted clone, call workspace_spawn with history omitted to honor the project setting (default: local). Choose isolated when the workspace should only receive the selected commit's reachable history. Each newline-delimited message may contain up to {MAX_REQUEST_BYTES} bytes. Larger messages are discarded."
             ))
     }
 
@@ -128,7 +128,7 @@ impl ServerHandler for Server {
             ),
             tool::<Spawn>(
                 "workspace_spawn",
-                "Create a standalone Git repository with a private branch, detached HEAD or unborn branch.",
+                "Create a standalone Git workspace with a private branch, detached HEAD or unborn branch. For routine tasks omit history: the project setting defaults to local, which can reuse the trusted clone's Git objects. Choose isolated when unrelated objects such as staged blobs or other branches' commits must be excluded.",
                 false,
                 false,
             ),

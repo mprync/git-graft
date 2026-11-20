@@ -1,0 +1,353 @@
+{
+  "release": "6ffd18bf52a6a0433d6450367d4ae53c323b952a8b401f63e1edfa5fb956400a",
+  "candidate": "f900795aace50ad92d4923a1384e0b8fd00823d0acb33c365b9ee5c638d2c680",
+  "platform": "macOS arm64/APFS, Git 2.56.0",
+  "head": "bc63375ac3a4d6debb1ceb441ae6e22854f0909a",
+  "method": "Eight rounds per series with four rotating, then reversed, arms on separate fresh populated clones. Each Graft used a UUIDv4 request, the same base, and the default history policy. Full checkouts verified exact HEAD, staged entries, clean status, unrelated-object visibility and no alternates. All Grafts cloned 3,318 regular files with zero private working-file bytes. Empty controls used --no-checkout on all arms.",
+  "preparation": "Natural existing-project controls created an orphan first. Reserved controls refused the first spawn at private git init, then retried the request against the marker-only workspace. Matched controls ran that initial attempt in every arm. The fresh and worktree fixtures moved both roots aside, the existing fixture moved the single owned record, workspace and lock aside, and the reserved fixture kept all of them. Preparation time is excluded from spawnMs. Host load and filesystem caches were uncontrolled.",
+  "columns": ["round", "arm", "spawnMs", "throughFirstStatusMs", "setupFailedSpawnMs"],
+  "setup": {
+    "empty": {
+      "medians": {
+        "fresh": {
+          "spawnMs": 198.656
+        },
+        "existing": {
+          "spawnMs": 141.175
+        },
+        "reserved": {
+          "spawnMs": 118.398,
+          "includingFailedPreparationMs": 258.311
+        },
+        "worktree": {
+          "spawnMs": 15.587
+        }
+      },
+      "samples": [
+        [1, "fresh", 207.981, null, null],
+        [1, "existing", 166.745, null, null],
+        [1, "reserved", 111.781, null, 161.104],
+        [1, "worktree", 14.972, null, null],
+        [2, "existing", 141.007, null, null],
+        [2, "reserved", 117.721, null, 139.841],
+        [2, "worktree", 15.796, null, null],
+        [2, "fresh", 191.85, null, null],
+        [3, "reserved", 119.075, null, 176.333],
+        [3, "worktree", 15.592, null, null],
+        [3, "fresh", 180.981, null, null],
+        [3, "existing", 176.609, null, null],
+        [4, "worktree", 16.762, null, null],
+        [4, "fresh", 176.959, null, null],
+        [4, "existing", 139.379, null, null],
+        [4, "reserved", 132.36, null, 165.169],
+        [5, "worktree", 15.934, null, null],
+        [5, "reserved", 103.364, null, 124.982],
+        [5, "existing", 138.921, null, null],
+        [5, "fresh", 200.226, null, null],
+        [6, "fresh", 197.087, null, null],
+        [6, "worktree", 15.581, null, null],
+        [6, "reserved", 119.338, null, 139.722],
+        [6, "existing", 158.173, null, null],
+        [7, "existing", 139.511, null, null],
+        [7, "fresh", 203.576, null, null],
+        [7, "worktree", 14.421, null, null],
+        [7, "reserved", 119.266, null, 133.066],
+        [8, "reserved", 106.903, null, 147.485],
+        [8, "existing", 141.344, null, null],
+        [8, "fresh", 207.535, null, null],
+        [8, "worktree", 14.973, null, null]
+      ]
+    },
+    "full": {
+      "medians": {
+        "fresh": {
+          "spawnMs": 468.967,
+          "throughFirstStatusMs": 898.561
+        },
+        "existing": {
+          "spawnMs": 416.73,
+          "throughFirstStatusMs": 813.043
+        },
+        "reserved": {
+          "spawnMs": 357.74,
+          "throughFirstStatusMs": 792.321,
+          "includingFailedPreparationMs": 500.029
+        },
+        "worktree": {
+          "spawnMs": 316.969,
+          "throughFirstStatusMs": 429.406
+        }
+      },
+      "samples": [
+        [1, "fresh", 517.853, 991.572, null],
+        [1, "existing", 457.927, 881.356, null],
+        [1, "reserved", 336.569, 746.067, 136.345],
+        [1, "worktree", 312.214, 425.718, null],
+        [2, "existing", 357.124, 705.479, null],
+        [2, "reserved", 355.781, 758.473, 203.702],
+        [2, "worktree", 321.723, 434.462, null],
+        [2, "fresh", 448.317, 840.405, null],
+        [3, "reserved", 347.975, 755.641, 137.769],
+        [3, "worktree", 296.166, 433.093, null],
+        [3, "fresh", 390.106, 742.55, null],
+        [3, "existing", 436.386, 832.893, null],
+        [4, "worktree", 302.5, 406.306, null],
+        [4, "fresh", 461.672, 869.501, null],
+        [4, "existing", 365.333, 751.342, null],
+        [4, "reserved", 474.325, 902.94, 131.252],
+        [5, "worktree", 292.964, 328.789, null],
+        [5, "reserved", 358.333, 805.119, 128.885],
+        [5, "existing", 380.241, 779.747, null],
+        [5, "fresh", 584.135, 1041.178, null],
+        [6, "fresh", 476.262, 922.959, null],
+        [6, "worktree", 327.227, 445.255, null],
+        [6, "reserved", 456.657, 919.401, 178.525],
+        [6, "existing", 444.237, 849.427, null],
+        [7, "existing", 397.073, 793.194, null],
+        [7, "fresh", 450.373, 874.162, null],
+        [7, "worktree", 346.298, 414.996, null],
+        [7, "reserved", 357.147, 779.522, 146.082],
+        [8, "reserved", 362.992, 805.573, 133.838],
+        [8, "existing", 478.931, 955.705, null],
+        [8, "fresh", 559.828, 1036.889, null],
+        [8, "worktree", 345.774, 433.22, null]
+      ]
+    },
+    "matched-empty": {
+      "medians": {
+        "fresh": {
+          "spawnMs": 166.379
+        },
+        "existing": {
+          "spawnMs": 136.539
+        },
+        "reserved": {
+          "spawnMs": 102.18,
+          "includingFailedPreparationMs": 227.202
+        },
+        "worktree": {
+          "spawnMs": 14.506
+        }
+      },
+      "samples": [
+        [1, "fresh", 172.942, null, 131.414],
+        [1, "existing", 140.039, null, 121.442],
+        [1, "reserved", 111.506, null, 126.566],
+        [1, "worktree", 15.477, null, 124.686],
+        [2, "existing", 152.861, null, 132.054],
+        [2, "reserved", 113.702, null, 118.008],
+        [2, "worktree", 13.581, null, 117.08],
+        [2, "fresh", 152.066, null, 114.162],
+        [3, "reserved", 103.305, null, 123.725],
+        [3, "worktree", 14.869, null, 127.307],
+        [3, "fresh", 152.067, null, 160.695],
+        [3, "existing", 143.117, null, 118.213],
+        [4, "worktree", 14.195, null, 107.108],
+        [4, "fresh", 187.543, null, 140.284],
+        [4, "existing", 133.04, null, 115.245],
+        [4, "reserved", 108.07, null, 128.898],
+        [5, "worktree", 13.951, null, 117.494],
+        [5, "reserved", 97.412, null, 127.29],
+        [5, "existing", 144.508, null, 126.461],
+        [5, "fresh", 187.28, null, 122.92],
+        [6, "fresh", 193.903, null, 117.691],
+        [6, "worktree", 16.351, null, 121.049],
+        [6, "reserved", 97.741, null, 115.405],
+        [6, "existing", 127.381, null, 117.581],
+        [7, "existing", 131.269, null, 117.322],
+        [7, "fresh", 159.815, null, 130.313],
+        [7, "worktree", 13.911, null, 116.18],
+        [7, "reserved", 101.055, null, 126.319],
+        [8, "reserved", 98.023, null, 113.213],
+        [8, "existing", 130.84, null, 107.127],
+        [8, "fresh", 158.358, null, 124.134],
+        [8, "worktree", 14.817, null, 146.218]
+      ]
+    },
+    "matched-full": {
+      "medians": {
+        "fresh": {
+          "spawnMs": 423.934,
+          "throughFirstStatusMs": 894.231
+        },
+        "existing": {
+          "spawnMs": 432.144,
+          "throughFirstStatusMs": 920.442
+        },
+        "reserved": {
+          "spawnMs": 359.898,
+          "throughFirstStatusMs": 853.274,
+          "includingFailedPreparationMs": 525.778
+        },
+        "worktree": {
+          "spawnMs": 314.454,
+          "throughFirstStatusMs": 430.47
+        }
+      },
+      "samples": [
+        [1, "fresh", 498.269, 1031.16, 171.335],
+        [1, "existing", 410.852, 887.955, 185.779],
+        [1, "reserved", 359.955, 859.747, 177.696],
+        [1, "worktree", 326.528, 444.175, 149.753],
+        [2, "existing", 442.506, 936.575, 171.55],
+        [2, "reserved", 351.01, 786.552, 166.532],
+        [2, "worktree", 327.572, 445.098, 159.933],
+        [2, "fresh", 420.971, 869.482, 127.379],
+        [3, "reserved", 359.841, 846.802, 169.894],
+        [3, "worktree", 318.152, 403.293, 154.26],
+        [3, "fresh", 421.209, 902.096, 121.59],
+        [3, "existing", 456.584, 934.172, 174.375],
+        [4, "worktree", 310.751, 435.225, 118.258],
+        [4, "fresh", 436.537, 873.328, 148.949],
+        [4, "existing", 416.566, 835.221, 154.679],
+        [4, "reserved", 364.744, 974.376, 157.076],
+        [5, "worktree", 310.314, 422.699, 153.309],
+        [5, "reserved", 333.094, 794.668, 146.211],
+        [5, "existing", 421.782, 906.711, 150.522],
+        [5, "fresh", 420.799, 886.367, 131.31],
+        [6, "fresh", 426.659, 851.376, 140.141],
+        [6, "worktree", 322.517, 453.856, 120.668],
+        [6, "reserved", 418.538, 893.465, 135.127],
+        [6, "existing", 563.436, 1706.321, 172.079],
+        [7, "existing", 641.51, 1814.869, 178.696],
+        [7, "fresh", 533.287, 975.933, 139.159],
+        [7, "worktree", 309.31, 425.714, 119.952],
+        [7, "reserved", 416.82, 943.751, 126.255],
+        [8, "reserved", 350.351, 814.844, 126.635],
+        [8, "existing", 392.776, 830.764, 124.06],
+        [8, "fresh", 405.552, 906.297, 115.78],
+        [8, "worktree", 310.757, 425.144, 135.738]
+      ]
+    }
+  },
+  "recovery": [
+    {
+      "git": "git version 2.56.0",
+      "format": "sha1",
+      "missingRootRefused": true,
+      "foreignRootPreserved": true,
+      "journalUnchangedDuringConflict": true,
+      "sameLeaseRecovered": true
+    },
+    {
+      "git": "git version 2.56.0",
+      "format": "sha256",
+      "missingRootRefused": true,
+      "foreignRootPreserved": true,
+      "journalUnchangedDuringConflict": true,
+      "sameLeaseRecovered": true
+    },
+    {
+      "git": "git version 2.46.0",
+      "format": "sha1",
+      "missingRootRefused": true,
+      "foreignRootPreserved": true,
+      "journalUnchangedDuringConflict": true,
+      "sameLeaseRecovered": true
+    },
+    {
+      "git": "git version 2.46.0",
+      "format": "sha256",
+      "missingRootRefused": true,
+      "foreignRootPreserved": true,
+      "journalUnchangedDuringConflict": true,
+      "sameLeaseRecovered": true
+    }
+  ],
+  "namespaceExperiment": {
+    "method": "The candidate creates an empty records directory in the new owned namespace stage before publishing its marker. Existing registries follow the release path. Paired an orphan control on new projects 24 times, then compared full local checkouts and native worktrees in 12 rotating triples across both orders.",
+    "columns": ["series", "round", "arm", "spawnMs", "firstStatusMs", "userSeconds", "systemSeconds", "peakRssBytes"],
+    "orphanPairsMs": [
+      ["release", 125.447, 175.517],
+      ["candidate", 152.398, 169.355],
+      ["release", 121.876, 135.73],
+      ["candidate", 114.38, 160.043],
+      ["release", 137.791, 119.649],
+      ["candidate", 132.112, 163.022],
+      ["release", 114.578, 105.506],
+      ["candidate", 109.439, 109.313],
+      ["release", 101.84, 100.324],
+      ["candidate", 129.68, 99.474],
+      ["release", 130.999, 99.866],
+      ["candidate", 102.834, 100.446],
+      ["release", 107.932, 97.058],
+      ["candidate", 100.263, 109.435],
+      ["release", 107.634, 98.971],
+      ["candidate", 102.146, 103.01],
+      ["release", 108.956, 99.93],
+      ["candidate", 113.752, 106.387],
+      ["release", 121.974, 120.901],
+      ["candidate", 130.287, 136.716],
+      ["release", 135.188, 146.293],
+      ["candidate", 117.654, 105.74],
+      ["release", 112.624, 109.348],
+      ["candidate", 106.569, 98.405]
+    ],
+    "orphanMedianPairedSavingMs": 1.951,
+    "samples": [
+      ["namespace", 1, "release", 484.703, 480.661, 0.12, 1.03, 28852224],
+      ["namespace", 1, "candidate", 390.221, 421.259, 0.12, 0.81, 28803072],
+      ["namespace", 1, "worktree", 331.397, 52.211, 0.05, 0.23, 52150272],
+      ["namespace", 2, "candidate", 433.772, 499.857, 0.12, 0.81, 28803072],
+      ["namespace", 2, "worktree", 323.649, 59.396, 0.05, 0.23, 52035584],
+      ["namespace", 2, "release", 392.743, 465.422, 0.11, 0.78, 28819456],
+      ["namespace", 3, "worktree", 304.862, 108.604, 0.05, 0.23, 52215808],
+      ["namespace", 3, "release", 405.857, 489.499, 0.12, 0.81, 28819456],
+      ["namespace", 3, "candidate", 435.986, 529.426, 0.12, 0.84, 28835840],
+      ["namespace", 4, "worktree", 423.574, 102.825, 0.05, 0.32, 52494336],
+      ["namespace", 4, "candidate", 442.996, 497.833, 0.12, 0.92, 28835840],
+      ["namespace", 4, "release", 444.871, 573.081, 0.12, 0.91, 28835840],
+      ["namespace", 5, "release", 457.737, 452.86, 0.13, 0.87, 28819456],
+      ["namespace", 5, "worktree", 316.422, 118.382, 0.05, 0.24, 52232192],
+      ["namespace", 5, "candidate", 759.659, 508.269, 0.16, 0.83, 28803072],
+      ["namespace", 6, "candidate", 612.79, 609.34, 0.15, 0.82, 28835840],
+      ["namespace", 6, "release", 789.413, 450.32, 0.15, 0.8, 28803072],
+      ["namespace", 6, "worktree", 324.597, 68.757, 0.05, 0.24, 52379648],
+      ["namespace-reverse", 1, "worktree", 335.687, 104.618, 0.05, 0.24, 52248576],
+      ["namespace-reverse", 1, "candidate", 428.087, 418.711, 0.12, 0.89, 28803072],
+      ["namespace-reverse", 1, "release", 432.715, 425.105, 0.12, 0.86, 28803072],
+      ["namespace-reverse", 2, "release", 428.563, 439.154, 0.12, 0.84, 28835840],
+      ["namespace-reverse", 2, "worktree", 309.203, 107.458, 0.05, 0.23, 52199424],
+      ["namespace-reverse", 2, "candidate", 456.308, 427.839, 0.12, 0.84, 28803072],
+      ["namespace-reverse", 3, "candidate", 398.513, 450.232, 0.12, 0.82, 28819456],
+      ["namespace-reverse", 3, "release", 523.214, 1069.834, 0.12, 0.82, 28819456],
+      ["namespace-reverse", 3, "worktree", 316.882, 115.923, 0.05, 0.22, 52051968],
+      ["namespace-reverse", 4, "release", 1935.402, 434.814, 0.12, 0.84, 28819456],
+      ["namespace-reverse", 4, "candidate", 405.276, 377.68, 0.11, 0.77, 28819456],
+      ["namespace-reverse", 4, "worktree", 302.605, 107.122, 0.05, 0.23, 52297728],
+      ["namespace-reverse", 5, "candidate", 414.698, 449.98, 0.12, 0.82, 28868608],
+      ["namespace-reverse", 5, "worktree", 296.306, 60.6, 0.05, 0.23, 52051968],
+      ["namespace-reverse", 5, "release", 392.481, 435.329, 0.12, 0.79, 28819456],
+      ["namespace-reverse", 6, "worktree", 313.157, 112.41, 0.05, 0.24, 52150272],
+      ["namespace-reverse", 6, "release", 438.842, 460.891, 0.12, 0.92, 28803072],
+      ["namespace-reverse", 6, "candidate", 406.806, 443.714, 0.12, 0.79, 28803072]
+    ],
+    "namespace": {
+      "medianSpawnMs": {
+        "release": 451.304,
+        "candidate": 439.491,
+        "worktree": 324.123
+      },
+      "medianPairedSavingMs": -14.127,
+      "candidateWins": 3
+    },
+    "namespace-reverse": {
+      "medianSpawnMs": {
+        "release": 435.779,
+        "candidate": 410.752,
+        "worktree": 311.18
+      },
+      "medianPairedSavingMs": 18.332,
+      "candidateWins": 4
+    },
+    "both": {
+      "medianSpawnMs": {
+        "release": 441.856,
+        "candidate": 430.929,
+        "worktree": 316.652
+      },
+      "medianPairedSavingMs": 3.251,
+      "candidateWins": 7
+    }
+  }
+}

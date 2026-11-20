@@ -6,7 +6,12 @@ use anyhow::Result;
 use std::{fs::File, path::Path};
 
 #[cfg(target_os = "linux")]
-pub(super) fn create(source: &File, _donor: &Path, scratch: &Path) -> Result<File> {
+pub(super) fn create(
+    source: &File,
+    _donor: &Path,
+    scratch: &Path,
+    for_walk: bool,
+) -> Result<(File, Option<File>)> {
     use anyhow::ensure;
     use std::{io, os::fd::AsRawFd, os::unix::fs::MetadataExt};
 
@@ -16,11 +21,19 @@ pub(super) fn create(source: &File, _donor: &Path, scratch: &Path) -> Result<Fil
     if unsafe { libc::ioctl(file.as_raw_fd(), libc::FICLONE, source.as_raw_fd()) } < 0 {
         return Err(io::Error::last_os_error().into());
     }
-    Ok(file)
+    let reader = for_walk
+        .then(|| File::open(format!("/proc/self/fd/{}", file.as_raw_fd())).ok())
+        .flatten();
+    Ok((file, reader))
 }
 
 #[cfg(target_os = "macos")]
-pub(super) fn create(source: &File, donor: &Path, _scratch: &Path) -> Result<File> {
+pub(super) fn create(
+    source: &File,
+    donor: &Path,
+    _scratch: &Path,
+    for_walk: bool,
+) -> Result<(File, Option<File>)> {
     use super::{clone_file, open_regular};
     use anyhow::{Context, ensure};
     use std::{
@@ -31,7 +44,7 @@ pub(super) fn create(source: &File, donor: &Path, _scratch: &Path) -> Result<Fil
     let parent = donor.parent().context("missing donor pack directory")?;
     let directory = temporary_pack_dir(parent)?.keep();
     let path = directory.join("donor.pack");
-    let result = (|| -> Result<File> {
+    let result = (|| -> Result<_> {
         clone_file(source, &path)?;
         let pinned = open_regular(&path)?;
         let identity = pinned.metadata()?;
@@ -54,7 +67,7 @@ pub(super) fn create(source: &File, donor: &Path, _scratch: &Path) -> Result<Fil
         );
         fs::remove_file(&path)?;
         ensure!(file.metadata()?.nlink() == 0, "Git scratch is still linked");
-        Ok(file)
+        Ok((file, for_walk.then_some(pinned)))
     })();
     // Only remove an empty directory here. Git prunes interrupted scratch.
     let _ = fs::remove_dir(directory);
@@ -62,7 +75,12 @@ pub(super) fn create(source: &File, donor: &Path, _scratch: &Path) -> Result<Fil
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-pub(super) fn create(_source: &File, _donor: &Path, _scratch: &Path) -> Result<File> {
+pub(super) fn create(
+    _source: &File,
+    _donor: &Path,
+    _scratch: &Path,
+    _for_walk: bool,
+) -> Result<(File, Option<File>)> {
     anyhow::bail!("anonymous copy-on-write scratch is unsupported")
 }
 
@@ -92,11 +110,18 @@ mod tests {
             }
         }
 
-        let file = create(&source, &donor, &staging)?;
+        let (file, reader) = create(&source, &donor, &staging, true)?;
         assert_eq!(file.metadata()?.nlink(), 0);
         assert_eq!(fs::read_dir(&packs)?.count(), 1);
         assert_eq!(fs::read_dir(&staging)?.count(), 0);
         file.set_len(14)?;
+        if let Some(mut reader) = reader {
+            use std::io::{Read, Seek};
+            assert_eq!(reader.metadata()?.ino(), file.metadata()?.ino());
+            let mut byte = [0];
+            assert_eq!(reader.read(&mut byte)?, 1);
+            assert_eq!((&file).stream_position()?, 0);
+        }
         let output = staging.join("filtered.pack");
         clone_file(&file, &output)?;
         assert_eq!(fs::read(output)?, b"retained bytes");

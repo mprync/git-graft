@@ -1,0 +1,109 @@
+{
+  "fixture": "macOS arm64, APFS, Git 2.56.0. Each invocation starts with a fresh populated Homebrew clone, unconfigured default local history and no Graft registry. OS caches uncontrolled.",
+  "method": "Six rotating triples per series. The two-reader staging series reverses the order. The test harness provides empty private same-volume staging directories before timing. Elapsed time includes the release process and excludes the first status, which is measured immediately afterward. Four readers run per-file staging or only verification. The shipped control uses two verification readers. Both staging trials clone verified tracked files from pinned source descriptors into numbered slots and exclusively rename eligible slots after checkout planning. The experiment excludes production scratch setup, interruption recovery and cleanup from its timing.",
+  "checks": "Each Graft reported 3318 cloned regular files and zero private working-file bytes. The fixture checked clean primary and workspace status, selected HEAD/tree and commit count, presence of an unrelated local object and an independent object store without alternates. Git fsck --strict --no-reflogs ran on the first candidate of each series.",
+  "columns": [
+    "round",
+    "arm",
+    "spawnMs",
+    "firstStatusMs",
+    "userSeconds",
+    "systemSeconds",
+    "peakRssBytes",
+    "stagedFiles"
+  ],
+  "series": {
+    "staged": {
+      "candidateSha256": "eea96a732fd64e30a6ff310aa6cf5b0b3ba6c2e11294d303f9375a0a1908fade",
+      "medianSpawnMs": {
+        "release": 464.94,
+        "candidate": 539.98,
+        "worktree": 335.19
+      },
+      "medianPairedAddedMs": 64.26,
+      "candidateWins": 0,
+      "samples": [
+        [1, "release", 524.576, 401.783, 0.12, 0.87, 28786688, null],
+        [1, "candidate", 574.12, 362.301, 0.14, 2.47, 28803072, 3318],
+        [1, "worktree", 345.048, 118.987, 0.05, 0.25, 52363264, null],
+        [2, "candidate", 540.74, 333.97, 0.14, 2.46, 28786688, 3318],
+        [2, "worktree", 345.303, 126.192, 0.05, 0.23, 52412416, null],
+        [2, "release", 484.807, 368.608, 0.13, 0.99, 28803072, null],
+        [3, "worktree", 310.373, 117.687, 0.05, 0.23, 52396032, null],
+        [3, "release", 440.06, 327.028, 0.13, 0.88, 28786688, null],
+        [3, "candidate", 558.164, 414.74, 0.14, 2.43, 28819456, 3318],
+        [4, "worktree", 309.766, 126.912, 0.05, 0.24, 52396032, null],
+        [4, "candidate", 525.291, 347.972, 0.14, 2.42, 28835840, 3318],
+        [4, "release", 421.953, 362.854, 0.12, 0.9, 28835840, null],
+        [5, "release", 463.242, 350.042, 0.13, 1.01, 28786688, null],
+        [5, "worktree", 325.342, 59.724, 0.05, 0.26, 52264960, null],
+        [5, "candidate", 513.995, 313.445, 0.13, 2.34, 28819456, 3318],
+        [6, "candidate", 539.229, 353.514, 0.14, 2.35, 28852224, 3318],
+        [6, "release", 466.635, 364.642, 0.13, 1.02, 28803072, null],
+        [6, "worktree", 427.574, 165.73, 0.06, 0.32, 52379648, null]
+      ]
+    },
+    "hash-only": {
+      "candidateSha256": "eea96a732fd64e30a6ff310aa6cf5b0b3ba6c2e11294d303f9375a0a1908fade",
+      "medianSpawnMs": {
+        "release": 457.37,
+        "candidate": 519.64,
+        "worktree": 334.38
+      },
+      "medianPairedAddedMs": 49.62,
+      "candidateWins": 0,
+      "samples": [
+        [1, "release", 418.619, 355.409, 0.12, 0.87, 28786688, null],
+        [1, "candidate", 449.007, 343.241, 0.12, 0.96, 28803072, 0],
+        [1, "worktree", 318.475, 116.249, 0.05, 0.24, 52412416, null],
+        [2, "candidate", 489.054, 393.971, 0.13, 1.12, 28786688, 0],
+        [2, "worktree", 300.194, 112.164, 0.05, 0.23, 52330496, null],
+        [2, "release", 401.174, 381.875, 0.12, 0.84, 28819456, null],
+        [3, "worktree", 285.9, 28.65, 0.05, 0.22, 52346880, null],
+        [3, "release", 452.687, 366.93, 0.13, 0.93, 28786688, null],
+        [3, "candidate", 795.624, 566.87, 0.14, 1.58, 28835840, 0],
+        [4, "worktree", 365.171, 52.867, 0.05, 0.27, 52281344, null],
+        [4, "candidate", 507.211, 418.754, 0.15, 1.16, 28803072, 0],
+        [4, "release", 462.06, 368.728, 0.14, 0.87, 28786688, null],
+        [5, "release", 477.989, 365.289, 0.14, 1.02, 28819456, null],
+        [5, "worktree", 361.044, 138.319, 0.06, 0.28, 52412416, null],
+        [5, "candidate", 532.078, 411.908, 0.15, 1.05, 28803072, 0],
+        [6, "candidate", 551.018, 461.444, 0.15, 1.08, 28835840, 0],
+        [6, "release", 537.299, 411.673, 0.15, 1.01, 28803072, null],
+        [6, "worktree", 350.29, 127.053, 0.06, 0.26, 52428800, null]
+      ]
+    },
+    "staged-two": {
+      "candidateSha256": "c2df07153fc31e8bd759026651b0b8f9b78f4687130a6d295c8d9443ba715d29",
+      "medianSpawnMs": {
+        "release": 540.9,
+        "candidate": 601.8,
+        "worktree": 354.44
+      },
+      "medianPairedAddedMs": 52.47,
+      "candidateWins": 2,
+      "samples": [
+        [1, "worktree", 365.074, 140.944, 0.05, 0.26, 52412416, null],
+        [1, "candidate", 629.376, 411.838, 0.15, 1.7, 28803072, 1711],
+        [1, "release", 726.651, 472.093, 0.12, 0.71, 19021824, null],
+        [2, "release", 575.593, 427.282, 0.15, 1.14, 28803072, null],
+        [2, "worktree", 411.677, 130.887, 0.06, 0.27, 52658176, null],
+        [2, "candidate", 574.225, 365.793, 0.15, 1.61, 28852224, 1711],
+        [3, "candidate", 661.618, 447.713, 0.16, 1.3, 28786688, 1711],
+        [3, "release", 594.001, 444.332, 0.15, 1.11, 28786688, null],
+        [3, "worktree", 473.168, 130.909, 0.06, 0.32, 52494336, null],
+        [4, "release", 470.521, 346.676, 0.13, 1, 28786688, null],
+        [4, "candidate", 716.073, 362.937, 0.15, 2.06, 28786688, 1711],
+        [4, "worktree", 324.916, 133.184, 0.05, 0.24, 52314112, null],
+        [5, "candidate", 543.53, 352.61, 0.14, 1.77, 28835840, 1711],
+        [5, "worktree", 343.81, 42.892, 0.05, 0.26, 52396032, null],
+        [5, "release", 506.216, 362.302, 0.14, 1.03, 28819456, null],
+        [6, "worktree", 335.732, 122.094, 0.05, 0.26, 52281344, null],
+        [6, "release", 428.632, 367.685, 0.13, 0.93, 28835840, null],
+        [6, "candidate", 563.148, 350.596, 0.14, 1.71, 28803072, 1711]
+      ]
+    }
+  },
+  "releaseSha256": "ec84778faf7c85b9b90638681c86d5702211a164b7f9538c02413d1319e704e9",
+  "commit": "bc63375ac3a4d6debb1ceb441ae6e22854f0909a"
+}

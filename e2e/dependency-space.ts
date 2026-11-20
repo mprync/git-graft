@@ -100,7 +100,7 @@ export const dependencySpace: Scenario = {
     const receipts: Array<{action:string;backend:unknown;clonedBytes:unknown;copiedBytes:unknown;logicalBytes:unknown}> = [];
     const graftBefore = disk(ctx);
     const spawnClock = performance.now();
-    const first = ctx.spawn('dependency-graft-0');
+    const first = ctx.spawn('dependency-graft-0', ['--history', 'local']);
     const firstSpawnSeconds = (performance.now()-spawnClock)/1000;
     const beforePrime = disk(ctx);
     const primeClock = performance.now();
@@ -116,7 +116,7 @@ export const dependencySpace: Scenario = {
     let mode: 'copy-on-write' | 'copy' = 'copy-on-write';
     for (let i=0; i<count; i++) {
       const name = `dependency-graft-${i}`;
-      const workspace = i === 0 ? first : ctx.spawn(name);
+      const workspace = i === 0 ? first : ctx.spawn(name, ['--history', 'local']);
       graftPaths.push(workspace.path);
       if (i === 0) ctx.cli(['add-dep',name,'--lease',workspace.lease,'--manager','npm','--offline']);
       const action = i === 0 ? 'save' : 'restore';
@@ -165,7 +165,7 @@ export const dependencySpace: Scenario = {
     const graftDelta = graftBefore.free-graftAfter.free-cachePrimeDelta;
     const saved = nativeDelta-graftDelta;
     ctx.measure('dependency_space', {
-      platform:process.platform, architecture:process.arch,
+      historyPolicy:'local',platform:process.platform, architecture:process.arch,
       filesystem:{typeCode:nativeBefore.filesystem,blockSize:nativeBefore.block.toString(),method:'statfs bfree * bsize'},
       sample:{workspaces:count,fixtureBytes:(mib*1024*1024).toString(),packageDigest:fixture.payloadDigest,
         caches:'same integrity-verified archive; native warmed before measurement, Graft warmed via exec after the charged first spawn; cache preparation time and signed disk delta are excluded from both totals',seedLayerIncluded:true},

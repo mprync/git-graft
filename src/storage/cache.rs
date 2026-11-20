@@ -77,7 +77,7 @@ impl From<&Metadata> for Stamp {
 impl Stamp {
     // libc's stat field widths vary between Unix targets.
     #[allow(clippy::unnecessary_cast)]
-    fn matches_stat(&self, info: &libc::stat) -> bool {
+    pub(super) fn matches_stat(&self, info: &libc::stat) -> bool {
         self.device == info.st_dev as u64
             && self.inode == info.st_ino as u64
             && self.size == info.st_size as u64
@@ -130,6 +130,17 @@ impl Record {
         let (file, metadata) = root.regular_metadata(self.entry.path()?)?;
         ensure!(Stamp::from(&metadata) == *stamp, "cached file changed");
         Ok((file, metadata))
+    }
+
+    pub(super) fn checked_size(&self, root: &Root) -> Result<u64> {
+        let Content::Regular(stamp) = &self.data else {
+            anyhow::bail!("expected a regular cached file")
+        };
+        ensure!(
+            stamp.matches_stat(&root.regular_stat(self.entry.path()?)?),
+            "staged source changed"
+        );
+        Ok(stamp.size)
     }
 
     fn verify(&self, root: &Root) -> Result<()> {
@@ -434,6 +445,26 @@ mod tests {
         fs::write(&changed, b"changed!")?;
         assert!(verify_base(&quarantine, &state, &oid).is_err());
         assert_eq!(fs::read(changed)?, b"changed!");
+        Ok(())
+    }
+
+    #[test]
+    fn staged_file_requires_the_published_inode() -> Result<()> {
+        let temp = tempfile::tempdir()?;
+        let directory = dunce::canonicalize(temp.path())?;
+        let root = Root::open(&directory)?;
+        let entry = Entry {
+            name: b"tracked".to_vec(),
+            blob: "a".repeat(40),
+            mode: 0o100644,
+        };
+        let path = directory.join(entry.path()?);
+        fs::write(&path, b"verified")?;
+        let record = Record::capture(&root, &entry, None)?;
+        assert_eq!(record.checked_size(&root)?, 8);
+        fs::rename(&path, directory.join("original"))?;
+        fs::write(&path, b"replaced")?;
+        assert!(record.checked_size(&root).is_err());
         Ok(())
     }
 
