@@ -36,7 +36,7 @@ fn file_key(file: &File) -> Result<FileKey> {
     let m = file.metadata()?;
     ensure!(
         m.is_file() && m.nlink() == 1,
-        "landing scratch file is shared"
+        "merge scratch file is shared"
     );
     Ok(FileKey {
         volume: m.dev(),
@@ -54,7 +54,7 @@ fn file_key(file: &File) -> Result<FileKey> {
     ensure!(
         unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut i) } != 0
             && i.nNumberOfLinks == 1,
-        "landing scratch file is shared"
+        "merge scratch file is shared"
     );
     Ok(FileKey {
         volume: u64::from(i.dwVolumeSerialNumber),
@@ -64,7 +64,7 @@ fn file_key(file: &File) -> Result<FileKey> {
 
 #[cfg(not(any(unix, windows)))]
 fn file_key(_: &File) -> Result<FileKey> {
-    bail!("landing scratch file identity is unsupported")
+    bail!("merge scratch file identity is unsupported")
 }
 
 pub(super) fn mark(p: &Project, dir: &Path) -> Result<()> {
@@ -87,7 +87,7 @@ fn owned(p: &Project, dir: &Path) -> Result<Owner> {
     #[cfg(windows)]
     ensure!(
         recovery::no_extended_metadata(dir),
-        "landing scratch directory has additional metadata or cannot be inspected"
+        "merge scratch directory has additional metadata or cannot be inspected"
     );
     let marker = objects::open_regular(&dir.join(OWNER))?;
     let owner: Owner = serde_json::from_slice(&registry::regular(&dir.join(OWNER))?)?;
@@ -97,7 +97,7 @@ fn owned(p: &Project, dir: &Path) -> Result<Owner> {
             && recovery::no_extended_metadata(&dir.join(OWNER))
             && file_key(&marker)? == owner.marker
             && file_key(&objects::open_regular(&dir.join(OWNER))?)? == owner.marker,
-        "landing scratch ownership changed"
+        "merge scratch ownership changed"
     );
     Ok(owner)
 }
@@ -155,7 +155,7 @@ fn scan(root: &Path) -> Result<Snapshot> {
         for entry in fs::read_dir(root.join(rel))? {
             let entry = entry?;
             let name = entry.file_name();
-            ensure!(name.to_str().is_some(), "non-UTF-8 landing scratch entry");
+            ensure!(name.to_str().is_some(), "non-UTF-8 merge scratch entry");
             let next = rel.join(name);
             if next == Path::new(OWNER) {
                 continue;
@@ -166,7 +166,7 @@ fn scan(root: &Path) -> Result<Snapshot> {
                 allowed(&next, kind.is_dir())
                     && !kind.is_symlink()
                     && recovery::no_extended_metadata(&path),
-                "unrecognized landing scratch entry {}",
+                "unrecognized merge scratch entry {}",
                 path.display()
             );
             if kind.is_dir() {
@@ -184,7 +184,7 @@ fn scan(root: &Path) -> Result<Snapshot> {
                     .to_string();
                 ensure!(
                     file_key(&file)? == key,
-                    "landing scratch file changed while reading"
+                    "merge scratch file changed while reading"
                 );
                 snapshot.files.push((next, key, digest));
             }
@@ -202,7 +202,7 @@ fn scan(root: &Path) -> Result<Snapshot> {
 }
 
 fn unchanged(root: &Path, snapshot: &Snapshot) -> Result<()> {
-    ensure!(scan(root)? == *snapshot, "landing scratch entries changed");
+    ensure!(scan(root)? == *snapshot, "merge scratch entries changed");
     Ok(())
 }
 
@@ -224,7 +224,7 @@ pub(super) fn checkpoint(p: &Project, dir: &Path) -> Result<()> {
     let mut marker = options.open(dir.join(OWNER))?;
     ensure!(
         file_key(&marker)? == owner.marker,
-        "landing scratch marker changed"
+        "merge scratch marker changed"
     );
     marker.set_len(0)?;
     marker.write_all(&serde_json::to_vec(&owner)?)?;
@@ -237,7 +237,7 @@ pub(super) fn purge(p: &Project, root: &Path, dir: &Path) -> Result<()> {
     let snapshot = owner
         .snapshot
         .as_ref()
-        .context("landing scratch has no verified checkpoint")?;
+        .context("merge scratch has no verified checkpoint")?;
     unchanged(dir, snapshot)?;
     match cache::purge_directory(
         dir,
@@ -251,7 +251,7 @@ pub(super) fn purge(p: &Project, root: &Path, dir: &Path) -> Result<()> {
         Ok(()) => Ok(()),
         Err(PurgeFailure::Unmoved(error)) => Err(error),
         Err(PurgeFailure::Retained { path, error }) => {
-            bail!("landing scratch retained at {}: {error:#}", path.display())
+            bail!("merge scratch retained at {}: {error:#}", path.display())
         }
     }
 }
@@ -263,13 +263,13 @@ pub(super) fn recover(p: &Project, root: &Path) -> Result<()> {
         let name = path.file_name().and_then(|name| name.to_str());
         let message = if name.is_some_and(|name| name.starts_with(".planning-")) {
             format!(
-                "interrupted landing planning scratch retained at {}",
+                "interrupted merge planning scratch retained at {}",
                 path.display()
             )
         } else if name.is_some_and(|name| name.starts_with(".pending-"))
             && let Err(error) = purge(p, root, &path)
         {
-            format!("landing scratch retained at {}: {error:#}", path.display())
+            format!("merge scratch retained at {}: {error:#}", path.display())
         } else {
             continue;
         };
@@ -280,7 +280,7 @@ pub(super) fn recover(p: &Project, root: &Path) -> Result<()> {
     }
     if retained > 3 {
         eprintln!(
-            "git-graft: {} additional landing scratch directories retained",
+            "git-graft: {} additional merge scratch directories retained",
             retained - 3
         );
     }

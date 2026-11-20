@@ -15,9 +15,9 @@ fn main_branch() -> String {
 #[derive(Debug, Args, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Spawn {
-    /// Unique workspace name. Use lowercase ASCII letters, numbers and hyphens.
+    /// Unique graft name. Use lowercase ASCII letters, numbers and hyphens.
     pub name: String,
-    /// Secret random UUIDv4 used as the lease. Reuse it to retry the identical spawn.
+    /// Secret random UUIDv4 used as the lease. Reuse it to retry the identical request.
     #[arg(long)]
     pub request_id: Option<String>,
     /// Committed revision to check out. Defaults to the invoking checkout's HEAD.
@@ -53,10 +53,11 @@ pub struct Spawn {
     #[arg(long, conflicts_with = "sparse")]
     #[serde(default)]
     pub no_checkout: bool,
-    /// Lock the new workspace against moves and retirement.
+    /// Lock the new graft against moves and pruning.
     #[arg(long)]
     #[serde(default)]
     pub lock: bool,
+    /// Why the graft is locked.
     #[arg(long, requires = "lock")]
     pub reason: Option<String>,
 }
@@ -102,14 +103,26 @@ impl Spawn {
 #[derive(Debug, Args, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Name {
+    /// Name of the graft.
     pub name: String,
+}
+
+/// Arguments of `status`: inspect a graft, or show its environment.
+#[derive(Debug, Args)]
+pub struct StatusArgs {
+    /// Name of the graft.
+    pub name: String,
+    /// Show the graft's runtime and cache paths instead of its status.
+    #[arg(long)]
+    pub env: bool,
 }
 
 #[derive(Debug, Args, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Owned {
+    /// Name of the graft.
     pub name: String,
-    /// Lease returned by spawn.
+    /// Lease returned when the graft was created.
     #[arg(long, env = "GIT_GRAFT_LEASE", hide_env_values = true)]
     pub lease: String,
 }
@@ -117,6 +130,7 @@ pub struct Owned {
 #[derive(Debug, Args, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Exec {
+    /// Name of the graft.
     pub name: String,
     #[arg(long, env = "GIT_GRAFT_LEASE", hide_env_values = true)]
     pub lease: String,
@@ -129,7 +143,7 @@ pub struct Exec {
 }
 
 /// Register a package manager's cache and optional reusable install.
-#[derive(Debug, Args, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Args, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RegisterManager {
     /// Portable manager ID; used to select this registration for execution.
@@ -151,15 +165,15 @@ pub struct RegisterManager {
     /// Compatibility key covering ABI, toolchain and other install settings.
     #[arg(long)]
     pub key: Option<String>,
-    /// Source workspace name for the install; omit to use the primary checkout. Requires lease.
-    #[arg(long)]
+    /// Source graft for the install; omit to use the primary checkout. Requires --lease.
+    #[arg(long = "graft", value_name = "NAME")]
     pub workspace: Option<String>,
-    /// Lease for the explicitly selected source workspace; requires workspace.
+    /// Lease for the source graft. Requires --graft.
     #[arg(long)]
     pub lease: Option<String>,
 }
 
-#[derive(Debug, Args, Deserialize, Serialize, JsonSchema)]
+#[derive(Debug, Args, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ManagerName {
     /// Registered manager ID.
@@ -213,10 +227,11 @@ mod manager_tests {
 #[derive(Debug, Args, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AddDep {
+    /// Name of the graft.
     pub name: String,
     #[arg(long, env = "GIT_GRAFT_LEASE", hide_env_values = true)]
     pub lease: String,
-    /// npm, pnpm, bun, cargo or uv.
+    /// Package manager: npm, pnpm, bun, cargo or uv.
     #[arg(long)]
     pub manager: String,
     /// Ask the package manager to use only locally cached packages.
@@ -224,47 +239,46 @@ pub struct AddDep {
     #[serde(default)]
     pub offline: bool,
     #[serde(default)]
+    /// Packages to add. Leave empty for a locked install from the lockfile.
     pub packages: Vec<String>,
 }
 
-#[derive(Debug, Args, Deserialize, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
+/// Which graft's installed dependencies to save, restore or remove.
+#[derive(Debug, Args)]
 pub struct Layer {
+    /// Name of the graft.
     pub name: String,
     #[arg(long, env = "GIT_GRAFT_LEASE", hide_env_values = true)]
     pub lease: String,
-    /// save, restore or forget.
-    pub action: String,
     /// Compatibility key for toolchain, install flags and environment.
     #[arg(long)]
     pub key: String,
-    /// Explicitly use independent byte copies. The default requires copy-on-write.
+    /// Use independent byte copies. The default requires copy-on-write.
     #[arg(long)]
-    #[serde(default)]
     pub copy: bool,
 }
 
-#[derive(Debug, Args, Deserialize, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Args)]
 pub struct SeedLayer {
-    /// Attest that this relocatable install matches the lock, toolchain, flags and environment named by the key and contains no private data.
+    /// Attest that this relocatable install matches the lock, toolchain, flags and environment named by the key, is
+    /// independent of other source files, contains no private data and keeps its installation inputs valid.
     #[arg(long)]
     pub key: String,
-    /// Register this install for compatible future spawns. Attest that it is
-    /// independent of other source files and the named installation inputs stay valid.
+    /// Take a one-off manual snapshot of the install instead of sharing it with future grafts.
+    /// Restore it into a graft with `deps layer restore`.
     #[arg(long)]
-    #[serde(default)]
-    pub shared: bool,
-    /// Explicitly use independent byte copies for a manual snapshot.
+    pub snapshot: bool,
+    /// Use independent byte copies. Only for --snapshot; sharing requires copy-on-write.
     #[arg(long)]
-    #[serde(default)]
     pub copy: bool,
 }
 
 #[derive(Debug, Args, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Land {
+    /// Name of the graft.
     pub name: String,
+    /// The graft's lease, or with undo its recovery lease.
     #[arg(long, env = "GIT_GRAFT_LEASE", hide_env_values = true)]
     pub lease: String,
     /// Local destination branch.
@@ -275,10 +289,10 @@ pub struct Land {
     #[arg(long)]
     #[serde(default)]
     pub squash: bool,
-    /// Stage all nonignored changes and commit them on the workspace branch first.
+    /// Stage all nonignored changes and commit them on the graft's branch first.
     #[arg(long, value_name = "MESSAGE")]
     pub commit: Option<String>,
-    /// Allow retirement with ignored files. Use the recovery lease to reopen them.
+    /// Archive the graft even if it has ignored files. Use the recovery lease to reopen them.
     #[arg(long)]
     #[serde(default)]
     pub discard_ignored: bool,
@@ -286,30 +300,56 @@ pub struct Land {
     #[arg(long)]
     #[serde(default)]
     pub reconcile: bool,
+    /// Reverse an earlier merge instead: append a commit that undoes it if the branch is still at the merged commit.
+    #[arg(
+        long,
+        conflicts_with_all = ["into", "squash", "commit", "discard_ignored", "reconcile"]
+    )]
+    #[serde(default)]
+    pub undo: bool,
 }
 
+impl Land {
+    /// Reject merge-only options combined with `undo`. The CLI enforces this
+    /// through clap; JSON callers also need to say whether `into` was given,
+    /// because it has a default.
+    pub(crate) fn check_undo(&self, explicit_into: bool) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            !self.undo
+                || !(explicit_into
+                    || self.squash
+                    || self.commit.is_some()
+                    || self.discard_ignored
+                    || self.reconcile),
+            "undo cannot be combined with into, squash, commit, discard_ignored or reconcile"
+        );
+        Ok(())
+    }
+}
+
+/// Arguments of `remove` and the MCP `graft_remove` tool: archive one graft.
 #[derive(Debug, Args, Deserialize, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DropWorkspace {
+    /// Name of the graft.
     pub name: String,
+    /// The graft's lease, returned when it was added.
     #[arg(long, env = "GIT_GRAFT_LEASE", hide_env_values = true)]
     pub lease: String,
-    /// Allow retirement with local work and unlanded commits. Keep the recovery lease.
+    /// Archive even with local work or unmerged commits. Keep the recovery lease.
     #[arg(long)]
     #[serde(default)]
     pub discard: bool,
 }
 
-#[derive(Debug, Args, Deserialize, Serialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
+/// Arguments of `prune`: preview or archive every expired graft.
+#[derive(Debug, Args)]
 pub struct Gc {
-    /// Apply the eligible archival and cache cleanup. The default is a preview.
+    /// Archive the expired grafts and clean caches. The default is a preview.
     #[arg(long)]
-    #[serde(default)]
     pub apply: bool,
-    /// Also reclaim package caches and installed layers when all workspaces are retired.
+    /// Also reclaim package caches and installed layers when all grafts are archived.
     #[arg(long)]
-    #[serde(default)]
     pub purge_cache: bool,
 }
 

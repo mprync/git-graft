@@ -357,11 +357,11 @@ pub fn seed_shared(checkout: &Path, state: &Path, key: &str) -> Result<Value> {
         let provenance = verify_layer_contents(&layer, &digest)?;
         ensure!(
             provenance["version"] == 2,
-            "an explicit layer already exists; forget it before registering a shared layer with this key"
+            "an explicit layer already exists; remove it before registering a shared layer with this key"
         );
         ensure!(
             source_contents(&checkout)? == provenance["contents"],
-            "installed tree differs from the saved layer; forget it before replacing it"
+            "installed tree differs from the saved layer; remove it before replacing it"
         );
         Transfer::default().receipt("save", &digest, "copy-on-write")
     } else {

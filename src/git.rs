@@ -219,7 +219,7 @@ pub fn text(dir: &Path, args: &[&str]) -> Result<String> {
 }
 pub fn path_str(path: &Path) -> Result<&str> {
     path.to_str()
-        .context("repository and workspace roots must be UTF-8")
+        .context("repository and graft roots must be UTF-8")
 }
 pub fn checked_oid(oid: &str) -> Result<&str> {
     ensure!(
@@ -481,7 +481,7 @@ pub(crate) fn check_idle_with_locks(dir: &Path, index: bool, head: bool) -> Resu
         let (header, path) = (&row[..tab], &row[tab + 1..]);
         ensure!(
             header.ends_with(b" 0"),
-            "Resolve the workspace index conflicts first"
+            "Resolve the graft's index conflicts first"
         );
         let skips_present_file = if header[0] == b'S' {
             #[cfg(unix)]

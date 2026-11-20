@@ -234,7 +234,7 @@ fn pnpm(runtime: &Runtime, root: &Path) -> Result<()> {
     ensure!(
         pnpm_setting(&config, "symlinkedlockfiletargetdirs")
             .is_none_or(|value| value.as_array().is_some_and(Vec::is_empty)),
-        "pnpm symlinkedLockfileTargetDirs can redirect lockfiles. Remove that setting before using add-dep"
+        "pnpm symlinkedLockfileTargetDirs can redirect lockfiles. Remove that setting before using deps add"
     );
     if let Some(settings) = pnpm_setting(&config, "packageconfigs") {
         validate_pnpm_package_configs(settings)?;
@@ -342,7 +342,7 @@ fn validate_pnpm_package_configs(value: &Value) -> Result<()> {
                         | "globalvirtualstoredir"
                         | "bin"
                 ),
-                "pnpm packageConfigs contains {key}. Move path settings to the workspace configuration so add-dep can verify them"
+                "pnpm packageConfigs contains {key}. Move path settings to the workspace configuration so deps add can verify them"
             );
             validate_pnpm_package_configs(setting)?;
         }
@@ -601,7 +601,7 @@ fn node_modules(path: &Path) -> Result<()> {
 fn required_manifest(path: PathBuf) -> Result<()> {
     ensure!(
         endpoint(&path, false)?,
-        "create {} in the managed workspace before using add-dep",
+        "create {} in the graft before using deps add",
         path.display()
     );
     Ok(())

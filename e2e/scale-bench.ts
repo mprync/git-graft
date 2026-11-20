@@ -4,7 +4,7 @@
  *
  * Makes a disposable local clone of the repository, warms its index with `git status`
  * as after `git clone`, then creates the same number of checkouts two ways: with
- * `git worktree add` and with `git graft spawn`. Disk is the increase in physical APFS
+ * `git worktree add` and with `git graft add`. Disk is the increase in physical APFS
  * file data under the fixture once every checkout exists, measured by
  * e2e/apfs-file-data.py. The source repository is only read. Needs macOS on APFS. */
 import assert from 'node:assert/strict';
@@ -54,7 +54,7 @@ function arm(name: 'worktree' | 'graft') {
     const start = performance.now();
     for (let index = 1; index <= count; index++) {
       if (name === 'worktree') run('git', ['worktree', 'add', '-q', '--detach', join(root, `task-${index}`)], repo);
-      else run(bin, ['--repo', repo, '--json', 'spawn', `task-${index}`, '--detach'], repo);
+      else run(bin, ['--repo', repo, '--json', 'add', `task-${index}`, '--detach'], repo);
     }
     const seconds = (performance.now() - start) / 1000;
     const bytes = Number(fileData(root) - before);

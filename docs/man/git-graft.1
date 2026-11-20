@@ -4,7 +4,7 @@
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SH NAME
-git\-graft \- Copy\-on\-write Git workspaces for people and coding agents
+git\-graft \- Run many coding agents on one repository without filling your disk. A faster, lighter replacement for git worktree.
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SH SYNOPSIS
@@ -12,13 +12,13 @@ git\-graft \- Copy\-on\-write Git workspaces for people and coding agents
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SH DESCRIPTION
-Copy\-on\-write Git workspaces for people and coding agents
+Run many coding agents on one repository without filling your disk. A faster, lighter replacement for git worktree.
 .ie \n(.g .ds Aq \(aq
 .el .ds Aq '
 .SH OPTIONS
 .TP
 \fB\-\-repo\fR \fI<REPO>\fR [default: .]
-Git checkout or subdirectory to manage
+Repository checkout (or a subdirectory of it) whose grafts to manage
 .TP
 \fB\-\-json\fR
 Print compact JSON (the default is indented JSON)
@@ -31,73 +31,49 @@ Print version
 .SH COMMANDS
 .TP
 \fBmcp\fR
-Serve the local repository over MCP on stdin/stdout
+Serve grafts to agents over MCP on stdin/stdout
 .TP
-\fBspawn\fR
-Create an independent repository from a local commit
+\fBadd\fR
+Create a graft: a lightweight, independent copy of the repository
 .TP
 \fBlist\fR
-Show active and recoverable independent repositories
+List active and recoverable grafts
 .TP
 \fBstatus\fR
-Inspect the workspace, including its current HEAD and files
+Show a graft's HEAD and changed files, or its environment with \-\-env
 .TP
 \fBdoctor\fR
-Check local Git and source\-sharing capabilities
-.TP
-\fBheartbeat\fR
-Renew the workspace lease
-.TP
-\fBenv\fR
-Show this workspace's runtime and cache paths
+Check Git support and whether grafts can share files
 .TP
 \fBexec\fR
-Execute a program in the workspace
+Run a program inside a graft
 .TP
-\fBregister\-manager\fR
-Register a package manager for cache and dependency reuse
+\fBdeps\fR
+Install and reuse dependencies
 .TP
-\fBlist\-managers\fR
-List registered package managers
+\fBmerge\fR
+Merge a graft's commits into a local branch, then archive the graft
 .TP
-\fBunregister\-manager\fR
-Remove a registered package manager
+\fBremove\fR
+Archive a graft and its files. Refuses if it has unmerged work unless \-\-discard is given
 .TP
-\fBadd\-dep\fR
-Add dependencies or perform a locked install
-.TP
-\fBseed\-layer\fR
-Seed installed dependencies from the primary checkout
-.TP
-\fBlayer\fR
-Save, restore or forget an installed dependency layer
-.TP
-\fBland\fR
-Transfer committed work to a local branch and archive the repository
-.TP
-\fBdrop\fR
-Archive the complete independent repository and its files
+\fBprune\fR
+Archive every expired graft. Previews unless \-\-apply is given
 .TP
 \fBrestore\fR
-Reopen an archived repository
-.TP
-\fBundo\-land\fR
-Append a reversal commit to the exact landed destination
+Reopen an archived graft
 .TP
 \fBlock\fR
-Protect against moves, retirement and cleanup
+Protect a graft from moves, pruning and cleanup
 .TP
 \fBunlock\fR
-Release an explicit workspace lock
+Release a graft's lock
 .TP
 \fBmove\fR
-Move a workspace to an available path on its volume
+Move a graft to another path on the same volume
 .TP
 \fBrepair\fR
-Reconnect a workspace that was moved using the filesystem
-.TP
-\fBgc\fR
-Preview or archive eligible expired workspaces
+Reconnect a graft that was moved outside git graft
 .PP
 Run \fBgit graft\fR \fICOMMAND\fR \fB\-\-help\fR for a command's options.
 .SH SEE ALSO

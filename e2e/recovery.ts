@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import { objectResult, parseExact, type Context, type Scenario } from './harness.ts';
 
 function drop(ctx: Context, name: string, lease: string) {
-  return ctx.cli(['drop', name, '--lease', lease, '--discard']);
+  return ctx.cli(['remove', name, '--lease', lease, '--discard']);
 }
 
 function restore(name: string, lease: string) {
@@ -35,7 +35,7 @@ function history(ctx: Context, path: string, text: string) {
 
 export const cases: Scenario[] = [
   {
-    name: 'destructive drop restores the exact index and local files after Git GC',
+    name: 'destructive prune restores the exact index and local files after Git GC',
     run(ctx) {
       const name = 'dirty';
       const ws = ctx.spawn(name);
@@ -50,7 +50,7 @@ export const cases: Scenario[] = [
       const tip = history(ctx, ws.path, 'unmerged commit');
       ctx.git(['tag', 'private-tag', tip], ws.path);
       ctx.git(['branch', 'private-branch', tip], ws.path);
-      const env = ctx.cli(['env', name]);
+      const env = ctx.cli(['status', name, '--env']);
       assert.equal(env.path, ws.path);
       assert(typeof env.runtime_dir === 'string');
       const runtime = join(env.runtime_dir, 'private.txt');
@@ -78,8 +78,8 @@ export const cases: Scenario[] = [
       ctx.git(['-c', 'gc.reflogExpire=now', '-c', 'gc.reflogExpireUnreachable=now', 'gc', '--prune=now']);
       ctx.git(['fsck', '--full']);
       assert.notEqual(ctx.command('git', ['cat-file', '-e', `${tip}^{commit}`]).status, 0);
-      ctx.cli(['gc', '--apply']);
-      ctx.fail(['spawn', name, '--request-id', ws.lease]);
+      ctx.cli(['prune', '--apply']);
+      ctx.fail(['add', name, '--request-id', ws.lease]);
 
       const response = ctx.cli(restore(name, ws.lease));
       assert.equal(response.path, ws.path);
@@ -101,7 +101,7 @@ export const cases: Scenario[] = [
       assert.equal(readFileSync(tracked, 'utf8'), 'unstaged bytes');
       assert.equal(readFileSync(join(ws.path, 'untracked.txt'), 'utf8'), 'untracked bytes');
       assert.equal(readFileSync(join(ws.path, 'ignored', 'secret.txt'), 'utf8'), 'ignored bytes');
-      assert.equal(ctx.cli(['env', name]).runtime_dir, env.runtime_dir);
+      assert.equal(ctx.cli(['status', name, '--env']).runtime_dir, env.runtime_dir);
       assert.equal(readFileSync(runtime, 'utf8'), 'private runtime');
       assert.ok(existsSync(join(ws.path, 'empty')));
       assert.deepEqual(ctx.cli(restore(name, ws.lease)), response);
@@ -128,7 +128,7 @@ export const cases: Scenario[] = [
     },
   },
   {
-    name: 'drop and restore replay after interrupted filesystem transitions',
+    name: 'prune and restore replay after interrupted filesystem transitions',
     run(ctx) {
       const seed = ctx.spawn('archive-root');
       drop(ctx, 'archive-root', seed.lease);
@@ -138,7 +138,7 @@ export const cases: Scenario[] = [
       const archive = join(dirname(archivePath(ctx, seed.result.id)), String(id));
       writeFileSync(join(ws.path, 'local.txt'), 'preserve');
       const active = objectResult(parseExact(readFileSync(path, 'utf8')));
-      const command = ['drop', 'retry', '--lease', ws.lease, '--discard'];
+      const command = ['remove', 'retry', '--lease', ws.lease, '--discard'];
       writeFileSync(path, JSON.stringify({
         ...active, archive, transition: { action: 'retire', status: 'dropped' },
       }));
@@ -187,7 +187,7 @@ export const cases: Scenario[] = [
       const tip = history(ctx, ws.path, 'landed work');
       mkdirSync(join(ws.path, 'ignored'));
       writeFileSync(join(ws.path, 'ignored', 'local.txt'), 'ignored work');
-      const args = ['land', name, '--lease', ws.lease];
+      const args = ['merge', name, '--lease', ws.lease];
       assert.match(String(ctx.fail(args).message), /ignored files/i);
       assert.equal(ctx.git(['rev-parse', 'main']), ctx.git(['rev-parse', tip + '^'], ws.path));
       const landed = ctx.cli([...args, '--discard-ignored']);

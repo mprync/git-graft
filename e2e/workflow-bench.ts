@@ -83,14 +83,15 @@ function run(arm: 'graft' | 'native', payload: Buffer[], archive: {path:string; 
     let shared = mode === 'shared' && !useCopy;
     const layerWithFallback = (argv: string[], allowSharedFallback = false) => {
       const invoke = (args: string[]) => ctx.command('git',['graft','--repo',ctx.repo,'--json',...args],ctx.repo);
-      const attempt = invoke([...argv,...(useCopy ? ['--copy'] : [])]);
+      const withCopy = (args: string[]) => args[1] === 'share' ? [...args.filter(arg => arg !== '--snapshot'),'--snapshot','--copy'] : [...args,'--copy'];
+      const attempt = invoke(useCopy ? withCopy(argv) : argv);
       assert.ifError(attempt.error);
       if (attempt.status === 0) return objectResult(JSON.parse(attempt.stdout));
       const refusal = objectResult(JSON.parse(attempt.stderr || attempt.stdout));
       assert.equal(refusal.code,'cow_unavailable',attempt.stderr);
       useCopy = true;
       if (allowSharedFallback) shared = false;
-      const fallback = invoke([...argv.filter(arg => arg !== '--shared'),'--copy']);
+      const fallback = invoke(withCopy(argv));
       assert.equal(fallback.status,0,fallback.error?.message ?? fallback.stderr);
       return objectResult(JSON.parse(fallback.stdout));
     };
@@ -162,7 +163,7 @@ function run(arm: 'graft' | 'native', payload: Buffer[], archive: {path:string; 
       // after the first checkout has initialized the appropriate runtime.
     });
     stage('seed', () => {
-      if (arm === 'graft' && mode !== 'cold') receipts.push(timed('git graft seed-layer', () => layerWithFallback(['seed-layer','--key',key,...(shared ? ['--shared'] : [])],true)));
+      if (arm === 'graft' && mode !== 'cold') receipts.push(timed('git graft deps share', () => layerWithFallback(['deps','share','--key',key,...(shared ? [] : ['--snapshot'])],true)));
       // Dirty local data is present before either workspace is created.
       write(ctx.repo,'tracked.txt','private tracked edit\n');
       write(ctx.repo,'local.txt','private untracked\n');
@@ -174,7 +175,7 @@ function run(arm: 'graft' | 'native', payload: Buffer[], archive: {path:string; 
       const readyStart = performance.now();
       let path: string;
       if (arm === 'graft') {
-        const result = timed('git graft spawn', () => graft(['spawn',name,'--history','local']));
+        const result = timed('git graft add', () => graft(['add',name,'--history','local']));
         assert(typeof result.path === 'string' && typeof result.lease === 'string');
         path = result.path; leases.push(result.lease); receipts.push(result.storage);
         if (mode === 'cold' && i === 0) {
@@ -182,15 +183,15 @@ function run(arm: 'graft' | 'native', payload: Buffer[], archive: {path:string; 
             '--',npmExe,...npmPrefix,'cache','add',archive.path,'--offline']));
           assert.equal(primed.success,true);
           receipts.push(primed);
-          receipts.push(timed('git graft add-dep', () => graft(['add-dep',name,'--lease',result.lease as string,'--manager','npm','--offline'])));
-          receipts.push(timed('git graft layer save', () => layerWithFallback(['layer',name,'--lease',result.lease as string,'save','--key',key])));
+          receipts.push(timed('git graft deps add', () => graft(['deps','add',name,'--lease',result.lease as string,'--manager','npm','--offline'])));
+          receipts.push(timed('git graft deps layer save', () => layerWithFallback(['deps','layer','save',name,'--lease',result.lease as string,'--key',key])));
         } else if (shared) {
           const dependency = objectResult(objectResult(result.storage).dependencies);
           assert.equal(dependency.status,'attached');
           assert.equal(dependency.action,'restore');
           assert.equal(dependency.copied_bytes,0);
           receipts.push(dependency);
-        } else receipts.push(timed('git graft layer restore', () => layerWithFallback(['layer',name,'--lease',result.lease as string,'restore','--key',key])));
+        } else receipts.push(timed('git graft deps layer restore', () => layerWithFallback(['deps','layer','restore',name,'--lease',result.lease as string,'--key',key])));
       } else {
         path = join(ctx.root,name);
         timed('git worktree add', () => git(['worktree','add','-b',name,path,'main']));
@@ -210,7 +211,7 @@ function run(arm: 'graft' | 'native', payload: Buffer[], archive: {path:string; 
       const tarball = join(ctx.root,'graft-bench-extra-1.0.0.tgz');
       stage('add-package', () => {
         const result = arm === 'graft'
-          ? timed('git graft add-dep package', () => graft(['add-dep','agent-0','--lease',leases[0],'--manager','npm','--offline',tarball]))
+          ? timed('git graft deps add package', () => graft(['deps','add','agent-0','--lease',leases[0],'--manager','npm','--offline',tarball]))
           : (timed('npm install package --offline', () => npm(['install','--offline','--cache',cache,tarball],paths[0])), undefined);
         if (result) { assert.equal(result.success,true); receipts.push(result); }
         assert.equal(readFileSync(join(paths[0],'node_modules/graft-bench-extra/index.js'),'utf8'),'module.exports = 7;\n');
@@ -252,8 +253,8 @@ function run(arm: 'graft' | 'native', payload: Buffer[], archive: {path:string; 
     });
     stage('land-drop', () => {
       if (arm === 'graft') {
-        receipts.push(timed('git graft land', () => graft(['land','agent-0','--lease',leases[0],'--into','integration','--commit','agent change','--discard-ignored'])));
-        receipts.push(timed('git graft drop', () => graft(['drop','agent-1','--lease',leases[1],'--discard'])));
+        receipts.push(timed('git graft merge', () => graft(['merge','agent-0','--lease',leases[0],'--into','integration','--commit','agent change','--discard-ignored'])));
+        receipts.push(timed('git graft remove', () => graft(['remove','agent-1','--lease',leases[1],'--discard'])));
       } else {
         timed('git add', () => git(['add','source.txt'],paths[0]));
         timed('git commit', () => git(['commit','-qm','agent change'],paths[0]));
@@ -275,7 +276,7 @@ function run(arm: 'graft' | 'native', payload: Buffer[], archive: {path:string; 
       assert(paths.every(p => !existsSync(p)));
     });
     stage('cleanup', () => {
-      if (arm === 'graft') receipts.push(timed('git graft gc --purge-cache --apply', () => graft(['gc','--purge-cache','--apply'])));
+      if (arm === 'graft') receipts.push(timed('git graft prune --purge-cache --apply', () => graft(['prune','--purge-cache','--apply'])));
       assert.equal(readFileSync(join(ctx.repo,'tracked.txt'),'utf8'),'private tracked edit\n');
       assert.equal(readFileSync(join(ctx.repo,'local.txt'),'utf8'),'private untracked\n');
       assert.equal(readFileSync(join(ctx.repo,'ignored/private.txt'),'utf8'),'private ignored\n');
@@ -321,7 +322,7 @@ try {
     },
     ...(['first','additional'].includes(name) ? {
       readinessSeconds:{graft:median(pairs.map(p=>p.graft.stages[name].readySeconds!)),native:median(pairs.map(p=>p.native.stages[name].readySeconds!))},
-      spawnSeconds:{graft:median(pairs.map(p=>p.graft.stages[name].commands.find(c=>c.name==='git graft spawn')!.seconds)),native:median(pairs.map(p=>p.native.stages[name].commands.find(c=>c.name==='git worktree add')!.seconds))},
+      spawnSeconds:{graft:median(pairs.map(p=>p.graft.stages[name].commands.find(c=>c.name==='git graft add')!.seconds)),native:median(pairs.map(p=>p.native.stages[name].commands.find(c=>c.name==='git worktree add')!.seconds))},
     } : {}),
   }]));
   const footprints = Object.fromEntries(Object.entries({firstActive:'first',additionalActive:'additional',afterEditBuild:'edit-build-test',afterRetirement:'land-drop',afterCleanup:'cleanup'}).map(([label,stage]) => [label,{

@@ -165,7 +165,7 @@ fn shallow_workspace_lands_undoes_and_restores_native_commits() -> Result<()> {
         let boundary = fs::read_to_string(f.primary.join(".git/shallow"))?;
         let primary_log = f.git(&f.primary, &["log", "--format=%H %s"])?;
         assert_eq!(primary_log.lines().count(), depth);
-        let spawn = f.graft(&["spawn", "native", "--base", "main", "--no-deps"])?;
+        let spawn = f.graft(&["add", "native", "--base", "main", "--no-deps"])?;
         let workspace = Path::new(field(&spawn, "path")?);
         assert_eq!(f.git(workspace, &["log", "--format=%H %s"])?, primary_log);
         assert_eq!(
@@ -174,7 +174,7 @@ fn shallow_workspace_lands_undoes_and_restores_native_commits() -> Result<()> {
         );
         f.assert_standalone(workspace, Some(boundary.trim()))?;
         let tip = f.commit(workspace, "native.txt", "native private change")?;
-        let land = f.graft(&["land", "native", "--lease", field(&spawn, "lease")?])?;
+        let land = f.graft(&["merge", "native", "--lease", field(&spawn, "lease")?])?;
         assert_eq!(field(&land, "commit")?, tip);
         assert_eq!(f.git(&f.primary, &["rev-parse", "HEAD"])?, tip);
         assert_eq!(
@@ -190,7 +190,7 @@ fn shallow_workspace_lands_undoes_and_restores_native_commits() -> Result<()> {
         }
         f.git(&f.primary, &["fsck", "--full", "--strict"])?;
         let lease = field(&land, "recovery_lease")?;
-        f.graft(&["undo-land", "native", "--lease", lease])?;
+        f.graft(&["merge", "native", "--undo", "--lease", lease])?;
         assert_eq!(
             f.git(&f.primary, &["rev-parse", "HEAD^{tree}"])?,
             f.git(
@@ -228,7 +228,7 @@ fn shallow_object_cache_tracks_deepen_and_excludes_disconnected_objects() -> Res
         let primary_boundary = fs::read_to_string(f.primary.join(".git/shallow"))?;
         assert!(primary_boundary.lines().any(|line| line == island));
         assert!(primary_boundary.lines().any(|line| line == base));
-        let first = f.graft(&["spawn", "initial", "--no-deps"])?;
+        let first = f.graft(&["add", "initial", "--no-deps"])?;
         let root = Path::new(field(&first, "path")?);
         f.assert_standalone(root, Some(&base))?;
         for oid in [&island, &island_blob] {
@@ -238,7 +238,7 @@ fn shallow_object_cache_tracks_deepen_and_excludes_disconnected_objects() -> Res
                     .success()
             );
         }
-        let repeat = f.graft(&["spawn", "original-again", "--no-deps"])?;
+        let repeat = f.graft(&["add", "original-again", "--no-deps"])?;
         if first["storage"]["objects"]["cache_bytes"]
             .as_u64()
             .unwrap_or_default()
@@ -248,7 +248,7 @@ fn shallow_object_cache_tracks_deepen_and_excludes_disconnected_objects() -> Res
         }
 
         f.git(&f.primary, &["fetch", "--deepen=2", "origin", "main"])?;
-        let deeper = f.graft(&["spawn", "deeper", "--no-deps"])?;
+        let deeper = f.graft(&["add", "deeper", "--no-deps"])?;
         assert_eq!(field(&deeper, "base")?, base);
         assert_ne!(deeper["storage"]["objects"]["source"], "cache");
         let deeper = Path::new(field(&deeper, "path")?);
@@ -259,7 +259,7 @@ fn shallow_object_cache_tracks_deepen_and_excludes_disconnected_objects() -> Res
         assert_eq!(f.git(root, &["rev-list", "HEAD"])?, base);
 
         f.git(&f.primary, &["fetch", "--unshallow", "origin", "main"])?;
-        let full = f.graft(&["spawn", "complete", "--history", "isolated", "--no-deps"])?;
+        let full = f.graft(&["add", "complete", "--history", "isolated", "--no-deps"])?;
         assert_eq!(field(&full, "base")?, base);
         let full = Path::new(field(&full, "path")?);
         assert_eq!(f.git(full, &["rev-list", "--count", "HEAD"])?, "5");
@@ -290,13 +290,7 @@ fn shallow_merge_keeps_all_reachable_boundaries() -> Result<()> {
             "main:refs/heads/shallow-merge",
         ],
     )?;
-    let spawn = f.graft(&[
-        "spawn",
-        "two-parents",
-        "--base",
-        "shallow-merge",
-        "--no-deps",
-    ])?;
+    let spawn = f.graft(&["add", "two-parents", "--base", "shallow-merge", "--no-deps"])?;
     let workspace = Path::new(field(&spawn, "path")?);
     let expected = f.git(&f.primary, &["rev-list", "--parents", "shallow-merge"])?;
     assert_eq!(expected.lines().count(), 3);
@@ -313,7 +307,7 @@ fn shallow_merge_keeps_all_reachable_boundaries() -> Result<()> {
 #[test]
 fn shallow_land_requires_destination_owned_ancestry_before_publication() -> Result<()> {
     let f = Fixture::new("sha1", 2)?;
-    let spawn = f.graft(&["spawn", "ancestry", "--no-deps"])?;
+    let spawn = f.graft(&["add", "ancestry", "--no-deps"])?;
     let workspace = Path::new(field(&spawn, "path")?);
     let base = f.git(&f.primary, &["rev-parse", "HEAD"])?;
     f.git(&f.primary, &["fetch", "--unshallow", "origin"])?;
@@ -347,7 +341,7 @@ fn shallow_land_requires_destination_owned_ancestry_before_publication() -> Resu
             .any(|line| line == boundary)
     );
 
-    let land_args = ["land", "ancestry", "--lease", field(&spawn, "lease")?];
+    let land_args = ["merge", "ancestry", "--lease", field(&spawn, "lease")?];
     let objects_before = f.git(
         &f.primary,
         &[
