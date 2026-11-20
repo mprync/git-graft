@@ -176,4 +176,4 @@ The release workflow attests every asset, including `SHA256SUMS` and the install
 | Arch, AUR | `sudo pacman -R git-graft` or `sudo pacman -R git-graft-bin` |
 | Cargo | `cargo uninstall git-graft` |
 
-Uninstalling removes only the binary. Grafts and caches that git-graft created stay in place. To remove them first, prune your grafts and run `git graft prune --expired --purge-cache --apply` (see [operations](operations.md)).
+Uninstalling removes only the binary. Grafts and caches that git-graft created stay in place. To remove them first, remove your grafts and run `git graft prune --purge-cache --apply` (see [operations](operations.md)).

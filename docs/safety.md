@@ -4,9 +4,9 @@
 
 The selected commit determines the initial source tree. Local edits, untracked files and ignored files in the original checkout stay there. Eligible files can be verified and shared using copy-on-write, with independently writable file identities. Other files come from Git. Tracked symbolic links retain normal Git semantics and may point outside the graft.
 
-A reused file must be proven to hold the selected commit's bytes before Graft records it: either Git's own index stat test vouches for an unchanged primary file whose size matches its blob, or Graft hashes the bytes. Files with flags or user extended attributes are checked out by Git instead. Graft records each installed file's stat data in the new index so the first `git status` reads no file contents. Git builds that compare timestamps in whole seconds cannot see a same-size edit that restores a file's modification time within the same second; Graft's own clean checks, used before landing or pruning a graft, compare the nanosecond stamps the index records and hash any such file.
+A reused file must be proven to hold the selected commit's bytes before Graft records it: either Git's own index stat test vouches for an unchanged primary file whose size matches its blob, or Graft hashes the bytes. Files with flags or user extended attributes are checked out by Git instead. Graft records each installed file's stat data in the new index so the first `git status` reads no file contents. Git builds that compare timestamps in whole seconds cannot see a same-size edit that restores a file's modification time within the same second; Graft's own clean checks, used before merging or removing a graft, compare the nanosecond stamps the index records and hash any such file.
 
-A graft owns its Git objects, refs, reflogs, stash and index. It does not automatically receive new refs from the original repository. Landing transfers the selected committed work back. Graft declines unsupported histories and checkout configurations rather than silently changing their meaning.
+A graft owns its Git objects, refs, reflogs, stash and index. It does not automatically receive new refs from the original repository. Merging transfers the selected committed work back. Graft declines unsupported histories and checkout configurations rather than silently changing their meaning.
 
 Ordinary CLI and MCP calls that create a graft and omit the history option honor the primary repository's `graft.history` setting. In an unconfigured project, local history is the default. Existing users who need the previous isolated behavior can set `git config --local graft.history isolated` in the primary repository.
 
@@ -16,19 +16,19 @@ When reusing a mixed pack, Graft edits an unlinked copy, has Git index its conte
 
 ## Recover work
 
-`land` and `prune` archive the graft, including its private repository and files. Archives can retain ignored files, credentials and other sensitive user data; protect them as you would the graft. Save the returned recovery lease:
+`merge`, `remove` and `prune` archive the graft, including its private repository and files. Archives can retain ignored files, credentials and other sensitive user data; protect them as you would the graft. Save the returned recovery lease:
 
 | Situation | Action |
 | --- | --- |
-| Reopen a landed or pruned graft | `git graft restore NAME --lease TOKEN`; save the new active lease. |
-| Reverse a landing | `git graft land NAME --undo --lease TOKEN` appends a reversal commit if the destination still points at the landed commit. |
+| Reopen a merged or removed graft | `git graft restore NAME --lease TOKEN`; save the new active lease. |
+| Reverse a merge | `git graft merge NAME --undo --lease TOKEN` appends a reversal commit if the destination still points at the merge commit. |
 | Destination advanced | Review subsequent commits and use an ordinary reviewed reversal. |
-| `checkout_recovery_required` | Retry the same land or undo with the same lease before editing. If it still stops, preserve files and the index and follow [checkout recovery](operations.md#interrupted-checkout-update). |
+| `checkout_recovery_required` | Retry the same merge or undo with the same lease before editing. If it still stops, preserve files and the index and follow [checkout recovery](operations.md#interrupted-checkout-update). |
 | Name or path is occupied | Inspect the collision and preserve the existing data before retrying. |
 
 Archives and recovery records have no automatic expiry and can use disk. Deleting the original repository or Graft's recovery state can prevent recovery. Maintain independent backups for disk failure and accidental deletion.
 
-The first landing prepares its history store privately before publishing it. After an interruption Graft can reclaim first-store scratch whose recorded identity and contents still match. It preserves unrecognized or changed scratch and reports its path on a later landing. Interrupted merge-planning directories can also be left for inspection.
+The first merge prepares its history store privately before publishing it. After an interruption Graft can reclaim first-store scratch whose recorded identity and contents still match. It preserves unrecognized or changed scratch and reports its path on a later merge. Interrupted merge-planning directories can also be left for inspection.
 
 ## Trust and cleanup
 
@@ -38,7 +38,7 @@ Package manager registration stores cache routing and compatibility settings in 
 
 After a power loss, a registered install cache can contain incomplete files. Graft verifies the saved generation before reuse and preserves a damaged one for inspection. The graft can run a fresh package restore. A cache purge interrupted after quarantine also retains its quarantine directory and reports it on the next preview.
 
-Use `git graft prune --expired` to preview cleanup before applying it with `git graft prune --expired --apply`. Close editors and builds that can write into a graft before moving or pruning it. If other native Git checkouts share the primary, finish any checkout creation or branch switch before landing. Git tracks their branch occupancy separately from the destination ref lock.
+Use `git graft prune` to preview cleanup before applying it with `git graft prune --apply`. Close editors and builds that can write into a graft before moving or removing it. If other native Git checkouts share the primary, finish any checkout creation or branch switch before merging. Git tracks their branch occupancy separately from the destination ref lock.
 
 On macOS, Graft rejects extended allow ACL entries on its primary private registry and managed graft root, including entries inherited before publication. It does not change permission entries, and it does not walk ordinary source ACLs outside these gates.
 

@@ -1,8 +1,8 @@
 # Grafts
 
-Each graft is a standalone local Git repository with its own object database, branches, reflogs, stash, index and working files. Use `git graft new NAME --base REV` to create one and use the returned `path` for ordinary Git commands. Refs remain local until work is explicitly transferred; `land` imports the selected committed work into a local destination branch.
+Each graft is a standalone local Git repository with its own object database, branches, reflogs, stash, index and working files. Use `git graft add NAME --base REV` to create one and use the returned `path` for ordinary Git commands. Refs remain local until work is explicitly transferred; `merge` imports the selected committed work into a local destination branch.
 
-`new` also supports a named branch, detached HEAD, an orphan branch, sparse checkout, an empty checkout and an initial lock. `list`, `status`, `lock`, `unlock`, `move`, `repair`, `prune`, `restore` and `land --undo` manage the graft. `add` is an alias for `new`. Consult command help for options.
+`add` also supports a named branch, detached HEAD, an orphan branch, sparse checkout, an empty checkout and an initial lock. `list`, `status`, `lock`, `unlock`, `move`, `repair`, `remove`, `prune`, `restore` and `merge --undo` manage the graft. Consult command help for options.
 
 ### What takes space
 
@@ -24,12 +24,12 @@ On APFS, a directory whose tracked entries are all reusable, and which holds not
 
 Choose isolated history when the graft should receive only objects reachable from its selected commit. Graft reuses whole eligible packs. For a suitable mixed pack it keeps the selected records at their existing offsets, rebuilds the index and asks Git to verify the result. Other layouts use Git’s selective export. Later isolated grafts at the same revision can share the verified base.
 
-With `--history tip`, Graft gives Git a shallow boundary at the selected commit. Only that commit and the trees and blobs for its checkout are readable at creation. Log and blame stop at the base. New commits retain their real parent IDs, so landing reconnects them to the primary’s history. A mixed primary pack can require a separate pack of selected objects. Additional grafts at the same base can share that pack. When the branch advances, Graft can reuse blocks from the first parent’s cached pack and export the remaining objects. Git verifies the resulting pack set against the new tip before Graft publishes it.
+With `--history tip`, Graft gives Git a shallow boundary at the selected commit. Only that commit and the trees and blobs for its checkout are readable at creation. Log and blame stop at the base. New commits retain their real parent IDs, so merging reconnects them to the primary’s history. A mixed primary pack can require a separate pack of selected objects. Additional grafts at the same base can share that pack. When the branch advances, Graft can reuse blocks from the first parent’s cached pack and export the remaining objects. Git verifies the resulting pack set against the new tip before Graft publishes it.
 
-An agent can register a manager’s package cache, an installed directory or both. A cache stores packages per project and can hold multiple versions. A compatible installed directory gives each graft writable files backed by the existing data blocks. Adding a package writes its new data and whatever manifests, lockfiles or existing packages the resolver changes. The `new` receipt reports the source backend and each installation attachment. [Dependency setup](operations.md#register-a-package-manager) · [Measured space per checkout](benchmarks.md#disk-use-per-checkout)
+An agent can register a manager’s package cache, an installed directory or both. A cache stores packages per project and can hold multiple versions. A compatible installed directory gives each graft writable files backed by the existing data blocks. Adding a package writes its new data and whatever manifests, lockfiles or existing packages the resolver changes. The `add` receipt reports the source backend and each installation attachment. [Dependency setup](operations.md#register-a-package-manager) · [Measured space per checkout](benchmarks.md#disk-use-per-checkout)
 
 ### Git compatibility
 
-Shallow repositories retain the selected commit’s locally available history and relevant Git shallow boundaries. Missing history is not fetched. Landing stops before changing the destination when ancestry cannot be resolved. Graft declines replacement refs, legacy Git grafts and repository-local checkout filters. Git configuration and remote tracking in the standalone repository differ from the original checkout.
+Shallow repositories retain the selected commit’s locally available history and relevant Git shallow boundaries. Missing history is not fetched. Merging stops before changing the destination when ancestry cannot be resolved. Graft declines replacement refs, legacy Git grafts and repository-local checkout filters. Git configuration and remote tracking in the standalone repository differ from the original checkout.
 
 [Operations and dependencies](operations.md) · [Safety and recovery](safety.md) · [Verification](verification.md)

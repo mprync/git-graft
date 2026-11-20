@@ -1,6 +1,6 @@
 # Benchmarks
 
-These measurements compare `git graft new` with `git worktree add` the way a developer or agent uses them: create a checkout of a real repository, then run `git status` in it.
+These measurements compare `git graft add` with `git worktree add` the way a developer or agent uses them: create a checkout of a real repository, then run `git status` in it.
 
 ## Checkout speed
 
@@ -59,7 +59,7 @@ npm run bench:source:real -- --repo /path/to/clone --rounds 8
 npm run bench:source:real -- --repo /path/to/clone --apfs-file-data   # physical data, separate run
 ```
 
-Synthetic workflows that include dependency installs, landing and recovery:
+Synthetic workflows that include dependency installs, merging and recovery:
 
 ```sh
 npm run bench:agents
