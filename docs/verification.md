@@ -21,7 +21,7 @@ A separate job builds the locked sources with Rust 1.89, the minimum supported v
 
 ## Latest local results
 
-On macOS arm64 (APFS), the release built from this repository passed all 165 Rust tests and all 149 end-to-end scenarios on both Git 2.46.0 and Git 2.56.0, exercising all 23 CLI operations and 22 MCP tools. Strict Clippy passed for macOS and the Windows GNU cross-target. Native Linux and Windows execution is verified by CI.
+On macOS arm64 (APFS), the release built from this repository passed all 166 Rust tests and all 149 end-to-end scenarios on both Git 2.46.0 and Git 2.56.0, exercising all 23 CLI operations and 22 MCP tools. Strict Clippy passed for macOS and the Linux and Windows GNU cross-targets. Native Linux and Windows execution is verified by CI.
 
 ## Toolchain requirements
 
