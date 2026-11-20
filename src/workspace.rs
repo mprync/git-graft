@@ -537,8 +537,22 @@ fn report_status(p: &Project, name: &str) -> Result<Value> {
 }
 
 pub fn run(repo: &Path, command: Command) -> Result<Value> {
-    let version = git::text(repo, &["--version"])?;
-    crate::trace::mark("git version");
+    // Resolving the project is read-only, so it runs beside the version check;
+    // a version failure is still reported first.
+    let (version, located) = std::thread::scope(|scope| {
+        let version = scope.spawn(|| git::text(repo, &["--version"]));
+        let located = registry::discover(repo).map(|location| {
+            let primary = location
+                .as_ref()
+                .map_or(repo, |where_| where_.project.as_path())
+                .to_path_buf();
+            let paths = Project::paths(&primary);
+            (location, primary, paths)
+        });
+        (joined(version), located)
+    });
+    let version = version?;
+    crate::trace::mark("git version and project paths");
     let supported = git::supported_version(&version);
     if !supported && !matches!(command, Command::Doctor) {
         return Err(api::fault(
@@ -550,22 +564,14 @@ pub fn run(repo: &Path, command: Command) -> Result<Value> {
             Value::Null,
         ));
     }
-    let location = registry::discover(repo)?;
-    crate::trace::mark("discover");
-    let primary = location
-        .as_ref()
-        .map_or(repo, |where_| where_.project.as_path());
+    let (location, _, paths) = located?;
     if matches!(command, Command::ListManagers) {
-        return match Project::open_existing(primary)? {
+        return match Project::open_existing_at(paths?)? {
             Some((project, _lock)) => crate::package_manager::list(&project),
             None => Ok(json!({"managers": []})),
         };
     }
-    let (p, lock) = if matches!(&command, Command::Spawn(_)) {
-        Project::open_for_spawn(primary)?
-    } else {
-        Project::open(primary)?
-    };
+    let (p, lock) = Project::open_at(paths?, !matches!(&command, Command::Spawn(_)))?;
     let p = &p;
     crate::trace::mark("open project");
     match &command {

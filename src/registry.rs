@@ -610,6 +610,10 @@ fn discover_primary(invocation: &Path) -> Result<(PathBuf, PathBuf)> {
     Ok((repo, common))
 }
 
+/// The primary checkout, its Git common directory, the Graft state directory
+/// and the workspace root, as resolved by [`Project::paths`].
+pub(crate) type Paths = (PathBuf, PathBuf, PathBuf, PathBuf);
+
 pub struct Project {
     pub repo: PathBuf,
     pub common: PathBuf,
@@ -619,7 +623,9 @@ pub struct Project {
 }
 
 impl Project {
-    fn paths(repo: &Path) -> Result<(PathBuf, PathBuf, PathBuf, PathBuf)> {
+    /// Resolve the primary checkout, its Git common directory, the Graft
+    /// state directory and the workspace root. Runs one read-only Git query.
+    pub(crate) fn paths(repo: &Path) -> Result<Paths> {
         let invocation = dunce::canonicalize(repo)?;
         let (repo, common) = discover_primary(&invocation)?;
         let name = repo
@@ -633,10 +639,16 @@ impl Project {
         Ok((repo, common, state, root))
     }
 
-    /// Open an existing owned project without creating state, locks or caches.
-    /// A present but incomplete state directory is ambiguous and is left alone.
+    #[cfg(test)]
     pub(crate) fn open_existing(repo: &Path) -> Result<Option<(Self, File)>> {
-        let (repo, common, state, root) = Self::paths(repo)?;
+        Self::open_existing_at(Self::paths(repo)?)
+    }
+
+    /// Open an existing owned project at paths resolved by [`Self::paths`],
+    /// without creating state, locks or caches. A present but incomplete
+    /// state directory is ambiguous and is left alone.
+    pub(crate) fn open_existing_at(paths: Paths) -> Result<Option<(Self, File)>> {
+        let (repo, common, state, root) = paths;
         if !exists(&state)? {
             return Ok(None);
         }
@@ -673,17 +685,15 @@ impl Project {
 
     /// The returned file holds the project lock. Long-running child commands
     /// release it after taking their workspace lock.
+    #[cfg(test)]
     pub fn open(repo: &Path) -> Result<(Self, File)> {
-        Self::open_registry(repo, true)
+        Self::open_at(Self::paths(repo)?, true)
     }
 
-    /// Spawning can attach an existing installation. It never seeds one.
-    pub(crate) fn open_for_spawn(repo: &Path) -> Result<(Self, File)> {
-        Self::open_registry(repo, false)
-    }
-
-    fn open_registry(repo: &Path, create_dependency_caches: bool) -> Result<(Self, File)> {
-        let (repo, common, state, root) = Self::paths(repo)?;
+    /// Open the registry at resolved `paths`. Spawning passes `false`: it can
+    /// attach an existing dependency installation but never seeds one.
+    pub(crate) fn open_at(paths: Paths, create_dependency_caches: bool) -> Result<(Self, File)> {
+        let (repo, common, state, root) = paths;
         dir(&state)?;
         #[cfg(unix)]
         require_private_mode(&state, &owned_directory(&state)?)?;
