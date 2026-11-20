@@ -315,7 +315,8 @@ export const cases: Scenario[] = [
       const first = ctx.spawn('cache-prime');
       const bases = join(ctx.repo, '.git', 'graft', 'bases');
       const foreign = join(bases, '0'.repeat(oid.length));
-      mkdirSync(foreign);
+      // The bases cache exists only where Graft clones files; create it on Git-checkout volumes too.
+      mkdirSync(foreign, { recursive: true });
       writeFileSync(join(foreign, 'foreign.txt'), 'foreign directory');
       const base = join(bases, oid);
       let verifiedBase: string | undefined;
