@@ -207,7 +207,12 @@ pub(super) fn import_plan_inputs(
     old: &str,
     tip: &str,
 ) -> Result<()> {
-    let temp = tempfile::tempdir().context("stage shallow Git planning inputs")?;
+    // pack-objects writes its temporary pack under the staging object store and
+    // renames it into the private plan, so both must share a filesystem.
+    let temp = tempfile::Builder::new()
+        .prefix(".graft-planning-")
+        .tempdir_in(private)
+        .context("stage shallow Git planning inputs")?;
     let original = shallow_file(private)?;
     let quarantine = Quarantine::new(primary, temp.path(), original.as_deref())?;
     let _locks = fetch_objects(primary, workspace, tip, Some(&quarantine))
