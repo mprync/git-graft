@@ -348,7 +348,7 @@ pub fn changes(dir: &Path) -> Result<Vec<Change>> {
         "--ignore-submodules=none",
     ]);
     let raw = bytes(dir, &status)?;
-    let mut changes = raw
+    let changes = raw
         .split(|&b| b == 0)
         .filter(|r| !r.is_empty())
         .map(|r| {
@@ -360,7 +360,12 @@ pub fn changes(dir: &Path) -> Result<Vec<Change>> {
         })
         .collect::<Result<Vec<_>>>()?;
     #[cfg(any(target_os = "macos", target_os = "linux"))]
-    changes.extend(subsecond_edits(dir, &overrides, &changes)?);
+    let changes = {
+        let edits = subsecond_edits(dir, &overrides, &changes)?;
+        let mut changes = changes;
+        changes.extend(edits);
+        changes
+    };
     Ok(changes)
 }
 
