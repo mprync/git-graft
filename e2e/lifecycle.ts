@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
+import { leaveIndexedCheckoutJournal } from './checkout-journal.ts';
 import { objectResult, type Scenario } from './harness.ts';
 
 type Context = Parameters<Scenario['run']>[0];
@@ -500,20 +501,14 @@ export const cases: Scenario[] = [
       writeFileSync(join(w.path, 'feature.txt'), 'merged\n');
       commit(ctx, w.path, 'merged feature');
       const tip = ctx.git(['rev-parse', 'HEAD'], w.path);
-      // A post-merge hook commits in the graft after the destination updates.
-      const hook = join(ctx.repo, '.git', 'hooks', 'post-merge');
-      mkdirSync(join(ctx.repo, '.git', 'hooks'), { recursive: true });
-      writeFileSync(hook, '#!/bin/sh\nset -eu\nunset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_PREFIX\ncd "$GRAFT_E2E_GRAFT"\ngit commit -q --allow-empty -m "later work"\n', { mode: 0o700 });
-      ctx.env.GRAFT_E2E_GRAFT = process.platform === 'win32' ? w.path.replaceAll('\\', '/') : w.path;
-      try {
-        ctx.fail(['merge', 'advanced', '--lease', w.lease]);
-      } finally {
-        delete ctx.env.GRAFT_E2E_GRAFT;
-        rmSync(hook);
-      }
+      // Stop the merge after Git commits the destination, leaving its plan
+      // pending, then commit in the graft before it is archived.
+      leaveIndexedCheckoutJournal(ctx, ['merge', 'advanced', '--lease', w.lease]);
       assert.equal(ctx.git(['rev-parse', 'main']), tip);
+      writeFileSync(join(w.path, 'later.txt'), 'later work\n');
+      commit(ctx, w.path, 'later work');
       const later = ctx.git(['rev-parse', 'HEAD'], w.path);
-      assert.notEqual(later, tip, 'the hook did not commit in the graft');
+      assert.notEqual(later, tip, 'the graft did not gain a commit');
       const receipt = drop(ctx, 'advanced', w.lease, '--discard');
       assert.equal(receipt.action, 'remove');
       assert.equal(receipt.unmerged_commits, true);
@@ -550,6 +545,28 @@ export const cases: Scenario[] = [
       ctx.cli(['restore', 'other', '--lease', other.lease]);
       assert.deepEqual(readFileSync(file), damaged);
       assert.equal(readFileSync(join(torn.path, 'tracked.txt'), 'utf8'), 'initial\n');
+    },
+  },
+  {
+    name: 'one record naming another primary is damaged while the rest keep working',
+    run(ctx) {
+      const foreign = ctx.spawn('foreign');
+      const other = ctx.spawn('other');
+      assert(typeof foreign.result.id === 'string');
+      const file = join(ctx.repo, '.git', 'graft', 'workspaces', 'records', `${foreign.result.id}.json`);
+      const record = object(JSON.parse(readFileSync(file, 'utf8')));
+      writeFileSync(file, JSON.stringify({ ...record, project: join(ctx.root, 'another primary') }));
+      const edited = readFileSync(file);
+      // Only a primary whose records all name one other path counts as moved.
+      const listed = ctx.cli(['list']);
+      assert.deepEqual(names(listed.workspaces), ['other']);
+      const report = array(listed.damaged_records).map(object);
+      assert.equal(report.length, 1);
+      assert.match(String(report[0].error), /different primary/);
+      assert.equal(ctx.fail(['heartbeat', 'foreign', '--lease', foreign.lease]).code, 'record_damaged');
+      ctx.cli(['heartbeat', 'other', '--lease', other.lease]);
+      assert.deepEqual(readFileSync(file), edited);
+      assert.equal(readFileSync(join(foreign.path, 'tracked.txt'), 'utf8'), 'initial\n');
     },
   },
 ];

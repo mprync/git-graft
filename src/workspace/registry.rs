@@ -692,17 +692,46 @@ fn scan(p: &Project) -> Result<Registry> {
     }
     owned_directory(&directory)?;
     let mut found = Vec::new();
+    // Primaries named by readable records that are not this one.
+    let mut elsewhere = std::collections::BTreeSet::new();
+    let mut here = false;
     for entry in fs::read_dir(&directory)? {
         let name = entry?.file_name();
         if let Some(id) = name.to_str().and_then(|name| name.strip_suffix(".json"))
             && canonical_uuid(id).is_ok()
         {
             let file = directory.join(&name);
-            match read_record(&directory, id).and_then(|r| check_record(p, &r).map(|()| r)) {
+            let read = read_record(&directory, id);
+            if let Ok(r) = &read {
+                if r.project == p.repo {
+                    here = true;
+                } else {
+                    elsewhere.insert(r.project.clone());
+                }
+            }
+            match read.and_then(|r| check_record(p, &r).map(|()| r)) {
                 Ok(r) => found.push((file, r)),
                 Err(error) => registry.damaged.push(DamagedRecord::new(file, &error)),
             }
         }
+    }
+    // When no record names this primary and they all name one other path,
+    // the primary itself was moved or copied. Reporting each record as
+    // damaged would invite someone to edit or move them, and new grafts
+    // would start beside the wrong path, so every command stops instead and
+    // nothing is written until the primary is back where its records say.
+    if !here && elsewhere.len() == 1 {
+        let recorded = elsewhere.pop_first().unwrap_or_default();
+        return Err(fault(
+            "primary_moved",
+            format!(
+                "Graft records belong to a different primary at {}. This primary is at {}. Graft changed nothing; move the primary back to {} to reach its grafts and archives",
+                recorded.display(),
+                p.repo.display(),
+                recorded.display()
+            ),
+            json!({"recorded_primary":recorded,"primary":p.repo,"records":directory}),
+        ));
     }
     // Leases, live ports and live names must be unique across files. When
     // two files disagree, neither can be trusted, so both are set aside.

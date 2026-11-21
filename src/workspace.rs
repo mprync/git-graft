@@ -389,9 +389,10 @@ fn land_workspace(p: &Project, opts: &api::Land) -> Result<Value> {
         return retire(p, &r.name, &r.lease, Status::Landed);
     }
     ensure!(r.status == Status::Active, "graft creation is incomplete");
+    // Verify the graft is where its record says before touching its files.
+    registry::preflight_retire(p, &r)?;
     // We hold the workspace lock, which a killed merge --commit has released.
     crate::landing::reclaim_staging_lock(&r.path)?;
-    registry::preflight_retire(p, &r)?;
     if let Some(plan) = &r.plan {
         ensure!(plan.target == opts.into, "retry merge into {}", plan.target);
         if destination_contains(p, plan)? {

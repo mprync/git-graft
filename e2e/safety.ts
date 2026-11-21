@@ -622,6 +622,7 @@ export const cases: Scenario[] = [
         const result = graftAt(ctx, moved, args);
         assert.equal(result.ok, false, `${args[0]} succeeded after the primary moved`);
         assert.match(String(result.json.message), /different primary/i, args[0]);
+        assert.equal(result.json.code, 'primary_moved', args[0]);
       }
       assert.deepEqual(snapshot(join(moved, '.git', 'graft'), env.root), before);
       assert.equal(existsSync(moved + '.graft'), false, 'a graft root was created beside the moved primary');
