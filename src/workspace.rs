@@ -498,6 +498,16 @@ fn drop_workspace(p: &Project, opts: &api::DropWorkspace) -> Result<Value> {
     retire(p, &r.name, &r.lease, Status::Dropped)
 }
 
+/// Add `damaged_records` when a record file cannot be used, so the person
+/// sees it in `list` and `prune`. A healthy project's output is unchanged.
+fn with_damaged(p: &Project, value: &mut Value) -> Result<()> {
+    let damaged = registry::damaged(p)?;
+    if !damaged.is_empty() {
+        value["damaged_records"] = json!(damaged);
+    }
+    Ok(())
+}
+
 fn unborn(path: &Path) -> Result<bool> {
     let Some(head) = git::symbolic_ref(path, "HEAD")? else {
         return Ok(false);
@@ -590,9 +600,10 @@ pub fn run(repo: &Path, command: Command) -> Result<Value> {
             "git":version,"git_minimum":git::MINIMUM_VERSION,"git_supported":supported}));
         }
         Command::List => {
-            return Ok(json!({"workspaces":registry::list(p)?,
-                "recoverable":registry::recoverable(p)?,
-                "damaged_records":registry::damaged(p)?}));
+            let mut listed =
+                json!({"workspaces":registry::list(p)?,"recoverable":registry::recoverable(p)?});
+            with_damaged(p, &mut listed)?;
+            return Ok(listed);
         }
         Command::ListManagers => return crate::package_manager::list(p),
         Command::UnregisterManager(a) => return crate::package_manager::unregister(p, &a.manager),
@@ -669,8 +680,9 @@ pub fn run(repo: &Path, command: Command) -> Result<Value> {
             } else {
                 engine::gc::purge_caches(p, a.apply)?
             };
-            return Ok(json!({"applied":a.apply,"retained":retained,
-                "damaged_records":registry::damaged(p)?,"cache":cache}));
+            let mut pruned = json!({"applied":a.apply,"retained":retained,"cache":cache});
+            with_damaged(p, &mut pruned)?;
+            return Ok(pruned);
         }
         Command::Env(a) => {
             let r = registry::load(p, &a.name)?;

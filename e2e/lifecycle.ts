@@ -447,7 +447,7 @@ export const cases: Scenario[] = [
         const preview = ctx.cli(['prune']);
         assert.equal(preview.applied, false);
         assert.deepEqual(reasons(preview), expected);
-        assert.deepEqual(preview.damaged_records, []);
+        assert.equal('damaged_records' in preview, false);
         assert.ok(existsSync(clean.path));
         const applied = ctx.cli(['prune', '--apply']);
         assert.deepEqual(reasons(applied), { ...expected, clean: 'archived' });
@@ -524,6 +524,32 @@ export const cases: Scenario[] = [
       assert.equal(ctx.fail(['heartbeat', 'advanced', '--lease', w.lease]).code, 'graft_archived');
       const restored = ctx.cli(['restore', 'advanced', '--lease', w.lease]);
       assert.equal(ctx.git(['rev-parse', 'HEAD'], String(restored.path)), later);
+    },
+  },
+  {
+    name: 'a torn record is reported and kept while other grafts keep working',
+    run(ctx) {
+      const torn = ctx.spawn('torn');
+      const other = ctx.spawn('other');
+      assert(typeof torn.result.id === 'string');
+      const file = join(ctx.repo, '.git', 'graft', 'workspaces', 'records', `${torn.result.id}.json`);
+      const bytes = readFileSync(file);
+      writeFileSync(file, bytes.subarray(0, bytes.length >> 1));
+      const damaged = readFileSync(file);
+      const listed = ctx.cli(['list']);
+      assert.deepEqual(names(listed.workspaces), ['other']);
+      const report = array(listed.damaged_records).map(object);
+      assert.equal(report.length, 1);
+      assert.equal(report[0].file, file);
+      assert.equal(JSON.stringify(listed).includes(torn.lease), false, 'list disclosed a damaged record lease');
+      assert.equal(ctx.fail(['heartbeat', 'torn', '--lease', torn.lease]).code, 'record_damaged');
+      expire(ctx, other.result.id);
+      const pruned = ctx.cli(['prune', '--apply']);
+      assert.deepEqual(reasons(pruned), { other: 'archived' });
+      assert.equal(array(pruned.damaged_records).length, 1);
+      ctx.cli(['restore', 'other', '--lease', other.lease]);
+      assert.deepEqual(readFileSync(file), damaged);
+      assert.equal(readFileSync(join(torn.path, 'tracked.txt'), 'utf8'), 'initial\n');
     },
   },
 ];
