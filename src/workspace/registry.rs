@@ -68,6 +68,10 @@ pub struct Record {
     initialized: bool,
     transition: Option<Transition>,
     previous: Vec<Retirement>,
+    /// The graft HEAD that `remove --discard` archived after a merge had
+    /// already landed an earlier tip: its later commits were never merged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unmerged_head: Option<String>,
 }
 
 impl Record {
@@ -114,6 +118,8 @@ struct Retirement {
     status: Status,
     path: PathBuf,
     plan: Option<Plan>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    unmerged_head: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -199,6 +205,9 @@ pub struct Summary {
     pub storage: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<&'static str>,
+    /// Why prune could not check this graft. It was left as it is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 fn summary(r: &Record, available: bool, reason: Option<&'static str>) -> Summary {
@@ -233,6 +242,7 @@ fn summary(r: &Record, available: bool, reason: Option<&'static str>) -> Summary
             .then(|| format!("{}:{}", r.id, r.previous.len() + 1)),
         storage: r.storage.clone(),
         reason,
+        error: None,
     }
 }
 
@@ -419,6 +429,18 @@ fn validate_path(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Unmerged commits are only recorded beside the merge that did land.
+fn validate_unmerged_head(head: Option<&str>, plan: Option<&Plan>) -> Result<()> {
+    if let Some(head) = head {
+        git::checked_oid(head)?;
+        ensure!(
+            plan.is_some_and(|plan| plan.tip != head),
+            "invalid unmerged graft head"
+        );
+    }
+    Ok(())
+}
+
 fn validate_record(r: &Record) -> Result<()> {
     canonical_uuid(&r.id)?;
     validate_name(&r.name)?;
@@ -441,6 +463,7 @@ fn validate_record(r: &Record) -> Result<()> {
     if let Some(plan) = &r.plan {
         validate_plan(plan)?;
     }
+    validate_unmerged_head(r.unmerged_head.as_deref(), r.plan.as_ref())?;
     ensure!(valid_port(r.port), "invalid workspace port");
     ensure!(
         match r.status {
@@ -465,6 +488,7 @@ fn validate_record(r: &Record) -> Result<()> {
         if let Some(plan) = &prior.plan {
             validate_plan(plan)?;
         }
+        validate_unmerged_head(prior.unmerged_head.as_deref(), prior.plan.as_ref())?;
     }
     ensure!(
         r.archive.is_some()
@@ -525,18 +549,125 @@ fn read_record(directory: &Path, id: &str) -> Result<Record> {
     Ok(r)
 }
 
+/// A record file Graft cannot use. Graft never rewrites, moves or deletes it:
+/// commands report it, keep it out of prune and refuse to act on its name,
+/// and every other graft keeps working.
+#[derive(Debug, Clone, Serialize)]
+pub struct DamagedRecord {
+    pub file: PathBuf,
+    /// The graft name the file claims, when it can be read at all.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    pub error: String,
+    /// Leases and ports the file claims, so a new graft never reuses them.
+    #[serde(skip)]
+    leases: Vec<String>,
+    #[serde(skip)]
+    ports: Vec<u16>,
+}
+
+impl DamagedRecord {
+    fn new(file: PathBuf, error: &anyhow::Error) -> Self {
+        // Read the claims leniently: the file failed validation as a whole.
+        let value = fs::read(&file)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+            .unwrap_or(Value::Null);
+        let text = |value: &Value| value.as_str().map(str::to_owned);
+        let mut leases: Vec<String> = [&value["lease"], &value["transition"]["lease"]]
+            .into_iter()
+            .filter_map(text)
+            .collect();
+        if let Some(previous) = value["previous"].as_array() {
+            leases.extend(previous.iter().filter_map(|old| text(&old["lease"])));
+        }
+        let ports = [&value["port"], &value["transition"]["port"]]
+            .into_iter()
+            .filter_map(|port| port.as_u64().and_then(|port| u16::try_from(port).ok()))
+            .collect();
+        Self {
+            file,
+            name: text(&value["name"]),
+            error: format!("{error:#}"),
+            leases,
+            ports,
+        }
+    }
+
+    fn fault(&self, name: &str) -> anyhow::Error {
+        let owner = match &self.name {
+            Some(_) => format!("The record of graft {name} is damaged"),
+            None => format!("A damaged graft record may belong to graft {name}"),
+        };
+        fault(
+            "record_damaged",
+            format!(
+                "{owner}: {}. Graft left {} and the graft's files unchanged; repair or move that file to continue. Other grafts are unaffected",
+                self.error,
+                self.file.display()
+            ),
+            json!({"name":name,"file":self.file,"error":self.error}),
+        )
+    }
+}
+
+/// Every record of a project: the usable ones and the damaged files.
+struct Registry {
+    records: Vec<Record>,
+    damaged: Vec<DamagedRecord>,
+}
+
+impl Registry {
+    /// A damaged record that names this graft. Its state is unknown, so
+    /// nothing may act on the name until someone repairs the file.
+    fn damaged_name(&self, name: &str) -> Result<()> {
+        match self
+            .damaged
+            .iter()
+            .find(|d| d.name.as_deref() == Some(name))
+        {
+            Some(damaged) => Err(damaged.fault(name)),
+            None => Ok(()),
+        }
+    }
+
+    /// The error for a name no usable record holds. A damaged file whose
+    /// name cannot be read may be the graft that was asked for.
+    fn missing(&self, name: &str, otherwise: anyhow::Error) -> anyhow::Error {
+        match self.damaged.iter().find(|d| d.name.is_none()) {
+            Some(damaged) => damaged.fault(name),
+            None => otherwise,
+        }
+    }
+
+    fn current(&self, name: &str) -> Option<&Record> {
+        current(&self.records, name)
+    }
+}
+
 fn records(p: &Project) -> Result<Vec<Record>> {
+    Ok(scan(p)?.records)
+}
+
+/// Read every record. A file that cannot be read or validated, and every
+/// record in a conflict between files, is set aside as damaged instead of
+/// failing the whole project.
+fn scan(p: &Project) -> Result<Registry> {
+    let mut registry = Registry {
+        records: vec![],
+        damaged: vec![],
+    };
     if !exists(&p.state.join(NAMESPACE))? {
         ensure!(
             !p.has_legacy_workspace_records()?,
             "legacy workspace records at {}",
             p.state.display()
         );
-        return Ok(vec![]);
+        return Ok(registry);
     }
     let directory = state_dir(p, false)?.join("records");
     if !exists(&directory)? {
-        return Ok(vec![]);
+        return Ok(registry);
     }
     owned_directory(&directory)?;
     let mut found = Vec::new();
@@ -545,53 +676,109 @@ fn records(p: &Project) -> Result<Vec<Record>> {
         if let Some(id) = name.to_str().and_then(|name| name.strip_suffix(".json"))
             && canonical_uuid(id).is_ok()
         {
-            found.push(read_record(&directory, id)?);
+            let file = directory.join(&name);
+            match read_record(&directory, id).and_then(|r| check_record(p, &r).map(|()| r)) {
+                Ok(r) => found.push((file, r)),
+                Err(error) => registry.damaged.push(DamagedRecord::new(file, &error)),
+            }
         }
     }
-    let mut leases = HashSet::new();
-    let mut live = HashSet::new();
-    let mut ports = HashSet::new();
-    for r in &found {
-        ensure!(
-            r.project == p.repo,
-            "graft record belongs to a different primary"
-        );
-        if let Some(path) = &r.archive {
-            ensure!(
-                path == &p.root.join(ARCHIVES).join(&r.id),
-                "invalid workspace archive path"
-            );
+    // Leases, live ports and live names must be unique across files. When
+    // two files disagree, neither can be trusted, so both are set aside.
+    let mut leases: std::collections::HashMap<&str, Vec<usize>> = Default::default();
+    let mut ports: std::collections::HashMap<u16, Vec<usize>> = Default::default();
+    let mut names: std::collections::HashMap<&str, Vec<usize>> = Default::default();
+    for (index, (_, r)) in found.iter().enumerate() {
+        let restore = match &r.transition {
+            Some(Transition::Restore { lease, port }) => Some((lease.as_str(), *port)),
+            _ => None,
+        };
+        let claimed = std::iter::once(r.lease.as_str())
+            .chain(r.previous.iter().map(|old| old.lease.as_str()))
+            .chain(restore.map(|(lease, _)| lease));
+        for lease in claimed {
+            leases.entry(lease).or_default().push(index);
         }
-        if let Some(
-            Transition::Place { from }
-            | Transition::Retire {
-                from: Some(from), ..
-            },
-        ) = &r.transition
-        {
-            placement_source(&p.root, r, from)?;
-        }
-        ensure!(
-            leases.insert(r.lease.as_str())
-                && r.previous.iter().all(|old| leases.insert(&old.lease)),
-            "duplicate workspace lease"
-        );
-        if let Some(Transition::Restore { lease, port }) = &r.transition {
-            ensure!(leases.insert(lease), "duplicate workspace lease");
-            ensure!(ports.insert(*port), "duplicate live workspace port");
+        if let Some((_, port)) = restore {
+            ports.entry(port).or_default().push(index);
         } else if !r.status.retired() {
-            ensure!(ports.insert(r.port), "duplicate live workspace port");
+            ports.entry(r.port).or_default().push(index);
         }
         if r.holds_name() {
-            ensure!(
-                live.insert(&r.name),
-                "multiple live records for workspace {}",
-                r.name
-            );
+            names.entry(r.name.as_str()).or_default().push(index);
         }
     }
-    found.sort_by(|a, b| (&a.name, a.created, &a.id).cmp(&(&b.name, b.created, &b.id)));
-    Ok(found)
+    let damaged_leases: HashSet<&str> = registry
+        .damaged
+        .iter()
+        .flat_map(|d| d.leases.iter().map(String::as_str))
+        .collect();
+    let mut conflicts: std::collections::BTreeMap<usize, &'static str> = Default::default();
+    for (lease, holders) in &leases {
+        if holders.len() > 1 || damaged_leases.contains(lease) {
+            for &index in holders {
+                conflicts.insert(index, "duplicate workspace lease");
+            }
+        }
+    }
+    for holders in ports.values().filter(|holders| holders.len() > 1) {
+        for &index in holders {
+            conflicts
+                .entry(index)
+                .or_insert("duplicate live workspace port");
+        }
+    }
+    for holders in names.values().filter(|holders| holders.len() > 1) {
+        for &index in holders {
+            conflicts
+                .entry(index)
+                .or_insert("multiple live records for one graft name");
+        }
+    }
+    for (index, (file, r)) in found.into_iter().enumerate() {
+        match conflicts.get(&index) {
+            Some(reason) => {
+                let mut damaged = DamagedRecord::new(file, &anyhow::anyhow!(*reason));
+                damaged.name = Some(r.name);
+                registry.damaged.push(damaged);
+            }
+            None => registry.records.push(r),
+        }
+    }
+    registry
+        .records
+        .sort_by(|a, b| (&a.name, a.created, &a.id).cmp(&(&b.name, b.created, &b.id)));
+    registry.damaged.sort_by(|a, b| a.file.cmp(&b.file));
+    Ok(registry)
+}
+
+/// Checks of one record against its project, beyond its own format.
+fn check_record(p: &Project, r: &Record) -> Result<()> {
+    ensure!(
+        r.project == p.repo,
+        "graft record belongs to a different primary"
+    );
+    if let Some(path) = &r.archive {
+        ensure!(
+            path == &p.root.join(ARCHIVES).join(&r.id),
+            "invalid workspace archive path"
+        );
+    }
+    if let Some(
+        Transition::Place { from }
+        | Transition::Retire {
+            from: Some(from), ..
+        },
+    ) = &r.transition
+    {
+        placement_source(&p.root, r, from)?;
+    }
+    Ok(())
+}
+
+/// Every damaged record file of the project, for `list` and `prune`.
+pub fn damaged(p: &Project) -> Result<Vec<DamagedRecord>> {
+    Ok(scan(p)?.damaged)
 }
 
 fn current<'a>(records: &'a [Record], name: &str) -> Option<&'a Record> {
@@ -610,24 +797,77 @@ fn bad_lease(name: &str) -> anyhow::Error {
     )
 }
 
+/// The lease belongs to a graft that is now archived. Say so, and how to get
+/// the work back, so an agent does not abandon it. The lease is not repeated.
+fn archived(r: &Record, name_in_use: bool) -> anyhow::Error {
+    let (by, archived_by) = match (r.status, &r.unmerged_head) {
+        (Status::Landed, None) => ("merge", "merge"),
+        (Status::Landed, Some(_)) => ("remove --discard after an earlier merge", "remove"),
+        _ => (
+            "remove, or by prune after its lease expired",
+            "remove_or_prune",
+        ),
+    };
+    let next = if name_in_use {
+        format!(
+            "Another graft now uses the name {0}; archive that graft first, then run `git graft restore {0} --lease <this lease>` (MCP: graft_restore) to reopen this one",
+            r.name
+        )
+    } else {
+        format!(
+            "Run `git graft restore {} --lease <this lease>` (MCP: graft_restore) to reopen it",
+            r.name
+        )
+    };
+    fault(
+        "graft_archived",
+        format!(
+            "Graft {} was archived by {by}. Its files, commits and stashes are kept in the archive. {next}",
+            r.name
+        ),
+        json!({"name":r.name,"archived_by":archived_by,"archive_path":r.archive,"name_in_use":name_in_use}),
+    )
+}
+
 pub fn load(p: &Project, name: &str) -> Result<Record> {
     validate_name(name)?;
-    current(&records(p)?, name)
+    let registry = scan(p)?;
+    registry.damaged_name(name)?;
+    registry
+        .current(name)
         .cloned()
-        .ok_or_else(|| not_found(name))
+        .ok_or_else(|| registry.missing(name, not_found(name)))
 }
 
 pub fn authenticate(p: &Project, name: &str, lease: &str) -> Result<Record> {
-    let r = load(p, name)?;
-    if r.lease != lease || r.status.retired() {
-        return Err(bad_lease(name));
+    validate_name(name)?;
+    let registry = scan(p)?;
+    registry.damaged_name(name)?;
+    let live = registry.current(name);
+    if let Some(r) = live
+        && r.lease == lease
+        && !r.status.retired()
+    {
+        return Ok(r.clone());
     }
-    Ok(r)
+    if let Some(r) = registry
+        .records
+        .iter()
+        .find(|r| r.name == name && r.lease == lease && r.status.retired())
+    {
+        return Err(archived(r, live.is_some_and(|live| live.id != r.id)));
+    }
+    Err(match live {
+        Some(_) => bad_lease(name),
+        None => registry.missing(name, not_found(name)),
+    })
 }
 
 pub fn load_retired(p: &Project, name: &str, lease: &str) -> Result<Record> {
     validate_name(name)?;
-    for mut r in records(p)?.into_iter().filter(|r| r.name == name) {
+    let registry = scan(p)?;
+    registry.damaged_name(name)?;
+    for mut r in registry.records.iter().filter(|r| r.name == name).cloned() {
         if r.lease == lease && r.status.retired() {
             return Ok(r);
         }
@@ -636,12 +876,13 @@ pub fn load_retired(p: &Project, name: &str, lease: &str) -> Result<Record> {
             r.status = receipt.status;
             r.path = receipt.path.clone();
             r.plan = receipt.plan.clone();
+            r.unmerged_head = receipt.unmerged_head.clone();
             r.archive = None;
             r.transition = None;
             return Ok(r);
         }
     }
-    Err(bad_lease(name))
+    Err(registry.missing(name, bad_lease(name)))
 }
 
 fn persist(p: &Project, r: &Record) -> Result<()> {
@@ -1143,6 +1384,7 @@ fn resume(p: &Project, r: &mut Record) -> Result<()> {
                 status: r.status,
                 path: r.path.clone(),
                 plan: r.plan.take(),
+                unmerged_head: r.unmerged_head.take(),
             });
             r.archive = None;
             r.status = if r.initialized {
@@ -1158,18 +1400,25 @@ fn resume(p: &Project, r: &mut Record) -> Result<()> {
     persist(p, r)
 }
 
-fn port_for(records: &[Record], name: &str) -> Result<u16> {
+fn port_for(registry: &Registry, name: &str) -> Result<u16> {
     let slots = u32::from(PORTS.end - PORTS.start);
     let hash = name
         .bytes()
         .fold(0u32, |a, b| a.wrapping_mul(31).wrapping_add(u32::from(b)));
-    let used = records
+    let used = registry
+        .records
         .iter()
         .filter_map(|r| match r.transition {
             Some(Transition::Restore { port, .. }) => Some(port),
             _ if !r.status.retired() => Some(r.port),
             _ => None,
         })
+        .chain(
+            registry
+                .damaged
+                .iter()
+                .flat_map(|d| d.ports.iter().copied()),
+        )
         .collect::<HashSet<_>>();
     for offset in 0..slots {
         let port = PORTS.start + ((hash % slots + offset) % slots) as u16;
@@ -1202,9 +1451,11 @@ pub fn reserve(
         .map(Uuid::parse_str)
         .transpose()?
         .map(|id| id.to_string());
-    let known = records(p)?;
+    let registry = scan(p)?;
     crate::trace::mark("reserve: read records");
-    if let Some(mut r) = current(&known, name).cloned() {
+    registry.damaged_name(name)?;
+    let known = &registry.records;
+    if let Some(mut r) = current(known, name).cloned() {
         if requested.as_ref() == Some(&r.lease)
             && r.base.as_deref() == base
             && r.branch.as_deref() == branch
@@ -1239,7 +1490,8 @@ pub fn reserve(
                 .iter()
                 .any(|r| r.lease == *lease
                     || r.previous.iter().any(|old| old.lease == *lease)
-                    || matches!(&r.transition, Some(Transition::Restore { lease: next, .. }) if next == lease)),
+                    || matches!(&r.transition, Some(Transition::Restore { lease: next, .. }) if next == lease))
+                && !registry.damaged.iter().any(|d| d.leases.contains(lease)),
             "request_id has already been used"
         );
     }
@@ -1269,7 +1521,7 @@ pub fn reserve(
     crate::trace::mark("reserve: stage marker");
     let identity = Identity::read(stage.path())?;
     crate::trace::mark("reserve: identity");
-    let port = port_for(&known, name)?;
+    let port = port_for(&registry, name)?;
     let started = now();
     let from = stage.keep();
     let mut r = Record {
@@ -1293,6 +1545,7 @@ pub fn reserve(
         initialized: false,
         transition: Some(Transition::Place { from: from.clone() }),
         previous: Vec::new(),
+        unmerged_head: None,
     };
     let result = (|| {
         write_record(&directory, &r)?;
@@ -1420,7 +1673,12 @@ pub fn unlock(p: &Project, name: &str, lease: &str) -> Result<Record> {
     Ok(r)
 }
 
-fn begin_retirement(p: &Project, r: &mut Record, status: Status) -> Result<()> {
+fn begin_retirement(
+    p: &Project,
+    r: &mut Record,
+    status: Status,
+    unmerged_head: Option<&str>,
+) -> Result<()> {
     require_unlocked(r)?;
     ensure!(
         (status == Status::Landed) == r.plan.is_some(),
@@ -1438,6 +1696,7 @@ fn begin_retirement(p: &Project, r: &mut Record, status: Status) -> Result<()> {
         _ => {
             let (archive, from) = retirement_destination(p, r)?;
             r.archive = Some(archive);
+            r.unmerged_head = unmerged_head.map(str::to_owned);
             r.transition = Some(Transition::Retire { status, from });
             persist(p, r)?;
         }
@@ -1519,8 +1778,15 @@ fn retirement_destination(p: &Project, r: &Record) -> Result<(PathBuf, Option<Pa
 }
 
 /// The caller holds the workspace lock until the Git operation and archive
-/// transition have both completed.
-pub fn retire(p: &Project, name: &str, lease: &str, status: Status) -> Result<Record> {
+/// transition have both completed. `unmerged_head` is journaled with a new
+/// retirement only; a replay keeps what the first attempt recorded.
+pub fn retire(
+    p: &Project,
+    name: &str,
+    lease: &str,
+    status: Status,
+    unmerged_head: Option<&str>,
+) -> Result<Record> {
     ensure!(status.retired(), "expected terminal workspace status");
     if let Ok(completed) = load_retired(p, name, lease) {
         ensure!(
@@ -1530,14 +1796,16 @@ pub fn retire(p: &Project, name: &str, lease: &str, status: Status) -> Result<Re
         return Ok(completed);
     }
     let mut r = authenticate(p, name, lease)?;
-    begin_retirement(p, &mut r, status)?;
+    begin_retirement(p, &mut r, status, unmerged_head)?;
     Ok(r)
 }
 
 pub fn restore(p: &Project, name: &str, lease: &str) -> Result<Record> {
     validate_name(name)?;
-    let known = records(p)?;
-    let active = current(&known, name);
+    let registry = scan(p)?;
+    registry.damaged_name(name)?;
+    let known = &registry.records;
+    let active = current(known, name);
     if let Some(r) = active
         && !r.status.retired()
         && r.previous.last().is_some_and(|old| old.lease == lease)
@@ -1550,7 +1818,7 @@ pub fn restore(p: &Project, name: &str, lease: &str) -> Result<Record> {
         .iter()
         .find(|r| r.name == name && r.lease == lease && r.status.retired())
         .cloned()
-        .ok_or_else(|| bad_lease(name))?;
+        .ok_or_else(|| registry.missing(name, bad_lease(name)))?;
     let _lock = workspace_lock(p, name)?;
     ensure!(
         active.as_ref().is_none_or(|active| active.id == r.id),
@@ -1568,7 +1836,7 @@ pub fn restore(p: &Project, name: &str, lease: &str) -> Result<Record> {
         );
         r.transition = Some(Transition::Restore {
             lease: Uuid::new_v4().to_string(),
-            port: port_for(&known, name)?,
+            port: port_for(&registry, name)?,
         });
         persist(p, &r)?;
     }
@@ -1576,10 +1844,15 @@ pub fn restore(p: &Project, name: &str, lease: &str) -> Result<Record> {
     Ok(r)
 }
 
+/// Whether any graft may still be live. A damaged record counts as live:
+/// its state is unknown, so caches it might use must be kept.
 pub fn has_live(p: &Project) -> Result<bool> {
-    Ok(records(p)?
-        .iter()
-        .any(|r| !r.status.retired() || r.transition.is_some()))
+    let registry = scan(p)?;
+    Ok(!registry.damaged.is_empty()
+        || registry
+            .records
+            .iter()
+            .any(|r| !r.status.retired() || r.transition.is_some()))
 }
 
 pub fn list(p: &Project) -> Result<Vec<Summary>> {
@@ -1611,6 +1884,7 @@ pub fn recoverable(p: &Project) -> Result<Vec<Summary>> {
             r.path = old.path;
             r.status = old.status;
             r.plan = old.plan;
+            r.unmerged_head = old.unmerged_head;
             let mut prior = summary(&r, false, Some("restored"));
             prior.receipt_id = Some(format!("{}:{}", r.id, index + 1));
             result.push(prior);
@@ -1637,24 +1911,83 @@ fn prune_eligibility(r: &Record, detached: Option<usize>) -> Result<Option<&'sta
     if git::check_idle(path).is_err() || !git::changes(path)?.is_empty() {
         return Ok(Some("dirty"));
     }
-    let expected_branch = r
-        .branch
-        .as_ref()
-        .map(|branch| format!("refs/heads/{branch}"));
-    let head = git::symbolic_ref(path, "HEAD")?;
-    let refs = git::text(path, &["for-each-ref", "--format=%(refname) %(objectname)"])?;
-    let matches_birth_refs = match (&expected_branch, &r.base) {
-        (Some(branch), Some(base)) => refs == format!("{branch} {base}"),
-        _ => refs.is_empty(),
-    };
-    let matches_birth_commit = match &r.base {
-        Some(base) => git::oid(path, "HEAD")? == *base,
-        None => head.is_some() && refs.is_empty(),
-    };
-    if head != expected_branch || !matches_birth_refs || !matches_birth_commit {
+    if !unmerged_refs(r)?.is_empty() {
         return Ok(Some("changed"));
     }
     Ok(None)
+}
+
+/// Every way the graft's refs differ from how it was created: commits on its
+/// branch or a moved HEAD, other branches, tags, a stash or any other ref.
+/// Each is work that a merge never took, described for the person.
+fn unmerged_refs(r: &Record) -> Result<Vec<String>> {
+    let path = &r.path;
+    let expected = r
+        .branch
+        .as_ref()
+        .map(|branch| format!("refs/heads/{branch}"));
+    let mut found = Vec::new();
+    let head = git::symbolic_ref(path, "HEAD")?;
+    if head != expected {
+        found.push(match &head {
+            Some(other) => format!("HEAD is on {other}"),
+            None => "HEAD is detached".to_owned(),
+        });
+    }
+    let refs = git::text(path, &["for-each-ref", "--format=%(refname) %(objectname)"])?;
+    let mut has_branch = false;
+    for line in refs.lines() {
+        let (name, oid) = line.split_once(' ').context("malformed Git ref listing")?;
+        if Some(name) == expected.as_deref() {
+            has_branch = true;
+            if r.base.as_deref() != Some(oid) {
+                found.push(format!("commits on branch {}", short_ref(name)));
+            }
+        } else if name == "refs/stash" {
+            found.push("a stash".to_owned());
+        } else if let Some(tag) = name.strip_prefix("refs/tags/") {
+            found.push(format!("tag {tag}"));
+        } else if let Some(branch) = name.strip_prefix("refs/heads/") {
+            found.push(format!("branch {branch}"));
+        } else {
+            found.push(format!("ref {name}"));
+        }
+    }
+    match (&expected, &r.base) {
+        (Some(branch), Some(_)) if !has_branch => {
+            found.push(format!("branch {} was deleted", short_ref(branch)));
+        }
+        _ => {}
+    }
+    if let Some(base) = &r.base
+        && head.is_none()
+        && git::oid(path, "HEAD")? != *base
+    {
+        found.push("commits on the detached HEAD".to_owned());
+    }
+    Ok(found)
+}
+
+fn short_ref(name: &str) -> &str {
+    name.strip_prefix("refs/heads/").unwrap_or(name)
+}
+
+/// `remove` without `--discard` archives only a graft whose refs are as
+/// they were created. Otherwise it names the work it found.
+pub fn require_merged(r: &Record) -> Result<()> {
+    let found = unmerged_refs(r)?;
+    if found.is_empty() {
+        return Ok(());
+    }
+    Err(fault(
+        "unmerged_work",
+        format!(
+            "Graft {} has work that is not merged: {}. Merge it, or archive it with --discard and keep the recovery lease",
+            r.name,
+            found.join(", ")
+        ),
+        json!({"name":r.name,"found":found}),
+    ))
 }
 
 fn is_nested_git_error(error: &anyhow::Error) -> bool {
@@ -1680,63 +2013,73 @@ fn open_existing_lock(p: &Project, name: &str) -> Result<WorkspaceLock> {
 
 /// Archive eligible expired workspaces. Archives, foreign paths and refs are
 /// retained. A preview performs the same eligibility checks without writing.
+/// An error on one graft is reported on that graft, and prune goes on.
 pub fn prune(p: &Project, apply: bool) -> Result<Vec<Summary>> {
     let mut result = Vec::new();
-    for mut r in records(p)? {
+    for mut r in scan(p)?.records {
         if r.status.retired() || now().saturating_sub(r.heartbeat) < LEASE_SECS {
             continue;
         }
-        if apply && r.retiring_to() == Some(Status::Dropped) {
-            let _lock = open_existing_lock(p, &r.name)?;
-            let reason = match resume(p, &mut r) {
-                Ok(()) => "archived",
-                Err(error) if is_nested_git_error(&error) => "nested_git_metadata",
-                Err(error) => return Err(error),
-            };
-            result.push(summary(&r, false, Some(reason)));
-            continue;
-        }
-        let endpoint =
-            registered_path(p, &r.name, &r.path).and_then(|()| verify_endpoint(p, &r, &r.path));
-        let available = endpoint.is_ok();
-        let reason = if r.locked.is_some() {
-            "locked"
-        } else if r.plan.is_some() || r.transition.is_some() || r.status == Status::Pending {
-            "transition_in_progress"
-        } else if !available {
-            "missing_or_replaced"
-        } else {
-            match open_existing_lock(p, &r.name) {
-                Ok(_lock) => {
-                    let root = workspaces(p, false)?;
-                    let archives = root.join(ARCHIVES);
-                    let archive = if exists(&archives)? {
-                        archive_path(p, &r, false)?
-                    } else {
-                        archives
-                    };
-                    if !same_filesystem(&r.path, &archive)? {
-                        "different_filesystem"
-                    } else if exists(&archive)? {
-                        "archive_occupied"
-                    } else if let Some(reason) =
-                        prune_eligibility(&r, endpoint?).unwrap_or(Some("git_state_unverified"))
-                    {
-                        reason
-                    } else if apply {
-                        begin_retirement(p, &mut r, Status::Dropped)?;
-                        "archived"
-                    } else {
-                        "eligible"
-                    }
-                }
-                Err(error) if crate::api::error_json(&error)["code"] == "workspace_busy" => "busy",
-                Err(error) => return Err(error),
-            }
-        };
-        result.push(summary(&r, available && !r.status.retired(), Some(reason)));
+        result.push(match prune_one(p, &mut r, apply) {
+            Ok((reason, available)) => summary(&r, available, Some(reason)),
+            Err(error) => Summary {
+                error: Some(format!("{error:#}")),
+                ..summary(&r, false, Some("error"))
+            },
+        });
     }
     Ok(result)
+}
+
+/// The prune reason for one expired graft, and whether it is available.
+fn prune_one(p: &Project, r: &mut Record, apply: bool) -> Result<(&'static str, bool)> {
+    if apply && r.retiring_to() == Some(Status::Dropped) {
+        let _lock = open_existing_lock(p, &r.name)?;
+        return match resume(p, r) {
+            Ok(()) => Ok(("archived", false)),
+            Err(error) if is_nested_git_error(&error) => Ok(("nested_git_metadata", false)),
+            Err(error) => Err(error),
+        };
+    }
+    let endpoint =
+        registered_path(p, &r.name, &r.path).and_then(|()| verify_endpoint(p, r, &r.path));
+    let available = endpoint.is_ok();
+    let reason = if r.locked.is_some() {
+        "locked"
+    } else if r.plan.is_some() || r.transition.is_some() || r.status == Status::Pending {
+        "transition_in_progress"
+    } else if !available {
+        "missing_or_replaced"
+    } else {
+        match open_existing_lock(p, &r.name) {
+            Ok(_lock) => {
+                let root = workspaces(p, false)?;
+                let archives = root.join(ARCHIVES);
+                let archive = if exists(&archives)? {
+                    archive_path(p, r, false)?
+                } else {
+                    archives
+                };
+                if !same_filesystem(&r.path, &archive)? {
+                    "different_filesystem"
+                } else if exists(&archive)? {
+                    "archive_occupied"
+                } else if let Some(reason) =
+                    prune_eligibility(r, endpoint?).unwrap_or(Some("git_state_unverified"))
+                {
+                    reason
+                } else if apply {
+                    begin_retirement(p, r, Status::Dropped, None)?;
+                    "archived"
+                } else {
+                    "eligible"
+                }
+            }
+            Err(error) if crate::api::error_json(&error)["code"] == "workspace_busy" => "busy",
+            Err(error) => return Err(error),
+        }
+    };
+    Ok((reason, available && !r.status.retired()))
 }
 
 #[cfg(test)]
@@ -1777,6 +2120,355 @@ mod tests {
             finish(&self.project, &mut record)?;
             Ok(record)
         }
+
+        /// A graft whose branch starts at a commit of the primary, as `add`
+        /// creates it, with its heartbeat expired so prune considers it.
+        fn expired_at_base(&self, name: &str) -> Result<Record> {
+            let primary = &self.project.repo;
+            if git::raw(primary, &["rev-parse", "--verify", "--quiet", "HEAD"])?
+                .status
+                .code()
+                == Some(1)
+            {
+                fs::write(primary.join("tracked"), "base\n")?;
+                git::bytes(primary, &["add", "tracked"])?;
+                git::bytes(
+                    primary,
+                    &[
+                        "-c",
+                        "user.name=Registry Fixture",
+                        "-c",
+                        "user.email=registry@example.invalid",
+                        "commit",
+                        "-qm",
+                        "base",
+                    ],
+                )?;
+            }
+            let base = git::oid(primary, "HEAD")?;
+            let mut record = reserve(
+                &self.project,
+                name,
+                None,
+                Some(&base),
+                Some("agent"),
+                Value::Null,
+            )?;
+            let path = record.path.clone();
+            git::bytes(&path, &["init", "-q", "--template=", "-b", "agent"])?;
+            for (key, value) in [
+                ("user.name", "Registry Fixture"),
+                ("user.email", "registry@example.invalid"),
+                ("commit.gpgsign", "false"),
+                ("core.hooksPath", "disabled-hooks"),
+            ] {
+                git::bytes(&path, &["config", key, value])?;
+            }
+            git::bytes(&path, &["fetch", "-q", git::path_str(primary)?, "HEAD"])?;
+            git::bytes(&path, &["reset", "-q", "--hard", &base])?;
+            finish(&self.project, &mut record)?;
+            record.heartbeat = 0;
+            persist(&self.project, &record)?;
+            Ok(record)
+        }
+    }
+
+    /// Everything a person could lose in a graft: every ref with its target,
+    /// the stash, the index and the status of every file, ignored included.
+    fn work_in(path: &Path) -> Result<String> {
+        Ok([
+            git::text(path, &["for-each-ref", "--format=%(refname) %(objectname)"])?,
+            git::text(path, &["rev-parse", "HEAD"]).unwrap_or_default(),
+            git::text(path, &["ls-files", "--stage", "--debug"])?,
+            git::text(path, &["status", "--porcelain=v1", "--ignored=matching"])?,
+        ]
+        .join("\n--\n"))
+    }
+
+    fn code(error: &anyhow::Error) -> String {
+        crate::api::error_json(error)["code"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned()
+    }
+
+    fn record_file(p: &Project, r: &Record) -> Result<PathBuf> {
+        Ok(state_dir(p, false)?
+            .join("records")
+            .join(format!("{}.json", r.id)))
+    }
+
+    #[test]
+    fn prune_and_remove_keep_every_kind_of_unmerged_work() -> Result<()> {
+        let f = Fixture::new()?;
+        let p = &f.project;
+        let clean = f.expired_at_base("clean")?;
+        let mut cases = Vec::new();
+        let mut case = |name: &str, setup: &dyn Fn(&Path) -> Result<()>| -> Result<()> {
+            let r = f.expired_at_base(name)?;
+            setup(&r.path)?;
+            cases.push((r.clone(), work_in(&r.path)?));
+            Ok(())
+        };
+        let commit = |path: &Path| -> Result<()> {
+            fs::write(path.join("tracked"), "unmerged\n")?;
+            git::bytes(path, &["commit", "-qam", "unmerged"])?;
+            Ok(())
+        };
+        case("commit", &commit)?;
+        case("branch", &|path| {
+            git::bytes(path, &["branch", "extra"])?;
+            Ok(())
+        })?;
+        case("tag", &|path| {
+            git::bytes(path, &["tag", "v1"])?;
+            Ok(())
+        })?;
+        case("stash", &|path| {
+            fs::write(path.join("tracked"), "stashed edit\n")?;
+            git::bytes(path, &["stash", "push", "-q"])?;
+            Ok(())
+        })?;
+        case("detached", &|path| {
+            git::bytes(path, &["checkout", "-q", "--detach"])?;
+            commit(path)
+        })?;
+        case("ignored", &|path| {
+            fs::create_dir_all(path.join(".git/info"))?;
+            fs::write(path.join(".git/info/exclude"), "build/\n")?;
+            fs::create_dir(path.join("build"))?;
+            fs::write(path.join("build/output"), "build output")?;
+            Ok(())
+        })?;
+        case("staged", &|path| {
+            fs::write(path.join("new"), "staged only")?;
+            git::bytes(path, &["add", "new"])?;
+            Ok(())
+        })?;
+        case("untracked", &|path| {
+            fs::write(path.join("notes"), "untracked")?;
+            Ok(())
+        })?;
+        case("gitbusy", &|path| {
+            fs::write(path.join(".git/index.lock"), "")?;
+            Ok(())
+        })?;
+        let locked = f.expired_at_base("locked")?;
+        lock(p, &locked.name, &locked.lease, Some("keep"))?;
+        cases.push((load(p, "locked")?, work_in(&locked.path)?));
+        let busy = f.expired_at_base("busy")?;
+        cases.push((busy.clone(), work_in(&busy.path)?));
+
+        let expected = [
+            ("branch", "changed"),
+            ("busy", "busy"),
+            ("clean", "eligible"),
+            ("commit", "changed"),
+            ("detached", "changed"),
+            ("gitbusy", "dirty"),
+            ("ignored", "dirty"),
+            ("locked", "locked"),
+            ("staged", "dirty"),
+            ("stash", "changed"),
+            ("tag", "changed"),
+            ("untracked", "dirty"),
+        ];
+        // `exec` holds the graft lock for as long as its program runs.
+        let held = workspace_lock(p, &busy.name)?;
+        for apply in [false, true] {
+            let reasons = prune(p, apply)?;
+            let reasons: Vec<_> = reasons
+                .iter()
+                .map(|s| (s.name.as_str(), s.reason.unwrap_or_default()))
+                .collect();
+            let mut wanted = expected.to_vec();
+            if apply {
+                wanted[2].1 = "archived";
+            }
+            assert_eq!(reasons, wanted);
+            for (r, before) in &cases {
+                assert_eq!(&work_in(&r.path)?, before, "prune changed {}", r.name);
+                assert!(authenticate(p, &r.name, &r.lease).is_ok());
+            }
+        }
+        drop(held);
+        assert!(!clean.path.exists());
+
+        // `remove` without --discard refuses the same grafts and names the work.
+        for (name, found) in [
+            ("commit", "commits on branch agent"),
+            ("branch", "branch extra"),
+            ("tag", "tag v1"),
+            ("stash", "a stash"),
+            ("detached", "HEAD is detached, commits on the detached HEAD"),
+        ] {
+            let r = load(p, name)?;
+            let error = require_merged(&r).unwrap_err();
+            assert_eq!(code(&error), "unmerged_work");
+            assert!(format!("{error:#}").contains(found), "{name}: {error:#}");
+            assert!(!format!("{error:#}").contains(&r.lease));
+        }
+        require_merged(&load(p, "busy")?)?;
+        Ok(())
+    }
+
+    #[test]
+    fn prune_reports_occupied_archives_and_keeps_going_after_one_graft_fails() -> Result<()> {
+        let f = Fixture::new()?;
+        let p = &f.project;
+        let first = f.expired_at_base("a-first")?;
+        let broken = f.expired_at_base("b-broken")?;
+        let occupied = f.expired_at_base("c-occupied")?;
+        let last = f.expired_at_base("d-last")?;
+        // A foreign directory already holds this graft's archive slot.
+        let slot = archive_path(p, &occupied, true)?;
+        fs::create_dir(&slot)?;
+        fs::write(slot.join("foreign"), "keep")?;
+        // The graft lock is not a file, so prune cannot check this graft.
+        let lock = state_dir(p, false)?.join("locks").join(&broken.name);
+        fs::remove_file(&lock)?;
+        fs::create_dir(&lock)?;
+        let before = work_in(&broken.path)?;
+
+        let applied = prune(p, true)?;
+        let reasons: Vec<_> = applied
+            .iter()
+            .map(|s| (s.name.as_str(), s.reason.unwrap_or_default()))
+            .collect();
+        assert_eq!(
+            reasons,
+            [
+                ("a-first", "archived"),
+                ("b-broken", "error"),
+                ("c-occupied", "archive_occupied"),
+                ("d-last", "archived"),
+            ]
+        );
+        assert!(
+            applied[1]
+                .error
+                .as_deref()
+                .is_some_and(|e| e.contains("not an ordinary file"))
+        );
+        assert!(!first.path.exists() && !last.path.exists());
+        assert_eq!(work_in(&broken.path)?, before);
+        assert!(occupied.path.exists());
+        assert_eq!(fs::read_to_string(slot.join("foreign"))?, "keep");
+        Ok(())
+    }
+
+    #[test]
+    fn a_damaged_record_is_reported_kept_and_isolated_from_other_grafts() -> Result<()> {
+        let f = Fixture::new()?;
+        let p = &f.project;
+        let torn = f.expired_at_base("torn")?;
+        let invalid = f.expired_at_base("invalid")?;
+        let healthy = f.expired_at_base("healthy")?;
+        let torn_file = record_file(p, &torn)?;
+        let invalid_file = record_file(p, &invalid)?;
+        let full = fs::read(&torn_file)?;
+        fs::write(&torn_file, &full[..full.len() / 2])?;
+        let mut value: Value = serde_json::from_slice(&fs::read(&invalid_file)?)?;
+        value["base"] = json!("not-an-object-id");
+        fs::write(&invalid_file, serde_json::to_vec(&value)?)?;
+        let torn_bytes = fs::read(&torn_file)?;
+        let invalid_bytes = fs::read(&invalid_file)?;
+
+        let damaged = damaged(p)?;
+        assert_eq!(damaged.len(), 2);
+        let report = serde_json::to_string(&damaged)?;
+        assert!(report.contains("full Git object ID"));
+        assert!(!report.contains(&torn.lease) && !report.contains(&invalid.lease));
+        let named = damaged.iter().find(|d| d.file == invalid_file).unwrap();
+        assert_eq!(named.name.as_deref(), Some("invalid"));
+
+        // Other grafts keep working: list, prune, archive and restore.
+        let listed: Vec<_> = list(p)?.into_iter().map(|s| s.name).collect();
+        assert_eq!(listed, ["healthy"]);
+        let pruned = prune(p, true)?;
+        assert_eq!(pruned.len(), 1);
+        assert_eq!(pruned[0].name, "healthy");
+        assert_eq!(pruned[0].reason, Some("archived"));
+        assert!(torn.path.exists() && invalid.path.exists());
+        // Every usable graft is archived, yet caches stay while a damaged
+        // record might still use them.
+        assert!(has_live(p)?);
+        restore(p, "healthy", &healthy.lease)?;
+        let other = f.expired_at_base("other")?;
+        assert!(authenticate(p, &other.name, &other.lease).is_ok());
+
+        // The damaged grafts' own names report the damage and are never reused.
+        let error = authenticate(p, "invalid", &invalid.lease).unwrap_err();
+        assert_eq!(code(&error), "record_damaged");
+        assert!(format!("{error:#}").contains("full Git object ID"));
+        let error = reserve(p, "invalid", None, None, Some("agent"), Value::Null).unwrap_err();
+        assert_eq!(code(&error), "record_damaged");
+        assert_eq!(code(&load(p, "torn").unwrap_err()), "record_damaged");
+        assert_eq!(
+            code(&restore(p, "torn", &torn.lease).unwrap_err()),
+            "record_damaged"
+        );
+        assert_eq!(fs::read(&torn_file)?, torn_bytes);
+        assert_eq!(fs::read(&invalid_file)?, invalid_bytes);
+
+        // A copied record that claims another graft's lease taints both.
+        let mut copy: Value = serde_json::from_slice(&fs::read(record_file(p, &other)?)?)?;
+        let id = Uuid::new_v4().to_string();
+        copy["id"] = json!(id);
+        copy["name"] = json!("impostor");
+        copy["port"] = json!(49999);
+        let copy_file = record_file(p, &other)?.with_file_name(format!("{id}.json"));
+        fs::write(&copy_file, serde_json::to_vec(&copy)?)?;
+        assert_eq!(
+            code(&authenticate(p, "other", &other.lease).unwrap_err()),
+            "record_damaged"
+        );
+        assert_eq!(
+            code(&authenticate(p, "impostor", &other.lease).unwrap_err()),
+            "record_damaged"
+        );
+        assert!(authenticate(p, "healthy", &load(p, "healthy")?.lease).is_ok());
+        assert!(other.path.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn an_archived_lease_says_how_to_restore_without_showing_a_lease() -> Result<()> {
+        let f = Fixture::new()?;
+        let p = &f.project;
+        let r = f.expired_at_base("idle")?;
+        assert_eq!(prune(p, true)?[0].reason, Some("archived"));
+        let error = authenticate(p, &r.name, &r.lease).unwrap_err();
+        let reported = crate::api::error_json(&error);
+        assert_eq!(reported["code"], "graft_archived");
+        assert_eq!(reported["details"]["archived_by"], "remove_or_prune");
+        assert_eq!(reported["details"]["name_in_use"], false);
+        let message = reported["message"].as_str().unwrap_or_default();
+        assert!(message.contains("prune") && message.contains("git graft restore idle"));
+        assert!(!reported.to_string().contains(&r.lease));
+        // Another lease, or none, still learns nothing about the archive.
+        let stranger = Uuid::new_v4().to_string();
+        assert_eq!(
+            code(&authenticate(p, &r.name, &stranger).unwrap_err()),
+            "not_found"
+        );
+
+        // When the name is reused, the hint says to free it first.
+        let next = f.expired_at_base("idle")?;
+        let reported = crate::api::error_json(&authenticate(p, &r.name, &r.lease).unwrap_err());
+        assert_eq!(reported["code"], "graft_archived");
+        assert_eq!(reported["details"]["name_in_use"], true);
+        assert!(!reported.to_string().contains(&next.lease));
+        assert_eq!(
+            code(&authenticate(p, &r.name, &stranger).unwrap_err()),
+            "lease_mismatch"
+        );
+        {
+            let _lock = workspace_lock(p, &next.name)?;
+            retire(p, &next.name, &next.lease, Status::Dropped, None)?;
+        }
+        assert_eq!(restore(p, &r.name, &r.lease)?.status, Status::Active);
+        Ok(())
     }
 
     #[test]
@@ -1896,7 +2588,7 @@ mod tests {
         rename_exclusive(&r.path, &archive)?;
         let retired = {
             let _lock = workspace_lock(p, &r.name)?;
-            retire(p, &r.name, &old_lease, Status::Landed)?
+            retire(p, &r.name, &old_lease, Status::Landed, None)?
         };
         assert_eq!(retired.status, Status::Landed);
         assert_eq!(git::oid(&archive, "refs/stash")?, stash);
@@ -1932,7 +2624,7 @@ mod tests {
 
         {
             let _lock = workspace_lock(p, &r.name)?;
-            retire(p, &r.name, &new_lease, Status::Dropped)?;
+            retire(p, &r.name, &new_lease, Status::Dropped, None)?;
         }
         let replacement = f.workspace(&r.name)?;
         assert_ne!(replacement.id, r.id);
@@ -2012,7 +2704,7 @@ mod tests {
         fs::write(r.path.join("partial"), "keep it")?;
         let retired = {
             let _lock = workspace_lock(p, &r.name)?;
-            retire(p, &r.name, &lease, Status::Dropped)?
+            retire(p, &r.name, &lease, Status::Dropped, None)?
         };
         assert_eq!(retired.status, Status::Dropped);
         let restored = restore(p, &r.name, &lease)?;
@@ -2053,7 +2745,7 @@ mod tests {
         assert_eq!(fs::read_to_string(stage.join("partial"))?, "partial work");
         let retired = {
             let _lock = workspace_lock(p, &r.name)?;
-            retire(p, &r.name, &r.lease, Status::Dropped)?
+            retire(p, &r.name, &r.lease, Status::Dropped, None)?
         };
         let archive = retired.archive.context("missing archive")?;
         assert_eq!(fs::read_to_string(archive.join("partial"))?, "partial work");
@@ -2227,7 +2919,7 @@ mod tests {
             let _lock = workspace_lock(p, &r.name)?;
             expect_nested(
                 "drop",
-                retire(p, &r.name, &r.lease, Status::Dropped).unwrap_err(),
+                retire(p, &r.name, &r.lease, Status::Dropped, None).unwrap_err(),
             );
         }
         assert!(load(p, &r.name)?.transition.is_none());

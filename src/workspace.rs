@@ -302,18 +302,30 @@ fn clean(path: &Path, allow_ignored: bool) -> Result<()> {
     Ok(())
 }
 
+/// What an archive did. A merge receipt says every commit of the graft was
+/// merged. When `remove --discard` archived commits made after an earlier
+/// merge had landed, the action is `remove`: the receipt still names the
+/// merge that landed, and `head` is the archived graft HEAD whose later
+/// commits were never merged.
 fn receipt(r: &Record) -> Value {
-    match &r.plan {
-        Some(plan) => {
+    match (&r.plan, &r.unmerged_head) {
+        (Some(plan), None) => {
             json!({"action":"merge","name":r.name,"target":plan.target,"previous":plan.old,
             "commit":plan.new,"graft_tip":plan.tip,"removed":true,"recovery_lease":r.lease})
         }
-        None => json!({"action":"remove","name":r.name,"removed":true,"recovery_lease":r.lease}),
+        (Some(plan), Some(head)) => {
+            json!({"action":"remove","name":r.name,"target":plan.target,"previous":plan.old,
+            "commit":plan.new,"graft_tip":plan.tip,"head":head,"unmerged_commits":true,
+            "removed":true,"recovery_lease":r.lease})
+        }
+        (None, _) => {
+            json!({"action":"remove","name":r.name,"removed":true,"recovery_lease":r.lease})
+        }
     }
 }
 
 fn retire(p: &Project, name: &str, lease: &str, status: Status) -> Result<Value> {
-    Ok(receipt(&registry::retire(p, name, lease, status)?))
+    Ok(receipt(&registry::retire(p, name, lease, status, None)?))
 }
 
 fn destination_contains(p: &Project, plan: &crate::landing::Plan) -> Result<bool> {
@@ -363,11 +375,9 @@ fn destination_contains(p: &Project, plan: &crate::landing::Plan) -> Result<bool
 
 fn land_workspace(p: &Project, opts: &api::Land) -> Result<Value> {
     let _lock = registry::workspace_lock(p, &opts.name)?;
-    if let Ok(r) = registry::load_retired(p, &opts.name, &opts.lease) {
-        ensure!(
-            r.plan.as_ref().is_some_and(|plan| plan.target == opts.into),
-            "retirement does not match requested merge"
-        );
+    if let Ok(r) = registry::load_retired(p, &opts.name, &opts.lease)
+        && r.plan.as_ref().is_some_and(|plan| plan.target == opts.into)
+    {
         return Ok(receipt(&r));
     }
     let mut r = registry::authenticate(p, &opts.name, &opts.lease)?;
@@ -433,11 +443,11 @@ fn land_workspace(p: &Project, opts: &api::Land) -> Result<Value> {
 
 fn drop_workspace(p: &Project, opts: &api::DropWorkspace) -> Result<Value> {
     let _lock = registry::workspace_lock(p, &opts.name)?;
-    if let Ok(r) = registry::load_retired(p, &opts.name, &opts.lease) {
-        ensure!(
-            r.status == Status::Dropped || opts.discard,
-            "graft was archived by merge"
-        );
+    // Replay the receipt of an earlier remove. Anything else archived with
+    // this lease gets authenticate's graft_archived error and restore hint.
+    if let Ok(r) = registry::load_retired(p, &opts.name, &opts.lease)
+        && (r.status == Status::Dropped || opts.discard)
+    {
         return Ok(receipt(&r));
     }
     let mut r = registry::authenticate(p, &opts.name, &opts.lease)?;
@@ -459,7 +469,18 @@ fn drop_workspace(p: &Project, opts: &api::DropWorkspace) -> Result<Value> {
             // and the undo receipt if the destination already contains it.
             if destination_contains(p, plan)? {
                 crate::landing::finish_applied_checkout(&p.repo, plan)?;
-                return retire(p, &r.name, &r.lease, Status::Landed);
+                // Commits made after the merged tip were never merged.
+                let head = (!unborn(&r.path)?)
+                    .then(|| git::oid(&r.path, "HEAD"))
+                    .transpose()?
+                    .filter(|head| *head != plan.tip);
+                return Ok(receipt(&registry::retire(
+                    p,
+                    &r.name,
+                    &r.lease,
+                    Status::Landed,
+                    head.as_deref(),
+                )?));
             }
             crate::landing::require_no_pending_checkout(&p.repo, plan)?;
             r.plan = None;
@@ -471,20 +492,20 @@ fn drop_workspace(p: &Project, opts: &api::DropWorkspace) -> Result<Value> {
                 "partial graft requires --discard to archive"
             );
             clean(&r.path, false)?;
-            if let Some(base) = &r.base {
-                ensure!(
-                    git::oid(&r.path, "HEAD")? == *base,
-                    "merge the graft's commits or archive it explicitly with --discard"
-                );
-            } else {
-                ensure!(
-                    unborn(&r.path)?,
-                    "merge the graft's commits or archive it explicitly with --discard"
-                );
-            }
+            registry::require_merged(&r)?;
         }
     }
     retire(p, &r.name, &r.lease, Status::Dropped)
+}
+
+/// Add `damaged_records` when a record file cannot be used, so the person
+/// sees it in `list` and `prune`. A healthy project's output is unchanged.
+fn with_damaged(p: &Project, value: &mut Value) -> Result<()> {
+    let damaged = registry::damaged(p)?;
+    if !damaged.is_empty() {
+        value["damaged_records"] = json!(damaged);
+    }
+    Ok(())
 }
 
 fn unborn(path: &Path) -> Result<bool> {
@@ -579,9 +600,10 @@ pub fn run(repo: &Path, command: Command) -> Result<Value> {
             "git":version,"git_minimum":git::MINIMUM_VERSION,"git_supported":supported}));
         }
         Command::List => {
-            return Ok(
-                json!({"workspaces":registry::list(p)?,"recoverable":registry::recoverable(p)?}),
-            );
+            let mut listed =
+                json!({"workspaces":registry::list(p)?,"recoverable":registry::recoverable(p)?});
+            with_damaged(p, &mut listed)?;
+            return Ok(listed);
         }
         Command::ListManagers => return crate::package_manager::list(p),
         Command::UnregisterManager(a) => return crate::package_manager::unregister(p, &a.manager),
@@ -658,7 +680,9 @@ pub fn run(repo: &Path, command: Command) -> Result<Value> {
             } else {
                 engine::gc::purge_caches(p, a.apply)?
             };
-            return Ok(json!({"applied":a.apply,"retained":retained,"cache":cache}));
+            let mut pruned = json!({"applied":a.apply,"retained":retained,"cache":cache});
+            with_damaged(p, &mut pruned)?;
+            return Ok(pruned);
         }
         Command::Env(a) => {
             let r = registry::load(p, &a.name)?;

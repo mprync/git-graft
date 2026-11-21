@@ -449,6 +449,9 @@ export const cases: Scenario[] = [
       ctx.git(['worktree', 'remove', linked], ws.path);
       assert.equal(ctx.cli(move).path, destination);
       assert.equal(existsSync(ws.path), false);
+      // The native checkout's branch stays behind; remove keeps it unless discarded.
+      assert.match(String(ctx.fail(['remove', ...owned]).message), /branch external/);
+      ctx.git(['branch', '-qD', 'external'], destination);
       ctx.cli(['remove', ...owned]);
       ctx.cli(['restore', ...owned]);
       ctx.git(['fsck', '--full'], destination);
