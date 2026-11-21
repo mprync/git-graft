@@ -936,6 +936,54 @@ mod tests {
         );
     }
 
+    /// An ignored primary directory whose name differs from an incoming path
+    /// only by non-ASCII case and Unicode normalization. APFS resolves both
+    /// spellings to one entry, so the merge must refuse before Git runs and
+    /// name the ignored path. Filesystems that keep the spellings apart merge
+    /// beside the ignored directory instead.
+    #[test]
+    fn refuses_ignored_collisions_that_differ_by_unicode_case_or_normalization() -> Result<()> {
+        let fixture = Fixture::new()?;
+        // The incoming path is lowercase and precomposed (NFC).
+        fs::create_dir(fixture.workspace.join("caf\u{e9}"))?;
+        write(&fixture.workspace, "caf\u{e9}/secret", "landed\n");
+        commit(&fixture.workspace, "feature");
+        let plan = fixture.plan()?;
+        // The ignored directory is uppercase and decomposed (NFD).
+        let ignored = fixture.p.repo.join("CAFE\u{301}");
+        fs::create_dir(&ignored)?;
+        write(&ignored, "secret", "keep ignored file\n");
+        // Git may report the name precomposed, so match it either way.
+        write(&fixture.p.repo, ".git/info/exclude", "/CAF*/\n");
+        let index = fs::read(fixture.p.repo.join(".git/index"))?;
+        let folds = fixture.p.repo.join("caf\u{e9}").exists();
+        if folds {
+            let error = format!("{:#}", apply(&fixture.p, &plan).unwrap_err());
+            assert!(
+                error.contains("an ignored path would be overwritten by checkout"),
+                "{error}"
+            );
+            assert_eq!(run(&fixture.p.repo, &["rev-parse", "HEAD"]), fixture.base);
+            assert_eq!(fs::read(fixture.p.repo.join(".git/index"))?, index);
+            assert!(!fixture.p.repo.join(".git/graft/checkout-update").exists());
+        } else {
+            apply(&fixture.p, &plan)?;
+            assert_eq!(
+                fs::read_to_string(fixture.p.repo.join("caf\u{e9}/secret"))?,
+                "landed\n"
+            );
+        }
+        assert_eq!(
+            fs::read_to_string(ignored.join("secret"))?,
+            "keep ignored file\n"
+        );
+        // macOS volumes fold by default; the CI runners use them.
+        if cfg!(target_os = "macos") && std::env::var_os("GIT_GRAFT_CASE_SENSITIVE_TMP").is_none() {
+            assert!(folds, "expected a case-insensitive temporary volume");
+        }
+        Ok(())
+    }
+
     #[test]
     fn refuses_sparse_and_busy_primary_checkout() {
         let fixture = Fixture::new().unwrap();
