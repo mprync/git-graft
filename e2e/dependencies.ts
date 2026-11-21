@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
-import { delimiter, dirname, join } from 'node:path';
+import { basename, delimiter, dirname, join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import type { Context, Scenario } from './harness.ts';
 
@@ -378,13 +378,12 @@ const layerCase: Scenario = {
     ctx.fail(layer('restore',third));
     const forgotten=ctx.cli(layer('remove',second));
     assert(!existsSync(join(state,'layers',String(saved.digest))));
-    if (process.platform === 'win32') {
-      assert.equal(forgotten.retained,true);
-      const retained=join(state,'retained-layers');
-      const entry=readdirSync(retained).find(name => name.startsWith(String(saved.digest) + '-'));
-      assert(entry);
-      assert.deepEqual(readFileSync(join(retained,entry,'node_modules/graft-fixture/index.js')),original);
-    }
+    // Every platform retires a removed layer instead of deleting it.
+    assert.equal(forgotten.retained,true);
+    const retained=String(forgotten.retained_path);
+    assert.equal(dirname(retained),join(state,'retained-layers'));
+    assert(basename(retained).startsWith(String(saved.digest) + '-'));
+    assert.deepEqual(readFileSync(join(retained,'node_modules/graft-fixture/index.js')),original);
     ctx.measure('layer_forced_copy_bytes',saved.copied_bytes);
   },
 };

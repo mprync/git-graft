@@ -69,7 +69,7 @@ git graft add task --base main
 
 The key attests to the toolchain, options and relevant environment. The install must contain no private data and be usable after source-only edits. Compatible full `add` calls on a clone-capable volume attach a private writable view; inspect `storage.dependencies.status`. An unavailable or mismatched layer is not installed automatically. Use `--no-deps` for a source-only graft. Sparse grafts and MCP hosts without `--allow-exec` do not attach the install.
 
-For an exact-source manual snapshot, use `deps share --snapshot --key KEY` (from the primary checkout) or `deps layer save NAME --key KEY` (from a graft), then `deps layer restore NAME --key KEY`. `deps layer remove NAME --key KEY` deletes a saved layer. Manual transfers require copy-on-write unless `--copy` is explicitly supplied. Review `--help` for leases and options. Treat installed layers as executable content shared within one trust domain.
+For an exact-source manual snapshot, use `deps share --snapshot --key KEY` (from the primary checkout) or `deps layer save NAME --key KEY` (from a graft), then `deps layer restore NAME --key KEY`. `deps layer remove NAME --key KEY` retires a saved layer: on every platform it moves the layer to `.git/graft/retained-layers/` and reports `retained_path`, so a patched install is never lost. Delete that directory yourself once you no longer need it; Graft never deletes it. Manual transfers require copy-on-write unless `--copy` is explicitly supplied. Review `--help` for leases and options. Treat installed layers as executable content shared within one trust domain.
 
 ## Merge and recover
 
