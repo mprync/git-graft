@@ -170,11 +170,53 @@ fn index_entries(bytes: &[u8]) -> Result<BTreeMap<&[u8], &[u8]>> {
         .collect()
 }
 
+/// Marks the graft index lock that `merge --commit` holds while staging.
+const STAGING_LOCK: &str = "git-graft staging ";
+
+/// Release the graft index lock left by a `merge --commit` that was killed
+/// while staging. Call this only while holding the graft's workspace lock.
+/// Every Graft process that stages a graft holds that lock until it exits,
+/// so a staging lock found under it belongs to a process that has exited.
+/// The index itself is replaced only by an atomic rename, so it holds the
+/// state before or after staging; Git must still be able to read it.
+pub(crate) fn reclaim_staging_lock(workspace: &Path) -> Result<()> {
+    let lock = git::absolute_git_dir(workspace)?.join("index.lock");
+    if !registry::exists(&lock)? {
+        return Ok(());
+    }
+    let marker = registry::regular(&lock)?;
+    let staging = marker
+        .strip_prefix(STAGING_LOCK.as_bytes())
+        .and_then(|rest| rest.strip_suffix(b"\n"))
+        .and_then(|token| std::str::from_utf8(token).ok())
+        .is_some_and(|token| uuid::Uuid::parse_str(token).is_ok());
+    if !staging {
+        // A native Git lock. The idle check reports it as git_busy.
+        return Ok(());
+    }
+    let output = git::command(workspace)
+        .args(["ls-files", "--stage"])
+        .stdout(std::process::Stdio::null())
+        .output()?;
+    if !output.status.success() {
+        return Err(fault(
+            "git_busy",
+            format!(
+                "An interrupted merge --commit left the graft index unreadable, so Graft kept its index lock at {}. Inspect the graft with Git before retrying",
+                lock.display()
+            ),
+            json!({"marker":"index.lock","path":lock,"detail":String::from_utf8_lossy(&output.stderr).trim()}),
+        ));
+    }
+    fs::remove_file(&lock)?;
+    Ok(())
+}
+
 fn stage_workspace(workspace: &Path, installations: &[&str]) -> Result<()> {
     let admin = git::absolute_git_dir(workspace)?;
     let _lock = checkout::IndexLock::create(
         admin.join("index.lock"),
-        format!("git-graft staging {}\n", uuid::Uuid::new_v4()),
+        format!("{STAGING_LOCK}{}\n", uuid::Uuid::new_v4()),
     )?;
     git::check_idle_with_locks(workspace, true, false)?;
     // Ask Git about the recorded directories, respecting the current checkout's

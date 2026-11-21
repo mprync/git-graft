@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn as spawnProcess } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
+import { Running, waitFor } from './checkout-faults.ts';
 import { leaveIndexedCheckoutJournal } from './checkout-journal.ts';
-import type { Scenario } from './harness.ts';
+import { objectResult, type Scenario } from './harness.ts';
 
 type Context = Parameters<Scenario['run']>[0];
 type Workspace = ReturnType<Context['spawn']>;
@@ -59,6 +60,57 @@ function packageFiles(root: string, item?: { name: string; version: string; sect
 }
 
 export const cases: Scenario[] = [
+  {
+    name: 'a merge --commit killed while staging releases its graft index lock on retry',
+    async run(ctx) {
+      const name = 'staging';
+      const workspace = ctx.spawn(name);
+      const old = ctx.git(['rev-parse', 'HEAD']);
+      const lock = join(workspace.path, '.git', 'index.lock');
+      // A Git lock that Graft did not create is reported and kept.
+      writeFileSync(lock, 'held by another Git command\n');
+      const busy = ctx.fail(landArgs(workspace, name, '--commit', 'staged work'));
+      assert.equal(busy.code, 'git_busy');
+      assert.equal(readFileSync(lock, 'utf8'), 'held by another Git command\n');
+      rmSync(lock);
+
+      // A global clean filter blocks git add while Graft holds the lock.
+      const fault = join(ctx.root, 'staging fault');
+      mkdirSync(fault);
+      const dir = fault.replaceAll('\\', '/');
+      const script = join(fault, 'clean.sh');
+      writeFileSync(script, `#!/bin/sh\nif [ -f '${dir}/armed' ]; then : > '${dir}/ready'; while [ ! -f '${dir}/release' ]; do sleep 0.1; done; fi\nexec cat\n`, { mode: 0o755 });
+      const config = ctx.env.GIT_CONFIG_GLOBAL;
+      assert(typeof config === 'string');
+      appendFileSync(config, `[filter "slow"]\n\tclean = sh '${script.replaceAll('\\', '/')}'\n\tsmudge = cat\n`);
+      write(workspace.path, '.git/info/attributes', '*.slow filter=slow\n');
+      write(workspace.path, 'feature.slow', 'work staged by merge --commit\n');
+      write(workspace.path, 'notes.txt', 'more uncommitted work\n');
+      writeFileSync(join(fault, 'armed'), '');
+      const merge = new Running(ctx, landArgs(workspace, name, '--commit', 'staged work'));
+      try {
+        await waitFor(() => existsSync(join(fault, 'ready')) || !merge.running(), 'the staging filter');
+        assert(existsSync(join(fault, 'ready')), 'the merge exited before staging');
+        merge.killCli();
+        await merge.exit();
+      } finally {
+        rmSync(join(fault, 'armed'));
+        writeFileSync(join(fault, 'release'), '');
+      }
+      assert.match(readFileSync(lock, 'utf8'), /^git-graft staging /);
+      assert.equal(read(workspace.path, 'feature.slow'), 'work staged by merge --commit\n');
+      assert.equal(read(workspace.path, 'notes.txt'), 'more uncommitted work\n');
+      assert.equal(ctx.git(['rev-parse', 'HEAD']), old);
+      assert.equal(ctx.cli(['status', name]).phase, 'ready');
+
+      const receipt = ctx.cli(landArgs(workspace, name, '--commit', 'staged work'));
+      assert.equal(receipt.removed, true);
+      assert.equal(existsSync(lock), false);
+      assert.equal(read(ctx.repo, 'feature.slow'), 'work staged by merge --commit\n');
+      assert.equal(read(ctx.repo, 'notes.txt'), 'more uncommitted work\n');
+      assert.equal(ctx.git(['show', '-s', '--format=%s', 'HEAD']), 'staged work');
+    },
+  },
   {
     name: 'interrupted first landing preserves work and retries with the same lease',
     async run(ctx) {
