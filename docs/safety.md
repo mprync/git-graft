@@ -16,7 +16,7 @@ When reusing a mixed pack, Graft edits an unlinked copy, has Git index its conte
 
 ## Recover work
 
-`merge`, `remove` and `prune` archive the graft, including its private repository and files. Archives can retain ignored files, credentials and other sensitive user data; protect them as you would the graft. Save the returned recovery lease:
+`merge`, `remove` and `prune` archive the graft: they move its private repository and every file in it, including untracked and ignored files, to `<repo>.graft/.retired/<id>`. Archives therefore keep credentials such as `.env` files, keys and tokens that the graft held. Graft creates graft and archive directories owner-only (mode 0700 on Unix) and keeps each file's own mode; on Windows they inherit the parent's ACLs. Your user account, and any backup of the disk, can still read them. To remove a secret for good, delete it from the graft before archiving it, or from the archive afterwards. Save the returned recovery lease:
 
 | Situation | Action |
 | --- | --- |
@@ -24,7 +24,8 @@ When reusing a mixed pack, Graft edits an unlinked copy, has Git index its conte
 | Reverse a merge | `git graft merge NAME --undo --lease TOKEN` appends a reversal commit if the destination still points at the merge commit. |
 | Destination advanced | Review subsequent commits and use an ordinary reviewed reversal. |
 | `checkout_recovery_required` | Retry the same merge or undo with the same lease before editing. If it still stops, preserve files and the index and follow [checkout recovery](operations.md#interrupted-checkout-update). |
-| Name or path is occupied | Inspect the collision and preserve the existing data before retrying. |
+| Name or path is occupied | Restore fails as `already_exists`. Inspect the collision and preserve the existing data before retrying. |
+| `archive_damaged` | The archive at `details.archive_path` is missing or was changed by hand. Restore leaves it exactly as found. Copy what you need from it, or put back the missing Git files and retry. |
 
 Archives and recovery records have no automatic expiry and can use disk. Deleting the original repository or Graft's recovery state can prevent recovery. Maintain independent backups for disk failure and accidental deletion.
 
