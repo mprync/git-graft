@@ -1552,14 +1552,30 @@ pub fn restore(p: &Project, name: &str, lease: &str) -> Result<Record> {
         .cloned()
         .ok_or_else(|| bad_lease(name))?;
     let _lock = workspace_lock(p, name)?;
-    ensure!(
-        active.as_ref().is_none_or(|active| active.id == r.id),
-        "graft name is already in use"
-    );
+    if active.as_ref().is_some_and(|active| active.id != r.id) {
+        return Err(fault(
+            "already_exists",
+            "Another graft is using this name; merge or remove it before restoring the archive",
+            json!({"name": name, "archive_path": r.archive}),
+        ));
+    }
     if r.transition.is_none() {
-        let archive = recorded_archive(p, &r)?;
-        verify_checkout(p, &r, &archive)?;
-        require_movable_git(&r, &archive)?;
+        // A missing or hand-edited archive is left exactly as found.
+        let archive = recorded_archive(p, &r)
+            .and_then(|archive| {
+                verify_checkout(p, &r, &archive)?;
+                require_movable_git(&r, &archive)?;
+                Ok(archive)
+            })
+            .map_err(|error| {
+                fault(
+                    "archive_damaged",
+                    format!(
+                        "The graft archive is missing or damaged, so restore left it untouched: {error:#}"
+                    ),
+                    json!({"name": name, "archive_path": r.archive}),
+                )
+            })?;
         safe_destination(p, &r, &r.path)?;
         ensure_unoccupied(&r.path)?;
         ensure!(
