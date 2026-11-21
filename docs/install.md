@@ -57,6 +57,8 @@ It installs to `%LOCALAPPDATA%\Programs\git-graft\bin` and adds that directory t
 
 ## Package managers
 
+Homebrew, Scoop, the `curl` and `irm` installers and Cargo work as soon as a release is published. winget works once its pull request into [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs) is merged, and Chocolatey works once its moderation is done (days to weeks for a first package).
+
 ### Homebrew (macOS and Linux)
 
 ```sh
@@ -95,13 +97,7 @@ sudo pacman -U ./git-graft-0.1.0-1-x86_64.pkg.tar.zst         # Arch
 
 The packages install `/usr/bin/git-graft` and depend on `git`. Some distributions ship a Git older than 2.46; the package installs regardless, but git-graft needs 2.46 or newer at runtime, so upgrade Git from your distribution's backports or from git-scm.com if `git --version` is older.
 
-### Arch User Repository
-
-```sh
-yay -S git-graft-bin
-```
-
-Any AUR helper works. The package installs the prebuilt release binary.
+An Arch User Repository (AUR) package is planned.
 
 ### Cargo
 
@@ -109,6 +105,12 @@ Requires Rust 1.89 or newer.
 
 ```sh
 cargo install --locked git-graft
+```
+
+To build from source without a crates.io release, install straight from GitHub:
+
+```sh
+cargo install --locked --git https://github.com/mprync/git-graft
 ```
 
 From a clone of the repository:
@@ -157,7 +159,6 @@ The release workflow attests every asset, including `SHA256SUMS` and the install
 | Chocolatey | `choco upgrade git-graft` |
 | winget | `winget upgrade mprync.git-graft` |
 | `.deb`, `.rpm`, `.apk`, Arch package | Install the newer package file. |
-| AUR | Update with your AUR helper. |
 | Cargo | `cargo install --locked git-graft --force` |
 
 ## Uninstall
@@ -173,7 +174,7 @@ The release workflow attests every asset, including `SHA256SUMS` and the install
 | Debian, Ubuntu | `sudo apt remove git-graft` |
 | Fedora, RHEL | `sudo dnf remove git-graft` |
 | Alpine | `sudo apk del git-graft` |
-| Arch, AUR | `sudo pacman -R git-graft` or `sudo pacman -R git-graft-bin` |
+| Arch | `sudo pacman -R git-graft` |
 | Cargo | `cargo uninstall git-graft` |
 
 Uninstalling removes only the binary. Grafts and caches that git-graft created stay in place. To remove them first, remove your grafts and run `git graft prune --purge-cache --apply` (see [operations](operations.md)).
