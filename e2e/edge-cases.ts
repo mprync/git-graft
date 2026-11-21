@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
-import { parseExact, type Scenario } from './harness.ts';
+import { execute, parseExact, type Scenario } from './harness.ts';
 
 type Context = Parameters<Scenario['run']>[0];
 type Workspace = ReturnType<Context['spawn']>;
@@ -166,4 +166,204 @@ export const cases: Scenario[] = [
       rmSync(join(consumer.path, 'node_modules'), { recursive: true });
     },
   },
+  {
+    name: 'a pre-commit hook that edits files during merge --commit keeps the commit and the edits',
+    run(ctx) {
+      const ws = ctx.spawn('hooked');
+      const before = ctx.git(['rev-parse', 'HEAD']);
+      const hooks = join(ctx.root, 'editing-hooks');
+      write(join(hooks, 'pre-commit'), '#!/bin/sh\nprintf "hook edit\\n" >> tracked.txt\nprintf "hook output\\n" > hook.txt\n');
+      chmodSync(join(hooks, 'pre-commit'), 0o755);
+      ctx.git(['config', '--local', 'core.hooksPath', hooks], ws.path);
+      writeFileSync(join(ws.path, 'tracked.txt'), 'agent work\n');
+      const merge = ['merge', 'hooked', '--lease', ws.lease, '--commit', 'Agent work'];
+      // The hook runs after staging, so its edits are not in the commit. The
+      // merge must refuse instead of archiving them or merging a partial tree.
+      assert.match(String(ctx.fail(merge).message), /uncommitted changes/i);
+      assert.equal(ctx.git(['rev-parse', 'HEAD']), before);
+      assert.equal(readFileSync(join(ctx.repo, 'tracked.txt'), 'utf8'), 'initial\n');
+      assert.equal(existsSync(join(ctx.repo, 'hook.txt')), false);
+      assert.equal(ctx.git(['log', '-1', '--format=%s'], ws.path), 'Agent work');
+      assert.equal(ctx.git(['show', 'HEAD:tracked.txt'], ws.path), 'agent work');
+      assert.equal(readFileSync(join(ws.path, 'tracked.txt'), 'utf8'), 'agent work\nhook edit\n');
+      assert.equal(readFileSync(join(ws.path, 'hook.txt'), 'utf8'), 'hook output\n');
+      // Committing the hook's edits lets the retry merge everything.
+      ctx.git(['config', '--local', '--unset', 'core.hooksPath'], ws.path);
+      ctx.git(['add', '-A'], ws.path);
+      ctx.git(['commit', '-qm', 'Hook edits'], ws.path);
+      const tip = ctx.git(['rev-parse', 'HEAD'], ws.path);
+      assert.equal(ctx.cli(['merge', 'hooked', '--lease', ws.lease]).commit, tip);
+      assert.equal(readFileSync(join(ctx.repo, 'tracked.txt'), 'utf8'), 'agent work\nhook edit\n');
+      assert.equal(readFileSync(join(ctx.repo, 'hook.txt'), 'utf8'), 'hook output\n');
+    },
+  },
+  {
+    name: 'initialised submodules stay untouched in the primary and block archiving in a graft',
+    run(ctx) {
+      writeFileSync(join(ctx.env.HOME!, 'gitconfig'), '[core]\n\tautocrlf = false\n[protocol "file"]\n\tallow = always\n');
+      const library = join(ctx.root, 'library');
+      mkdirSync(library);
+      ctx.git(['init', '-q', '-b', 'main'], library);
+      writeFileSync(join(library, 'lib.txt'), 'library\n');
+      ctx.git(['add', '.'], library);
+      ctx.git(['commit', '-qm', 'library'], library);
+      ctx.git(['submodule', '-q', 'add', library, 'vendor/lib']);
+      ctx.git(['commit', '-qm', 'Add submodule']);
+      const submodule = join(ctx.repo, 'vendor', 'lib');
+      const subHead = ctx.git(['rev-parse', 'HEAD'], submodule);
+      const ws = ctx.spawn('outer');
+      writeFileSync(join(ws.path, 'tracked.txt'), 'outer change\n');
+      ctx.git(['commit', '-qam', 'Outer change'], ws.path);
+      const tip = ctx.git(['rev-parse', 'HEAD'], ws.path);
+      // Local work inside the primary's submodule blocks the merge.
+      writeFileSync(join(submodule, 'lib.txt'), 'library\nlocal edit\n');
+      writeFileSync(join(submodule, 'scratch.txt'), 'untracked in submodule\n');
+      assert.match(String(ctx.fail(['merge', 'outer', '--lease', ws.lease]).message), /local changes/i);
+      assert.equal(readFileSync(join(submodule, 'lib.txt'), 'utf8'), 'library\nlocal edit\n');
+      assert.equal(readFileSync(join(submodule, 'scratch.txt'), 'utf8'), 'untracked in submodule\n');
+      assert.equal(ctx.git(['rev-parse', 'HEAD'], submodule), subHead);
+      ctx.git(['checkout', '-q', '--', '.'], submodule);
+      rmSync(join(submodule, 'scratch.txt'));
+      // A clean merge leaves the submodule checkout and its history alone.
+      assert.equal(ctx.cli(['merge', 'outer', '--lease', ws.lease]).commit, tip);
+      assert.equal(ctx.git(['rev-parse', 'HEAD'], submodule), subHead);
+      assert.equal(readFileSync(join(submodule, 'lib.txt'), 'utf8'), 'library\n');
+      assert.equal(ctx.git(['status', '--porcelain']), '');
+
+      // A submodule initialised inside a graft is refused, never archived partially.
+      const inner = ctx.spawn('inner');
+      ctx.git(['submodule', '-q', 'update', '--init'], inner.path);
+      const innerSub = join(inner.path, 'vendor', 'lib');
+      writeFileSync(join(innerSub, 'work.txt'), 'submodule work\n');
+      for (const args of [['merge', 'inner'], ['remove', 'inner'], ['remove', 'inner', '--discard']]) {
+        assert.equal(ctx.fail([...args, '--lease', inner.lease]).code, 'nested_git_metadata', args.join(' '));
+      }
+      assert.equal(readFileSync(join(innerSub, 'work.txt'), 'utf8'), 'submodule work\n');
+      ctx.git(['fsck', '--full'], innerSub);
+      assert.equal(ctx.cli(['status', 'inner']).name, 'inner');
+    },
+  },
+  {
+    name: 'Unicode file names survive merge, archive and restore',
+    run(ctx) {
+      const names = ['café-nfc.txt', 'café-nfd.txt', '日本語.txt', '\u{1f333}-graft.txt', 'résumé/été.txt'];
+      const ws = ctx.spawn('unicode');
+      for (const name of names) write(join(ws.path, name), `contents of ${name}\n`);
+      ctx.git(['add', '-A'], ws.path);
+      ctx.git(['commit', '-qm', 'Unicode names'], ws.path);
+      const tip = ctx.git(['rev-parse', 'HEAD'], ws.path);
+      write(join(ws.path, 'übung-notes.txt'), 'uncommitted Unicode\n');
+      const restore = ctx.spawn('unicode-archive');
+      for (const name of names) write(join(restore.path, name), `untracked ${name}\n`);
+      ctx.cli(['remove', 'unicode-archive', '--lease', restore.lease, '--discard']);
+      const restored = String(ctx.cli(['restore', 'unicode-archive', '--lease', restore.lease]).path);
+      for (const name of names) assert.equal(readFileSync(join(restored, name), 'utf8'), `untracked ${name}\n`, name);
+
+      rmSync(join(ws.path, 'übung-notes.txt'));
+      assert.equal(ctx.cli(['merge', 'unicode', '--lease', ws.lease]).commit, tip);
+      for (const name of names) assert.equal(readFileSync(join(ctx.repo, name), 'utf8'), `contents of ${name}\n`, name);
+      assert.equal(ctx.git(['status', '--porcelain']), '');
+      const back = String(ctx.cli(['restore', 'unicode', '--lease', ws.lease]).path);
+      for (const name of names) assert.equal(readFileSync(join(back, name), 'utf8'), `contents of ${name}\n`, name);
+    },
+  },
+  {
+    name: 'case-only renames merge and case-colliding trees are never silently archived',
+    run(ctx) {
+      const ws = ctx.spawn('renamed');
+      ctx.git(['mv', 'tracked.txt', 'Tracked.txt'], ws.path);
+      ctx.git(['commit', '-qm', 'Rename by case'], ws.path);
+      const tip = ctx.git(['rev-parse', 'HEAD'], ws.path);
+      assert.equal(ctx.cli(['merge', 'renamed', '--lease', ws.lease]).commit, tip);
+      assert.equal(ctx.git(['ls-files']), '.gitignore\nTracked.txt');
+      assert(readdirSync(ctx.repo).includes('Tracked.txt'), 'the primary kept the old spelling');
+      assert.equal(readFileSync(join(ctx.repo, 'Tracked.txt'), 'utf8'), 'initial\n');
+      assert.equal(ctx.git(['status', '--porcelain']), '');
+
+      // A tree holding two names that differ only by case.
+      const file = join(ctx.root, 'blob');
+      writeFileSync(file, 'lower\n');
+      const lo = ctx.git(['hash-object', '-w', file]);
+      writeFileSync(file, 'upper\n');
+      const up = ctx.git(['hash-object', '-w', file]);
+      // Build the tree in a private index, leaving the primary's untouched.
+      const env = { ...ctx.env, GIT_INDEX_FILE: join(ctx.root, 'collide.index') };
+      const run = (args: string[]) => {
+        const out = execute('git', args, ctx.repo, env);
+        assert.equal(out.status, 0, out.stderr);
+        return out.stdout.trim();
+      };
+      run(['read-tree', 'HEAD']);
+      run(['update-index', '--add', '--cacheinfo', `100644,${lo},case.txt`, '--cacheinfo', `100644,${up},CASE.txt`]);
+      const tree = run(['write-tree']);
+      const collide = ctx.git(['commit-tree', tree, '-p', 'HEAD', '-m', 'Names that differ by case']);
+      ctx.git(['branch', 'collide', collide]);
+      const primaryIndex = readFileSync(join(ctx.repo, '.git', 'index'));
+      const coll = ctx.spawn('collide', ['--base', 'collide']);
+      assert.equal(ctx.git(['show', 'HEAD:case.txt'], coll.path), 'lower');
+      assert.equal(ctx.git(['show', 'HEAD:CASE.txt'], coll.path), 'upper');
+      if (ctx.git(['status', '--porcelain'], coll.path) !== '') {
+        // One checkout file holds both names. Graft reports that as local work.
+        assert.match(String(ctx.fail(['remove', 'collide', '--lease', coll.lease]).message), /local changes/i);
+        assert.match(String(ctx.fail(['merge', 'collide', '--lease', coll.lease, '--into', 'collide']).message), /uncommitted changes/i);
+      }
+      assert.equal(ctx.git(['rev-parse', 'collide']), collide);
+      assert.deepEqual(readFileSync(join(ctx.repo, '.git', 'index')), primaryIndex);
+      assert.equal(ctx.git(['status', '--porcelain']), '');
+    },
+  },
+  {
+    name: 'very long paths survive add, merge, archive and restore',
+    run(ctx) {
+      writeFileSync(join(ctx.env.HOME!, 'gitconfig'), '[core]\n\tautocrlf = false\n\tlongpaths = true\n');
+      const segments = Array.from({ length: 12 }, (_, i) => `directory-segment-${String(i).padStart(2, '0')}-xxxxxx`);
+      const relative = join(...segments, 'deeply-nested-file-name.txt');
+      assert(relative.length > 300, 'the fixture path should exceed 300 characters');
+      write(join(ctx.repo, relative), 'deep base\n');
+      commit(ctx, 'Deep path');
+      const ws = ctx.spawn('deep');
+      assert.equal(readFileSync(join(ws.path, relative), 'utf8'), 'deep base\n');
+      writeFileSync(join(ws.path, relative), 'deep change\n');
+      ctx.git(['commit', '-qam', 'Deep change'], ws.path);
+      const tip = ctx.git(['rev-parse', 'HEAD'], ws.path);
+      write(join(ws.path, ...segments, 'untracked-deep-notes.txt'), 'deep notes\n');
+      ctx.cli(['remove', 'deep', '--lease', ws.lease, '--discard']);
+      const restored = ctx.cli(['restore', 'deep', '--lease', ws.lease]);
+      const path = String(restored.path);
+      assert.equal(readFileSync(join(path, ...segments, 'untracked-deep-notes.txt'), 'utf8'), 'deep notes\n');
+      rmSync(join(path, ...segments, 'untracked-deep-notes.txt'));
+      assert.equal(ctx.cli(['merge', 'deep', '--lease', String(restored.lease)]).commit, tip);
+      assert.equal(readFileSync(join(ctx.repo, relative), 'utf8'), 'deep change\n');
+      assert.equal(ctx.git(['status', '--porcelain']), '');
+    },
+  },
+  ...([['decomposed', 'CAFÉ', ['darwin']], ['precomposed', 'CAFÉ', ['darwin', 'win32']]] as const)
+    .map(([form, spelling, folding]): Scenario => ({
+      name: `an ignored ${form} name that differs only by Unicode case is never overwritten`,
+      run(ctx) {
+        // The primary's ignored directory is uppercase; the graft's incoming
+        // path is lowercase and precomposed (NFC). APFS folds case and
+        // normalisation, NTFS folds case only, and Linux folds neither.
+        const ignored = join(ctx.repo, spelling);
+        write(join(ignored, 'secret.env'), 'keep this ignored file\n');
+        write(join(ctx.repo, '.git', 'info', 'exclude'), '/CAF*/\n');
+        const folds = existsSync(join(ctx.repo, 'café'));
+        if ((folding as readonly string[]).includes(process.platform)) assert(folds, 'expected a case-insensitive volume');
+        const ws = ctx.spawn('unicode-collision');
+        write(join(ws.path, 'café', 'secret.env'), 'incoming tracked file\n');
+        ctx.git(['add', '-A'], ws.path);
+        ctx.git(['commit', '-qm', 'Incoming path'], ws.path);
+        const tip = ctx.git(['rev-parse', 'HEAD'], ws.path);
+        const before = ctx.git(['rev-parse', 'HEAD']);
+        const merge = ['merge', 'unicode-collision', '--lease', ws.lease];
+        if (folds) {
+          assert.match(String(ctx.fail(merge).message), /ignored path would be overwritten/i);
+          assert.equal(ctx.git(['rev-parse', 'HEAD']), before);
+          assert.equal(ctx.git(['rev-parse', 'HEAD'], ws.path), tip);
+        } else {
+          assert.equal(ctx.cli(merge).commit, tip);
+        }
+        assert.equal(readFileSync(join(ignored, 'secret.env'), 'utf8'), 'keep this ignored file\n');
+      },
+    })),
 ];
