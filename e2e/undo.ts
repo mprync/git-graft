@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { assertMerged, CheckoutFault, prepareFaultedMerge } from './checkout-faults.ts';
 import { leaveIndexedCheckoutJournal } from './checkout-journal.ts';
 import { objectResult, type Context, type Scenario } from './harness.ts';
 
@@ -44,6 +45,67 @@ function assertUndo(ctx: Context, dest: string, previous: string, landed: string
 }
 
 export const cases: Scenario[] = [
+  {
+    name: 'an undo stopped during the checkout update finishes on retry and keeps primary edits',
+    run(ctx) {
+      const name = 'undo-fault';
+      const { workspace, old, tip } = prepareFaultedMerge(ctx, name);
+      assert.equal(land(ctx, name, workspace), tip);
+      assertMerged(ctx, tip);
+      const fault = new CheckoutFault(ctx);
+      // The undo rewrites a.fault (call 1) and b.fault (call 2) to their
+      // previous versions; failing call 2 stops it partway.
+      fault.arm('fail', 2);
+      const failure = ctx.fail(undo(name, workspace.lease));
+      assert.equal(failure.code, 'checkout_recovery_required', String(failure.message));
+      assert.doesNotMatch(String(failure.message), /git clean/);
+      assert.equal(ctx.git(['rev-parse', 'HEAD']), tip);
+      assert.equal(readFileSync(join(ctx.repo, 'a.fault'), 'utf8'), 'a before\n');
+      assert.equal(existsSync(join(ctx.repo, 'b.fault')), false);
+      assert.equal(existsSync(join(ctx.repo, '0-added.fault')), false);
+      writeFileSync(join(ctx.repo, 'untracked.txt'), 'untracked after the interruption\n');
+      writeFileSync(join(ctx.repo, 'unrelated.txt'), 'unstaged edit after the interruption\n');
+
+      fault.disarm();
+      const result = ctx.cli(undo(name, workspace.lease));
+      assertUndo(ctx, 'main', old, tip, result.commit);
+      for (const [file, content] of [['a.fault', 'a before\n'], ['b.fault', 'b before\n'],
+        ['gone.txt', 'deleted by the merge\n'], ['ignored/keep.txt', 'ignored primary data\n'],
+        ['untracked.txt', 'untracked after the interruption\n'],
+        ['unrelated.txt', 'unstaged edit after the interruption\n']]) {
+        assert.equal(readFileSync(join(ctx.repo, file), 'utf8'), content);
+      }
+      assert.equal(existsSync(join(ctx.repo, '0-added.fault')), false);
+      assert.equal(existsSync(join(ctx.repo, 'z-added.fault')), false);
+      assert.equal(ctx.git(['status', '--porcelain']), ' M unrelated.txt\n?? untracked.txt');
+      assert.equal(existsSync(join(ctx.git(['rev-parse', '--absolute-git-dir']), 'graft', 'checkout-update')), false);
+    },
+  },
+  {
+    name: 'undo with an older recovery lease refuses once a later merge moved the destination',
+    run(ctx) {
+      const name = 'relanded';
+      const first = ctx.spawn(name);
+      commit(ctx, first.path, 'first.txt', 'first merge\n');
+      const firstMerge = land(ctx, name, first);
+      const restored = ctx.cli(['restore', name, '--lease', first.lease]);
+      assert(typeof restored.lease === 'string' && restored.lease !== first.lease);
+      const second = { path: String(restored.path), lease: restored.lease, result: restored };
+      commit(ctx, second.path, 'second.txt', 'second merge\n');
+      const secondMerge = land(ctx, name, second);
+      assert.notEqual(secondMerge, firstMerge);
+
+      const failure = ctx.fail(undo(name, first.lease));
+      assert.equal(failure.code, 'target_advanced');
+      assert.deepEqual(failure.details, { target: 'main', expected: firstMerge, actual: secondMerge });
+      assert.equal(ctx.git(['rev-parse', 'HEAD']), secondMerge);
+      assert.equal(readFileSync(join(ctx.repo, 'first.txt'), 'utf8'), 'first merge\n');
+      assert.equal(readFileSync(join(ctx.repo, 'second.txt'), 'utf8'), 'second merge\n');
+      assertUndo(ctx, 'main', firstMerge, secondMerge, ctx.cli(undo(name, second.lease)).commit);
+      assert.equal(readFileSync(join(ctx.repo, 'first.txt'), 'utf8'), 'first merge\n');
+      assert.equal(existsSync(join(ctx.repo, 'second.txt')), false);
+    },
+  },
   {
     name: 'landing falls back when history cache ownership is unrecognized',
     run(ctx) {
