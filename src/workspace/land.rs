@@ -289,9 +289,9 @@ pub(crate) fn prepare(
         options,
         planning_store,
         installations,
-        |old, workspace_tip| {
+        |old, graft_tip| {
             base = Some(old.to_owned());
-            tip = Some(workspace_tip.to_owned());
+            tip = Some(graft_tip.to_owned());
             imported = Some(objects::import_plan_inputs(
                 &store,
                 &p.repo,
@@ -299,7 +299,7 @@ pub(crate) fn prepare(
                 &p.state,
                 stage.then_some(prefix.as_str()),
                 old,
-                workspace_tip,
+                graft_tip,
             )?);
             if stage {
                 scratch::checkpoint(p, &store)?;

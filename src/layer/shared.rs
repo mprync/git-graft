@@ -806,7 +806,7 @@ mod tests {
         );
         assert!(!installed.exists());
 
-        super::super::run(repo, state, "forget", KEY, false)?;
+        super::super::run(repo, state, "remove", KEY, false)?;
         assert_eq!(
             inherit_shared(&checkout, state, repo)?.unwrap()["reason"],
             "layer_generation_unavailable"

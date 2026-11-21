@@ -538,7 +538,7 @@ export const cases: Scenario[] = [
       ctx.coverTool('graft_renew');
 
       const discarded = await call(client, 'graft_remove', owned);
-      assert.deepEqual(discarded, { action: 'drop', name, removed: true, recovery_lease: first.lease });
+      assert.deepEqual(discarded, { action: 'remove', name, removed: true, recovery_lease: first.lease });
       assert(!existsSync(first.path));
       assertRefMissing(ctx, name);
       assert.deepEqual(await call(client, 'graft_remove', owned), discarded);
@@ -653,7 +653,7 @@ export const cases: Scenario[] = [
       const landed = await call(client, 'graft_merge', landArgs);
       const commit = string(landed.commit, 'landed commit');
       assert.deepEqual(landed, {
-        action: 'land', name, target: 'retry-target', previous, commit, workspace_tip: tip, removed: true, recovery_lease: workspace.lease,
+        action: 'merge', name, target: 'retry-target', previous, commit, graft_tip: tip, removed: true, recovery_lease: workspace.lease,
       });
       assert.equal(ctx.git(['rev-parse', 'HEAD'], target), commit);
       assert.equal(ctx.git(['show', '-s', '--format=%P', commit]), previous);
@@ -732,8 +732,8 @@ export const cases: Scenario[] = [
 
       const receipt = await call(client, 'graft_merge', owned);
       assert.deepEqual(receipt, {
-        action: 'land', name, target: 'main', previous: base, commit: tip,
-        workspace_tip: tip, removed: true, recovery_lease: workspace.lease,
+        action: 'merge', name, target: 'main', previous: base, commit: tip,
+        graft_tip: tip, removed: true, recovery_lease: workspace.lease,
       });
       assert(!existsSync(repaired));
       assert.equal(readFileSync(join(ctx.repo, 'feature.txt'), 'utf8'), 'feature\n');
@@ -1041,7 +1041,7 @@ export const cases: Scenario[] = [
 
         const forgotten = ctx.cli(layerArgs('remove', name, consumer.lease, key));
         assert.deepEqual(forgotten, {
-          action: 'forget', digest, backend: mode.backend, logical_bytes: 0, cloned_bytes: 0, copied_bytes: 0,
+          action: 'remove', digest, backend: mode.backend, logical_bytes: 0, cloned_bytes: 0, copied_bytes: 0,
           ...(process.platform === 'win32' ? { retained: true } : {}),
         });
         assert.deepEqual(readdirSync(layers).filter(entry => entry !== '.git-graft-id'), []);

@@ -305,10 +305,10 @@ fn clean(path: &Path, allow_ignored: bool) -> Result<()> {
 fn receipt(r: &Record) -> Value {
     match &r.plan {
         Some(plan) => {
-            json!({"action":"land","name":r.name,"target":plan.target,"previous":plan.old,
-            "commit":plan.new,"workspace_tip":plan.tip,"removed":true,"recovery_lease":r.lease})
+            json!({"action":"merge","name":r.name,"target":plan.target,"previous":plan.old,
+            "commit":plan.new,"graft_tip":plan.tip,"removed":true,"recovery_lease":r.lease})
         }
-        None => json!({"action":"drop","name":r.name,"removed":true,"recovery_lease":r.lease}),
+        None => json!({"action":"remove","name":r.name,"removed":true,"recovery_lease":r.lease}),
     }
 }
 

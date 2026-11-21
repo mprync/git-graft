@@ -151,7 +151,7 @@ function run(arm: 'graft' | 'native', payload: Buffer[], archive: {path:string; 
         for (const key of numericKeys) if (typeof item[key] === 'number' || item[key] === null) safe[key] = item[key] as number | null;
         for (const key of ['snapshot_reused','success','removed']) if (typeof item[key] === 'boolean') safe[key] = item[key] as boolean;
         if (typeof item.backend === 'string' && ['copy','copy-on-write','mixed','git','native','reflink','clonefile'].includes(item.backend)) safe.backend = item.backend;
-        if (typeof item.action === 'string' && ['save','restore','land','drop'].includes(item.action)) safe.action = item.action;
+        if (typeof item.action === 'string' && ['save','restore','merge','remove'].includes(item.action)) safe.action = item.action;
         if (item.objects && typeof item.objects === 'object' && !Array.isArray(item.objects)) safe.objects = objectBootstrap(item.objects);
         return safe;
       }).filter(item => Object.keys(item).length > 0);

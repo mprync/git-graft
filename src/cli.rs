@@ -123,7 +123,7 @@ impl From<Cmd> for workspace::Command {
                 DepsCommand::Layer(LayerArgs { action }) => match action {
                     LayerAction::Save(target) => Op::Layer("save", target),
                     LayerAction::Restore(target) => Op::Layer("restore", target),
-                    LayerAction::Remove(target) => Op::Layer("forget", target),
+                    LayerAction::Remove(target) => Op::Layer("remove", target),
                 },
                 DepsCommand::Manager(ManagerArgs { command }) => match command {
                     ManagerCommand::Add(args) => Op::RegisterManager(args),

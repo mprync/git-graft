@@ -699,7 +699,7 @@ pub fn run(
     key: &str,
     force_copy: bool,
 ) -> Result<Value> {
-    if !["save", "restore", "forget"].contains(&action) {
+    if !["save", "restore", "remove"].contains(&action) {
         bail!("unknown layer action");
     }
     let checkout = dunce::canonicalize(checkout)?;
@@ -725,7 +725,7 @@ pub fn run(
             force_copy,
             check_source,
         ),
-        "forget" => {
+        "remove" => {
             let provenance = verify_layer_contents(&layer, &digest)?;
             let backend = provenance["backend"]
                 .as_str()
@@ -919,13 +919,13 @@ mod tests {
         let private = cached.parent().unwrap().join("private-user-file");
         fs::write(&private, "do not delete")?;
         assert!(verify_layer(generation, digest).is_err());
-        assert!(run(&a, &state, "forget", "node-toolchain", false).is_err());
+        assert!(run(&a, &state, "remove", "node-toolchain", false).is_err());
         assert_eq!(fs::read_to_string(&private)?, "do not delete");
         fs::remove_file(private)?;
         let extra = generation.join("private-top-level");
         fs::write(&extra, "do not delete")?;
         assert!(verify_layer(generation, digest).is_err());
-        assert!(run(&a, &state, "forget", "node-toolchain", false).is_err());
+        assert!(run(&a, &state, "remove", "node-toolchain", false).is_err());
         assert_eq!(fs::read_to_string(&extra)?, "do not delete");
         fs::remove_file(extra)?;
         #[cfg(target_os = "macos")]
@@ -935,7 +935,7 @@ mod tests {
             let name = c"com.git-graft.private";
             set_xattr(&path, name, b"secret");
             assert!(verify_layer(generation, digest).is_err());
-            assert!(run(&a, &state, "forget", "node-toolchain", false).is_err());
+            assert!(run(&a, &state, "remove", "node-toolchain", false).is_err());
             assert_eq!(xattr_len(&path, name), 6);
             remove_xattr(&path, name);
         }
@@ -957,16 +957,16 @@ mod tests {
         assert_eq!(fs::read_to_string(&source)?, "module.exports = 42;\n");
         assert!(run(&b, &state, "restore", "node-toolchain", true).is_err());
         fs::write(b.join("package.json"), "{}")?;
-        assert!(run(&b, &state, "forget", "node-toolchain", false).is_err());
+        assert!(run(&b, &state, "remove", "node-toolchain", false).is_err());
         let cached_special = cached.parent().unwrap().join("special");
         mkfifo(&cached_special)?;
-        assert!(run(&a, &state, "forget", "node-toolchain", false).is_err());
+        assert!(run(&a, &state, "remove", "node-toolchain", false).is_err());
         assert!(cached_special.exists());
         assert!(cached.exists());
         fs::remove_file(cached_special)?;
-        let forgotten = run(&a, &state, "forget", "node-toolchain", false)?;
+        let forgotten = run(&a, &state, "remove", "node-toolchain", false)?;
         assert_eq!(forgotten["backend"], "copy");
-        assert!(run(&a, &state, "forget", "node-toolchain", false).is_err());
+        assert!(run(&a, &state, "remove", "node-toolchain", false).is_err());
         Ok(())
     }
 

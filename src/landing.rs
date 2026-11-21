@@ -429,7 +429,7 @@ pub(crate) fn prepare_with_import(
     } else {
         let tree = merged_tree(repo, objects, state, &old, &tip, options)?;
         let verb = if options.squash { "Squash" } else { "Merge" };
-        let message = format!("{verb} graft workspace {} into {target}", options.name);
+        let message = format!("{verb} graft {} into {target}", options.name);
         let mut args = vec!["--no-replace-objects", "commit-tree", &tree, "-p", &old];
         if !options.squash {
             args.extend(["-p", &tip]);

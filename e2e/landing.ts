@@ -141,7 +141,7 @@ export const cases: Scenario[] = [
       ctx.git(['fsck', '--full']);
       const restored = ctx.cli(['restore', name, '--lease', workspace.lease]);
       assert.equal(restored.path, workspace.path);
-      assert.equal(ctx.git(['rev-parse', 'HEAD'], workspace.path), landed.workspace_tip);
+      assert.equal(ctx.git(['rev-parse', 'HEAD'], workspace.path), landed.graft_tip);
       assert.equal(read(workspace.path, 'feature.txt'), 'private work survives interruption\n');
       ctx.git(['fsck', '--full'], workspace.path);
     },
@@ -184,7 +184,7 @@ export const cases: Scenario[] = [
       const name = squash ? 'squash' : 'merge';
       const args = landArgs(workspace, name, ...(squash ? ['--squash'] : []));
       const result = ctx.cli(args);
-      assert.equal(result.workspace_tip, tip);
+      assert.equal(result.graft_tip, tip);
       assert.equal(result.previous, old);
       assert.deepEqual(ctx.cli(args), result);
       assert.equal(ctx.git(['rev-parse', 'HEAD']), result.commit);
@@ -586,7 +586,7 @@ export const cases: Scenario[] = [
       assert.match(String(ctx.fail(drop).message), /merge is pending/);
       assert.equal(read(workspace.path, 'feature.txt'), 'edit after failure\n');
       const retired = ctx.cli([...drop, '--discard']);
-      assert.equal(retired.action, 'land');
+      assert.equal(retired.action, 'merge');
       assert.equal(retired.commit, tip);
       assert.equal(retired.recovery_lease, workspace.lease);
       assert(!existsSync(workspace.path));
@@ -655,7 +655,7 @@ export const cases: Scenario[] = [
       assertWorkspace();
 
       const retired = ctx.cli(['remove', ...owned, '--discard']);
-      assert.equal(retired.action, 'land');
+      assert.equal(retired.action, 'merge');
       assert.equal(retired.commit, tip);
       assert.equal(retired.previous, base);
       assert.equal(retired.recovery_lease, workspace.lease);
