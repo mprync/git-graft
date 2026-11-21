@@ -471,17 +471,7 @@ fn drop_workspace(p: &Project, opts: &api::DropWorkspace) -> Result<Value> {
                 "partial graft requires --discard to archive"
             );
             clean(&r.path, false)?;
-            if let Some(base) = &r.base {
-                ensure!(
-                    git::oid(&r.path, "HEAD")? == *base,
-                    "merge the graft's commits or archive it explicitly with --discard"
-                );
-            } else {
-                ensure!(
-                    unborn(&r.path)?,
-                    "merge the graft's commits or archive it explicitly with --discard"
-                );
-            }
+            registry::require_merged(&r)?;
         }
     }
     retire(p, &r.name, &r.lease, Status::Dropped)

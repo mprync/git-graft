@@ -117,7 +117,7 @@ impl ServerHandler for Server {
             ),
             tool::<DropWorkspace>(
                 "graft_remove",
-                "Archive a graft and its files. Refuses if the graft has local work or unmerged commits unless discard is set; keep the recovery lease to reopen it.",
+                "Archive a graft and its files. Unless discard is set, refuses and names what it found when the graft has uncommitted, untracked or ignored files, unmerged commits, a stash, or extra branches or tags; keep the recovery lease to reopen it.",
                 false,
                 true,
             ),

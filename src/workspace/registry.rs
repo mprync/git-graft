@@ -1835,24 +1835,83 @@ fn prune_eligibility(r: &Record, detached: Option<usize>) -> Result<Option<&'sta
     if git::check_idle(path).is_err() || !git::changes(path)?.is_empty() {
         return Ok(Some("dirty"));
     }
-    let expected_branch = r
-        .branch
-        .as_ref()
-        .map(|branch| format!("refs/heads/{branch}"));
-    let head = git::symbolic_ref(path, "HEAD")?;
-    let refs = git::text(path, &["for-each-ref", "--format=%(refname) %(objectname)"])?;
-    let matches_birth_refs = match (&expected_branch, &r.base) {
-        (Some(branch), Some(base)) => refs == format!("{branch} {base}"),
-        _ => refs.is_empty(),
-    };
-    let matches_birth_commit = match &r.base {
-        Some(base) => git::oid(path, "HEAD")? == *base,
-        None => head.is_some() && refs.is_empty(),
-    };
-    if head != expected_branch || !matches_birth_refs || !matches_birth_commit {
+    if !unmerged_refs(r)?.is_empty() {
         return Ok(Some("changed"));
     }
     Ok(None)
+}
+
+/// Every way the graft's refs differ from how it was created: commits on its
+/// branch or a moved HEAD, other branches, tags, a stash or any other ref.
+/// Each is work that a merge never took, described for the person.
+fn unmerged_refs(r: &Record) -> Result<Vec<String>> {
+    let path = &r.path;
+    let expected = r
+        .branch
+        .as_ref()
+        .map(|branch| format!("refs/heads/{branch}"));
+    let mut found = Vec::new();
+    let head = git::symbolic_ref(path, "HEAD")?;
+    if head != expected {
+        found.push(match &head {
+            Some(other) => format!("HEAD is on {other}"),
+            None => "HEAD is detached".to_owned(),
+        });
+    }
+    let refs = git::text(path, &["for-each-ref", "--format=%(refname) %(objectname)"])?;
+    let mut has_branch = false;
+    for line in refs.lines() {
+        let (name, oid) = line.split_once(' ').context("malformed Git ref listing")?;
+        if Some(name) == expected.as_deref() {
+            has_branch = true;
+            if r.base.as_deref() != Some(oid) {
+                found.push(format!("commits on branch {}", short_ref(name)));
+            }
+        } else if name == "refs/stash" {
+            found.push("a stash".to_owned());
+        } else if let Some(tag) = name.strip_prefix("refs/tags/") {
+            found.push(format!("tag {tag}"));
+        } else if let Some(branch) = name.strip_prefix("refs/heads/") {
+            found.push(format!("branch {branch}"));
+        } else {
+            found.push(format!("ref {name}"));
+        }
+    }
+    match (&expected, &r.base) {
+        (Some(branch), Some(_)) if !has_branch => {
+            found.push(format!("branch {} was deleted", short_ref(branch)));
+        }
+        _ => {}
+    }
+    if let Some(base) = &r.base
+        && head.is_none()
+        && git::oid(path, "HEAD")? != *base
+    {
+        found.push("commits on the detached HEAD".to_owned());
+    }
+    Ok(found)
+}
+
+fn short_ref(name: &str) -> &str {
+    name.strip_prefix("refs/heads/").unwrap_or(name)
+}
+
+/// `remove` without `--discard` archives only a graft whose refs are as
+/// they were created. Otherwise it names the work it found.
+pub fn require_merged(r: &Record) -> Result<()> {
+    let found = unmerged_refs(r)?;
+    if found.is_empty() {
+        return Ok(());
+    }
+    Err(fault(
+        "unmerged_work",
+        format!(
+            "Graft {} has work that is not merged: {}. Merge it, or archive it with --discard and keep the recovery lease",
+            r.name,
+            found.join(", ")
+        ),
+        json!({"name":r.name,"found":found}),
+    ))
 }
 
 fn is_nested_git_error(error: &anyhow::Error) -> bool {
@@ -2061,6 +2120,120 @@ mod tests {
         Ok(state_dir(p, false)?
             .join("records")
             .join(format!("{}.json", r.id)))
+    }
+
+    #[test]
+    fn prune_and_remove_keep_every_kind_of_unmerged_work() -> Result<()> {
+        let f = Fixture::new()?;
+        let p = &f.project;
+        let clean = f.expired_at_base("clean")?;
+        let mut cases = Vec::new();
+        let mut case = |name: &str, setup: &dyn Fn(&Path) -> Result<()>| -> Result<()> {
+            let r = f.expired_at_base(name)?;
+            setup(&r.path)?;
+            cases.push((r.clone(), work_in(&r.path)?));
+            Ok(())
+        };
+        let commit = |path: &Path| -> Result<()> {
+            fs::write(path.join("tracked"), "unmerged\n")?;
+            git::bytes(path, &["commit", "-qam", "unmerged"])?;
+            Ok(())
+        };
+        case("commit", &commit)?;
+        case("branch", &|path| {
+            git::bytes(path, &["branch", "extra"])?;
+            Ok(())
+        })?;
+        case("tag", &|path| {
+            git::bytes(path, &["tag", "v1"])?;
+            Ok(())
+        })?;
+        case("stash", &|path| {
+            fs::write(path.join("tracked"), "stashed edit\n")?;
+            git::bytes(path, &["stash", "push", "-q"])?;
+            Ok(())
+        })?;
+        case("detached", &|path| {
+            git::bytes(path, &["checkout", "-q", "--detach"])?;
+            commit(path)
+        })?;
+        case("ignored", &|path| {
+            fs::create_dir_all(path.join(".git/info"))?;
+            fs::write(path.join(".git/info/exclude"), "build/\n")?;
+            fs::create_dir(path.join("build"))?;
+            fs::write(path.join("build/output"), "build output")?;
+            Ok(())
+        })?;
+        case("staged", &|path| {
+            fs::write(path.join("new"), "staged only")?;
+            git::bytes(path, &["add", "new"])?;
+            Ok(())
+        })?;
+        case("untracked", &|path| {
+            fs::write(path.join("notes"), "untracked")?;
+            Ok(())
+        })?;
+        case("gitbusy", &|path| {
+            fs::write(path.join(".git/index.lock"), "")?;
+            Ok(())
+        })?;
+        let locked = f.expired_at_base("locked")?;
+        lock(p, &locked.name, &locked.lease, Some("keep"))?;
+        cases.push((load(p, "locked")?, work_in(&locked.path)?));
+        let busy = f.expired_at_base("busy")?;
+        cases.push((busy.clone(), work_in(&busy.path)?));
+
+        let expected = [
+            ("branch", "changed"),
+            ("busy", "busy"),
+            ("clean", "eligible"),
+            ("commit", "changed"),
+            ("detached", "changed"),
+            ("gitbusy", "dirty"),
+            ("ignored", "dirty"),
+            ("locked", "locked"),
+            ("staged", "dirty"),
+            ("stash", "changed"),
+            ("tag", "changed"),
+            ("untracked", "dirty"),
+        ];
+        // `exec` holds the graft lock for as long as its program runs.
+        let held = workspace_lock(p, &busy.name)?;
+        for apply in [false, true] {
+            let reasons = prune(p, apply)?;
+            let reasons: Vec<_> = reasons
+                .iter()
+                .map(|s| (s.name.as_str(), s.reason.unwrap_or_default()))
+                .collect();
+            let mut wanted = expected.to_vec();
+            if apply {
+                wanted[2].1 = "archived";
+            }
+            assert_eq!(reasons, wanted);
+            for (r, before) in &cases {
+                assert_eq!(&work_in(&r.path)?, before, "prune changed {}", r.name);
+                assert!(authenticate(p, &r.name, &r.lease).is_ok());
+            }
+        }
+        drop(held);
+        assert!(!clean.path.exists());
+
+        // `remove` without --discard refuses the same grafts and names the work.
+        for (name, found) in [
+            ("commit", "commits on branch agent"),
+            ("branch", "branch extra"),
+            ("tag", "tag v1"),
+            ("stash", "a stash"),
+            ("detached", "HEAD is detached, commits on the detached HEAD"),
+        ] {
+            let r = load(p, name)?;
+            let error = require_merged(&r).unwrap_err();
+            assert_eq!(code(&error), "unmerged_work");
+            assert!(format!("{error:#}").contains(found), "{name}: {error:#}");
+            assert!(!format!("{error:#}").contains(&r.lease));
+        }
+        require_merged(&load(p, "busy")?)?;
+        Ok(())
     }
 
     #[test]

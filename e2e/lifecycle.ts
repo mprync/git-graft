@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { execFile, spawn as spawnProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { createInterface } from 'node:readline';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { objectResult, type Scenario } from './harness.ts';
@@ -25,6 +26,52 @@ function commit(ctx: Context, cwd: string, message: string): void {
 }
 function names(value: unknown): unknown[] {
   return array(value).map((item) => object(item).name);
+}
+/** Expire a graft's lease so prune considers it, as 24 idle hours would. */
+function expire(ctx: Context, id: unknown): void {
+  assert(typeof id === 'string');
+  const file = join(ctx.repo, '.git', 'graft', 'workspaces', 'records', `${id}.json`);
+  writeFileSync(file, JSON.stringify({ ...object(JSON.parse(readFileSync(file, 'utf8'))), heartbeat: 0 }));
+}
+/** Every ref, the stash, the index and every file status of a checkout. */
+function work(ctx: Context, path: string): string {
+  return [
+    ctx.git(['for-each-ref', '--format=%(refname) %(objectname)'], path),
+    ctx.git(['rev-parse', 'HEAD'], path),
+    ctx.git(['ls-files', '--stage'], path),
+    ctx.git(['status', '--porcelain=v1', '--ignored=matching'], path),
+  ].join('\n--\n');
+}
+function reasons(result: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(array(result.retained).map(object).map((item) => [item.name, item.reason]));
+}
+/** One MCP tool call through the shipped server: initialize, then tools/call. */
+async function mcpTool(ctx: Context, name: string, args: Record<string, unknown>): Promise<{ isError: boolean; content: Record<string, unknown> }> {
+  const child = spawnProcess(ctx.bin, ['--repo', ctx.repo, 'mcp'], { cwd: ctx.repo, env: ctx.env, stdio: ['pipe', 'pipe', 'pipe'] });
+  const closed = new Promise<void>((resolve) => child.once('close', () => resolve()));
+  const lines = createInterface({ input: child.stdout, crlfDelay: Infinity })[Symbol.asyncIterator]();
+  const reply = async (id: number): Promise<Record<string, unknown>> => {
+    const timeout = delay(30_000).then(() => { throw new Error(`MCP request ${id} timed out`); });
+    for (;;) {
+      const next = await Promise.race([lines.next(), timeout]);
+      assert(!next.done, 'MCP server closed early');
+      const message = object(JSON.parse(next.value));
+      if (message.id === id) return object(message.result);
+    }
+  };
+  try {
+    const send = (message: Record<string, unknown>) => child.stdin.write(`${JSON.stringify({ jsonrpc: '2.0', ...message })}\n`);
+    send({ id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'lifecycle-e2e', version: '1.0.0' } } });
+    await reply(1);
+    send({ method: 'notifications/initialized' });
+    send({ id: 2, method: 'tools/call', params: { name, arguments: args } });
+    const result = await reply(2);
+    ctx.coverTool(name);
+    return { isError: result.isError === true, content: object(result.structuredContent) };
+  } finally {
+    child.stdin.end();
+    await Promise.race([closed, delay(10_000).then(() => child.kill())]);
+  }
 }
 
 export const cases: Scenario[] = [
@@ -319,6 +366,103 @@ export const cases: Scenario[] = [
       assert.equal(ctx.cli(['status', 'agent']).id, next.result.id);
       ctx.cli(['heartbeat', 'agent', '--lease', next.lease]);
       drop(ctx, 'agent', next.lease);
+    },
+  },
+  {
+    name: 'remove keeps a stash, branches, tags and detached commits unless discard is given',
+    async run(ctx) {
+      const cases: [string, (path: string) => void, RegExp][] = [
+        ['stash', (path) => {
+          writeFileSync(join(path, 'tracked.txt'), 'stashed edit\n');
+          ctx.git(['stash', 'push', '-q'], path);
+        }, /a stash/],
+        ['branch', (path) => ctx.git(['branch', 'extra'], path), /branch extra/],
+        ['tag', (path) => ctx.git(['tag', 'v1'], path), /tag v1/],
+        ['detached', (path) => {
+          ctx.git(['checkout', '-q', '--detach'], path);
+          writeFileSync(join(path, 'tracked.txt'), 'detached commit\n');
+          commit(ctx, path, 'detached');
+        }, /HEAD is detached, commits on the detached HEAD/],
+        ['committed', (path) => {
+          writeFileSync(join(path, 'tracked.txt'), 'unmerged commit\n');
+          commit(ctx, path, 'unmerged');
+        }, /commits on branch graft\/committed/],
+      ];
+      for (const [name, setup, found] of cases) {
+        const w = ctx.spawn(name);
+        setup(w.path);
+        const before = work(ctx, w.path);
+        const refused = ctx.fail(['remove', name, '--lease', w.lease]);
+        assert.equal(refused.code, 'unmerged_work', name);
+        assert.match(String(refused.message), found);
+        assert.equal(String(refused.message).includes(w.lease), false);
+        const tool = await mcpTool(ctx, 'graft_remove', { name, lease: w.lease });
+        assert.equal(tool.isError, true, name);
+        assert.equal(tool.content.code, 'unmerged_work');
+        assert.match(String(tool.content.message), found);
+        assert.equal(work(ctx, w.path), before, `remove changed ${name}`);
+        const receipt = name === 'stash'
+          ? (await mcpTool(ctx, 'graft_remove', { name, lease: w.lease, discard: true })).content
+          : drop(ctx, name, w.lease, '--discard');
+        assert.equal(receipt.action, 'remove');
+        assert.equal(existsSync(w.path), false);
+        const restored = ctx.cli(['restore', name, '--lease', w.lease]);
+        assert.equal(work(ctx, String(restored.path)), before, `the archive lost work of ${name}`);
+      }
+    },
+  },
+  {
+    name: 'prune previews and applies only expired grafts with nothing unmerged or running',
+    async run(ctx) {
+      const clean = ctx.spawn('clean');
+      const ignored = ctx.spawn('ignored');
+      mkdirSync(join(ignored.path, '.git', 'info'), { recursive: true });
+      writeFileSync(join(ignored.path, '.git', 'info', 'exclude'), 'build/\n');
+      mkdirSync(join(ignored.path, 'build'));
+      writeFileSync(join(ignored.path, 'build', 'output'), 'build output');
+      const tagged = ctx.spawn('tagged');
+      ctx.git(['tag', 'keep'], tagged.path);
+      const locked = ctx.spawn('locked');
+      ctx.cli(['lock', 'locked', '--lease', locked.lease, '--reason', 'keep']);
+      const running = ctx.spawn('running');
+      const started = join(ctx.root, 'started');
+      const release = join(ctx.root, 'release');
+      const script = `const fs=require('node:fs'); fs.writeFileSync(process.argv[1],'started'); const end=Date.now()+30000; const timer=setInterval(()=>{if(fs.existsSync(process.argv[2])){clearInterval(timer);process.exit(0)} if(Date.now()>end){clearInterval(timer);process.exit(2)}},25)`;
+      const child = spawnProcess(ctx.bin, ['--repo', ctx.repo, '--json', 'exec', 'running', '--lease', running.lease, '--', process.execPath, '-e', script, started, release], { env: ctx.env, stdio: ['ignore', 'pipe', 'pipe'] });
+      let stderr = '';
+      child.stderr.setEncoding('utf8').on('data', (data: string) => { stderr += data; });
+      child.stdout.resume();
+      const exit = new Promise<number | null>((resolve, reject) => {
+        child.once('error', reject);
+        child.once('close', resolve);
+      });
+      try {
+        const deadline = Date.now() + 10000;
+        while (!existsSync(started) && Date.now() < deadline) await delay(25);
+        assert.ok(existsSync(started), `exec did not start: ${stderr}`);
+        const grafts = [clean, ignored, tagged, locked, running];
+        for (const w of grafts) expire(ctx, w.result.id);
+        const kept = [ignored, tagged, locked, running].map((w) => [w, work(ctx, w.path)] as const);
+        const expected = { clean: 'eligible', ignored: 'dirty', locked: 'locked', running: 'busy', tagged: 'changed' };
+        const preview = ctx.cli(['prune']);
+        assert.equal(preview.applied, false);
+        assert.deepEqual(reasons(preview), expected);
+        assert.deepEqual(preview.damaged_records, []);
+        assert.ok(existsSync(clean.path));
+        const applied = ctx.cli(['prune', '--apply']);
+        assert.deepEqual(reasons(applied), { ...expected, clean: 'archived' });
+        assert.equal(JSON.stringify([preview, applied]).includes(clean.lease), false, 'prune disclosed a lease');
+        assert.equal(existsSync(clean.path), false);
+        for (const [w, before] of kept) assert.equal(work(ctx, w.path), before, `prune changed ${w.path}`);
+        assert.equal(readFileSync(join(ignored.path, 'build', 'output'), 'utf8'), 'build output');
+        writeFileSync(release, 'release');
+        assert.equal(await exit, 0, stderr);
+      } finally {
+        if (!existsSync(release)) writeFileSync(release, 'release');
+        if (child.exitCode === null && child.signalCode === null) child.kill();
+        await exit.catch(() => undefined);
+      }
+      ctx.cli(['restore', 'clean', '--lease', clean.lease]);
     },
   },
 ];
