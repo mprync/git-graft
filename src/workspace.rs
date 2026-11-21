@@ -579,9 +579,9 @@ pub fn run(repo: &Path, command: Command) -> Result<Value> {
             "git":version,"git_minimum":git::MINIMUM_VERSION,"git_supported":supported}));
         }
         Command::List => {
-            return Ok(
-                json!({"workspaces":registry::list(p)?,"recoverable":registry::recoverable(p)?}),
-            );
+            return Ok(json!({"workspaces":registry::list(p)?,
+                "recoverable":registry::recoverable(p)?,
+                "damaged_records":registry::damaged(p)?}));
         }
         Command::ListManagers => return crate::package_manager::list(p),
         Command::UnregisterManager(a) => return crate::package_manager::unregister(p, &a.manager),
@@ -658,7 +658,8 @@ pub fn run(repo: &Path, command: Command) -> Result<Value> {
             } else {
                 engine::gc::purge_caches(p, a.apply)?
             };
-            return Ok(json!({"applied":a.apply,"retained":retained,"cache":cache}));
+            return Ok(json!({"applied":a.apply,"retained":retained,
+                "damaged_records":registry::damaged(p)?,"cache":cache}));
         }
         Command::Env(a) => {
             let r = registry::load(p, &a.name)?;

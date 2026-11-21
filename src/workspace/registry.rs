@@ -525,18 +525,125 @@ fn read_record(directory: &Path, id: &str) -> Result<Record> {
     Ok(r)
 }
 
+/// A record file Graft cannot use. Graft never rewrites, moves or deletes it:
+/// commands report it, keep it out of prune and refuse to act on its name,
+/// and every other graft keeps working.
+#[derive(Debug, Clone, Serialize)]
+pub struct DamagedRecord {
+    pub file: PathBuf,
+    /// The graft name the file claims, when it can be read at all.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    pub error: String,
+    /// Leases and ports the file claims, so a new graft never reuses them.
+    #[serde(skip)]
+    leases: Vec<String>,
+    #[serde(skip)]
+    ports: Vec<u16>,
+}
+
+impl DamagedRecord {
+    fn new(file: PathBuf, error: &anyhow::Error) -> Self {
+        // Read the claims leniently: the file failed validation as a whole.
+        let value = fs::read(&file)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+            .unwrap_or(Value::Null);
+        let text = |value: &Value| value.as_str().map(str::to_owned);
+        let mut leases: Vec<String> = [&value["lease"], &value["transition"]["lease"]]
+            .into_iter()
+            .filter_map(text)
+            .collect();
+        if let Some(previous) = value["previous"].as_array() {
+            leases.extend(previous.iter().filter_map(|old| text(&old["lease"])));
+        }
+        let ports = [&value["port"], &value["transition"]["port"]]
+            .into_iter()
+            .filter_map(|port| port.as_u64().and_then(|port| u16::try_from(port).ok()))
+            .collect();
+        Self {
+            file,
+            name: text(&value["name"]),
+            error: format!("{error:#}"),
+            leases,
+            ports,
+        }
+    }
+
+    fn fault(&self, name: &str) -> anyhow::Error {
+        let owner = match &self.name {
+            Some(_) => format!("The record of graft {name} is damaged"),
+            None => format!("A damaged graft record may belong to graft {name}"),
+        };
+        fault(
+            "record_damaged",
+            format!(
+                "{owner}: {}. Graft left {} and the graft's files unchanged; repair or move that file to continue. Other grafts are unaffected",
+                self.error,
+                self.file.display()
+            ),
+            json!({"name":name,"file":self.file,"error":self.error}),
+        )
+    }
+}
+
+/// Every record of a project: the usable ones and the damaged files.
+struct Registry {
+    records: Vec<Record>,
+    damaged: Vec<DamagedRecord>,
+}
+
+impl Registry {
+    /// A damaged record that names this graft. Its state is unknown, so
+    /// nothing may act on the name until someone repairs the file.
+    fn damaged_name(&self, name: &str) -> Result<()> {
+        match self
+            .damaged
+            .iter()
+            .find(|d| d.name.as_deref() == Some(name))
+        {
+            Some(damaged) => Err(damaged.fault(name)),
+            None => Ok(()),
+        }
+    }
+
+    /// The error for a name no usable record holds. A damaged file whose
+    /// name cannot be read may be the graft that was asked for.
+    fn missing(&self, name: &str, otherwise: anyhow::Error) -> anyhow::Error {
+        match self.damaged.iter().find(|d| d.name.is_none()) {
+            Some(damaged) => damaged.fault(name),
+            None => otherwise,
+        }
+    }
+
+    fn current(&self, name: &str) -> Option<&Record> {
+        current(&self.records, name)
+    }
+}
+
 fn records(p: &Project) -> Result<Vec<Record>> {
+    Ok(scan(p)?.records)
+}
+
+/// Read every record. A file that cannot be read or validated, and every
+/// record in a conflict between files, is set aside as damaged instead of
+/// failing the whole project.
+fn scan(p: &Project) -> Result<Registry> {
+    let mut registry = Registry {
+        records: vec![],
+        damaged: vec![],
+    };
     if !exists(&p.state.join(NAMESPACE))? {
         ensure!(
             !p.has_legacy_workspace_records()?,
             "legacy workspace records at {}",
             p.state.display()
         );
-        return Ok(vec![]);
+        return Ok(registry);
     }
     let directory = state_dir(p, false)?.join("records");
     if !exists(&directory)? {
-        return Ok(vec![]);
+        return Ok(registry);
     }
     owned_directory(&directory)?;
     let mut found = Vec::new();
@@ -545,53 +652,109 @@ fn records(p: &Project) -> Result<Vec<Record>> {
         if let Some(id) = name.to_str().and_then(|name| name.strip_suffix(".json"))
             && canonical_uuid(id).is_ok()
         {
-            found.push(read_record(&directory, id)?);
+            let file = directory.join(&name);
+            match read_record(&directory, id).and_then(|r| check_record(p, &r).map(|()| r)) {
+                Ok(r) => found.push((file, r)),
+                Err(error) => registry.damaged.push(DamagedRecord::new(file, &error)),
+            }
         }
     }
-    let mut leases = HashSet::new();
-    let mut live = HashSet::new();
-    let mut ports = HashSet::new();
-    for r in &found {
-        ensure!(
-            r.project == p.repo,
-            "graft record belongs to a different primary"
-        );
-        if let Some(path) = &r.archive {
-            ensure!(
-                path == &p.root.join(ARCHIVES).join(&r.id),
-                "invalid workspace archive path"
-            );
+    // Leases, live ports and live names must be unique across files. When
+    // two files disagree, neither can be trusted, so both are set aside.
+    let mut leases: std::collections::HashMap<&str, Vec<usize>> = Default::default();
+    let mut ports: std::collections::HashMap<u16, Vec<usize>> = Default::default();
+    let mut names: std::collections::HashMap<&str, Vec<usize>> = Default::default();
+    for (index, (_, r)) in found.iter().enumerate() {
+        let restore = match &r.transition {
+            Some(Transition::Restore { lease, port }) => Some((lease.as_str(), *port)),
+            _ => None,
+        };
+        let claimed = std::iter::once(r.lease.as_str())
+            .chain(r.previous.iter().map(|old| old.lease.as_str()))
+            .chain(restore.map(|(lease, _)| lease));
+        for lease in claimed {
+            leases.entry(lease).or_default().push(index);
         }
-        if let Some(
-            Transition::Place { from }
-            | Transition::Retire {
-                from: Some(from), ..
-            },
-        ) = &r.transition
-        {
-            placement_source(&p.root, r, from)?;
-        }
-        ensure!(
-            leases.insert(r.lease.as_str())
-                && r.previous.iter().all(|old| leases.insert(&old.lease)),
-            "duplicate workspace lease"
-        );
-        if let Some(Transition::Restore { lease, port }) = &r.transition {
-            ensure!(leases.insert(lease), "duplicate workspace lease");
-            ensure!(ports.insert(*port), "duplicate live workspace port");
+        if let Some((_, port)) = restore {
+            ports.entry(port).or_default().push(index);
         } else if !r.status.retired() {
-            ensure!(ports.insert(r.port), "duplicate live workspace port");
+            ports.entry(r.port).or_default().push(index);
         }
         if r.holds_name() {
-            ensure!(
-                live.insert(&r.name),
-                "multiple live records for workspace {}",
-                r.name
-            );
+            names.entry(r.name.as_str()).or_default().push(index);
         }
     }
-    found.sort_by(|a, b| (&a.name, a.created, &a.id).cmp(&(&b.name, b.created, &b.id)));
-    Ok(found)
+    let damaged_leases: HashSet<&str> = registry
+        .damaged
+        .iter()
+        .flat_map(|d| d.leases.iter().map(String::as_str))
+        .collect();
+    let mut conflicts: std::collections::BTreeMap<usize, &'static str> = Default::default();
+    for (lease, holders) in &leases {
+        if holders.len() > 1 || damaged_leases.contains(lease) {
+            for &index in holders {
+                conflicts.insert(index, "duplicate workspace lease");
+            }
+        }
+    }
+    for holders in ports.values().filter(|holders| holders.len() > 1) {
+        for &index in holders {
+            conflicts
+                .entry(index)
+                .or_insert("duplicate live workspace port");
+        }
+    }
+    for holders in names.values().filter(|holders| holders.len() > 1) {
+        for &index in holders {
+            conflicts
+                .entry(index)
+                .or_insert("multiple live records for one graft name");
+        }
+    }
+    for (index, (file, r)) in found.into_iter().enumerate() {
+        match conflicts.get(&index) {
+            Some(reason) => {
+                let mut damaged = DamagedRecord::new(file, &anyhow::anyhow!(*reason));
+                damaged.name = Some(r.name);
+                registry.damaged.push(damaged);
+            }
+            None => registry.records.push(r),
+        }
+    }
+    registry
+        .records
+        .sort_by(|a, b| (&a.name, a.created, &a.id).cmp(&(&b.name, b.created, &b.id)));
+    registry.damaged.sort_by(|a, b| a.file.cmp(&b.file));
+    Ok(registry)
+}
+
+/// Checks of one record against its project, beyond its own format.
+fn check_record(p: &Project, r: &Record) -> Result<()> {
+    ensure!(
+        r.project == p.repo,
+        "graft record belongs to a different primary"
+    );
+    if let Some(path) = &r.archive {
+        ensure!(
+            path == &p.root.join(ARCHIVES).join(&r.id),
+            "invalid workspace archive path"
+        );
+    }
+    if let Some(
+        Transition::Place { from }
+        | Transition::Retire {
+            from: Some(from), ..
+        },
+    ) = &r.transition
+    {
+        placement_source(&p.root, r, from)?;
+    }
+    Ok(())
+}
+
+/// Every damaged record file of the project, for `list` and `prune`.
+pub fn damaged(p: &Project) -> Result<Vec<DamagedRecord>> {
+    Ok(scan(p)?.damaged)
 }
 
 fn current<'a>(records: &'a [Record], name: &str) -> Option<&'a Record> {
@@ -612,22 +775,36 @@ fn bad_lease(name: &str) -> anyhow::Error {
 
 pub fn load(p: &Project, name: &str) -> Result<Record> {
     validate_name(name)?;
-    current(&records(p)?, name)
+    let registry = scan(p)?;
+    registry.damaged_name(name)?;
+    registry
+        .current(name)
         .cloned()
-        .ok_or_else(|| not_found(name))
+        .ok_or_else(|| registry.missing(name, not_found(name)))
 }
 
 pub fn authenticate(p: &Project, name: &str, lease: &str) -> Result<Record> {
-    let r = load(p, name)?;
-    if r.lease != lease || r.status.retired() {
-        return Err(bad_lease(name));
+    validate_name(name)?;
+    let registry = scan(p)?;
+    registry.damaged_name(name)?;
+    let live = registry.current(name);
+    if let Some(r) = live
+        && r.lease == lease
+        && !r.status.retired()
+    {
+        return Ok(r.clone());
     }
-    Ok(r)
+    Err(match live {
+        Some(_) => bad_lease(name),
+        None => registry.missing(name, not_found(name)),
+    })
 }
 
 pub fn load_retired(p: &Project, name: &str, lease: &str) -> Result<Record> {
     validate_name(name)?;
-    for mut r in records(p)?.into_iter().filter(|r| r.name == name) {
+    let registry = scan(p)?;
+    registry.damaged_name(name)?;
+    for mut r in registry.records.iter().filter(|r| r.name == name).cloned() {
         if r.lease == lease && r.status.retired() {
             return Ok(r);
         }
@@ -641,7 +818,7 @@ pub fn load_retired(p: &Project, name: &str, lease: &str) -> Result<Record> {
             return Ok(r);
         }
     }
-    Err(bad_lease(name))
+    Err(registry.missing(name, bad_lease(name)))
 }
 
 fn persist(p: &Project, r: &Record) -> Result<()> {
@@ -1158,18 +1335,25 @@ fn resume(p: &Project, r: &mut Record) -> Result<()> {
     persist(p, r)
 }
 
-fn port_for(records: &[Record], name: &str) -> Result<u16> {
+fn port_for(registry: &Registry, name: &str) -> Result<u16> {
     let slots = u32::from(PORTS.end - PORTS.start);
     let hash = name
         .bytes()
         .fold(0u32, |a, b| a.wrapping_mul(31).wrapping_add(u32::from(b)));
-    let used = records
+    let used = registry
+        .records
         .iter()
         .filter_map(|r| match r.transition {
             Some(Transition::Restore { port, .. }) => Some(port),
             _ if !r.status.retired() => Some(r.port),
             _ => None,
         })
+        .chain(
+            registry
+                .damaged
+                .iter()
+                .flat_map(|d| d.ports.iter().copied()),
+        )
         .collect::<HashSet<_>>();
     for offset in 0..slots {
         let port = PORTS.start + ((hash % slots + offset) % slots) as u16;
@@ -1202,9 +1386,11 @@ pub fn reserve(
         .map(Uuid::parse_str)
         .transpose()?
         .map(|id| id.to_string());
-    let known = records(p)?;
+    let registry = scan(p)?;
     crate::trace::mark("reserve: read records");
-    if let Some(mut r) = current(&known, name).cloned() {
+    registry.damaged_name(name)?;
+    let known = &registry.records;
+    if let Some(mut r) = current(known, name).cloned() {
         if requested.as_ref() == Some(&r.lease)
             && r.base.as_deref() == base
             && r.branch.as_deref() == branch
@@ -1239,7 +1425,8 @@ pub fn reserve(
                 .iter()
                 .any(|r| r.lease == *lease
                     || r.previous.iter().any(|old| old.lease == *lease)
-                    || matches!(&r.transition, Some(Transition::Restore { lease: next, .. }) if next == lease)),
+                    || matches!(&r.transition, Some(Transition::Restore { lease: next, .. }) if next == lease))
+                && !registry.damaged.iter().any(|d| d.leases.contains(lease)),
             "request_id has already been used"
         );
     }
@@ -1269,7 +1456,7 @@ pub fn reserve(
     crate::trace::mark("reserve: stage marker");
     let identity = Identity::read(stage.path())?;
     crate::trace::mark("reserve: identity");
-    let port = port_for(&known, name)?;
+    let port = port_for(&registry, name)?;
     let started = now();
     let from = stage.keep();
     let mut r = Record {
@@ -1536,8 +1723,10 @@ pub fn retire(p: &Project, name: &str, lease: &str, status: Status) -> Result<Re
 
 pub fn restore(p: &Project, name: &str, lease: &str) -> Result<Record> {
     validate_name(name)?;
-    let known = records(p)?;
-    let active = current(&known, name);
+    let registry = scan(p)?;
+    registry.damaged_name(name)?;
+    let known = &registry.records;
+    let active = current(known, name);
     if let Some(r) = active
         && !r.status.retired()
         && r.previous.last().is_some_and(|old| old.lease == lease)
@@ -1550,7 +1739,7 @@ pub fn restore(p: &Project, name: &str, lease: &str) -> Result<Record> {
         .iter()
         .find(|r| r.name == name && r.lease == lease && r.status.retired())
         .cloned()
-        .ok_or_else(|| bad_lease(name))?;
+        .ok_or_else(|| registry.missing(name, bad_lease(name)))?;
     let _lock = workspace_lock(p, name)?;
     ensure!(
         active.as_ref().is_none_or(|active| active.id == r.id),
@@ -1568,7 +1757,7 @@ pub fn restore(p: &Project, name: &str, lease: &str) -> Result<Record> {
         );
         r.transition = Some(Transition::Restore {
             lease: Uuid::new_v4().to_string(),
-            port: port_for(&known, name)?,
+            port: port_for(&registry, name)?,
         });
         persist(p, &r)?;
     }
@@ -1576,10 +1765,15 @@ pub fn restore(p: &Project, name: &str, lease: &str) -> Result<Record> {
     Ok(r)
 }
 
+/// Whether any graft may still be live. A damaged record counts as live:
+/// its state is unknown, so caches it might use must be kept.
 pub fn has_live(p: &Project) -> Result<bool> {
-    Ok(records(p)?
-        .iter()
-        .any(|r| !r.status.retired() || r.transition.is_some()))
+    let registry = scan(p)?;
+    Ok(!registry.damaged.is_empty()
+        || registry
+            .records
+            .iter()
+            .any(|r| !r.status.retired() || r.transition.is_some()))
 }
 
 pub fn list(p: &Project) -> Result<Vec<Summary>> {
@@ -1682,7 +1876,7 @@ fn open_existing_lock(p: &Project, name: &str) -> Result<WorkspaceLock> {
 /// retained. A preview performs the same eligibility checks without writing.
 pub fn prune(p: &Project, apply: bool) -> Result<Vec<Summary>> {
     let mut result = Vec::new();
-    for mut r in records(p)? {
+    for mut r in scan(p)?.records {
         if r.status.retired() || now().saturating_sub(r.heartbeat) < LEASE_SECS {
             continue;
         }
@@ -1777,6 +1971,145 @@ mod tests {
             finish(&self.project, &mut record)?;
             Ok(record)
         }
+
+        /// A graft whose branch starts at a commit of the primary, as `add`
+        /// creates it, with its heartbeat expired so prune considers it.
+        fn expired_at_base(&self, name: &str) -> Result<Record> {
+            let primary = &self.project.repo;
+            if git::raw(primary, &["rev-parse", "--verify", "--quiet", "HEAD"])?
+                .status
+                .code()
+                == Some(1)
+            {
+                fs::write(primary.join("tracked"), "base\n")?;
+                git::bytes(primary, &["add", "tracked"])?;
+                git::bytes(
+                    primary,
+                    &[
+                        "-c",
+                        "user.name=Registry Fixture",
+                        "-c",
+                        "user.email=registry@example.invalid",
+                        "commit",
+                        "-qm",
+                        "base",
+                    ],
+                )?;
+            }
+            let base = git::oid(primary, "HEAD")?;
+            let mut record = reserve(
+                &self.project,
+                name,
+                None,
+                Some(&base),
+                Some("agent"),
+                Value::Null,
+            )?;
+            let path = record.path.clone();
+            git::bytes(&path, &["init", "-q", "--template=", "-b", "agent"])?;
+            for (key, value) in [
+                ("user.name", "Registry Fixture"),
+                ("user.email", "registry@example.invalid"),
+                ("commit.gpgsign", "false"),
+                ("core.hooksPath", "disabled-hooks"),
+            ] {
+                git::bytes(&path, &["config", key, value])?;
+            }
+            git::bytes(&path, &["fetch", "-q", git::path_str(primary)?, "HEAD"])?;
+            git::bytes(&path, &["reset", "-q", "--hard", &base])?;
+            finish(&self.project, &mut record)?;
+            record.heartbeat = 0;
+            persist(&self.project, &record)?;
+            Ok(record)
+        }
+    }
+
+    fn code(error: &anyhow::Error) -> String {
+        crate::api::error_json(error)["code"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned()
+    }
+
+    fn record_file(p: &Project, r: &Record) -> Result<PathBuf> {
+        Ok(state_dir(p, false)?
+            .join("records")
+            .join(format!("{}.json", r.id)))
+    }
+
+    #[test]
+    fn a_damaged_record_is_reported_kept_and_isolated_from_other_grafts() -> Result<()> {
+        let f = Fixture::new()?;
+        let p = &f.project;
+        let torn = f.expired_at_base("torn")?;
+        let invalid = f.expired_at_base("invalid")?;
+        let healthy = f.expired_at_base("healthy")?;
+        let torn_file = record_file(p, &torn)?;
+        let invalid_file = record_file(p, &invalid)?;
+        let full = fs::read(&torn_file)?;
+        fs::write(&torn_file, &full[..full.len() / 2])?;
+        let mut value: Value = serde_json::from_slice(&fs::read(&invalid_file)?)?;
+        value["base"] = json!("not-an-object-id");
+        fs::write(&invalid_file, serde_json::to_vec(&value)?)?;
+        let torn_bytes = fs::read(&torn_file)?;
+        let invalid_bytes = fs::read(&invalid_file)?;
+
+        let damaged = damaged(p)?;
+        assert_eq!(damaged.len(), 2);
+        let report = serde_json::to_string(&damaged)?;
+        assert!(report.contains("full Git object ID"));
+        assert!(!report.contains(&torn.lease) && !report.contains(&invalid.lease));
+        let named = damaged.iter().find(|d| d.file == invalid_file).unwrap();
+        assert_eq!(named.name.as_deref(), Some("invalid"));
+
+        // Other grafts keep working: list, prune, archive and restore.
+        let listed: Vec<_> = list(p)?.into_iter().map(|s| s.name).collect();
+        assert_eq!(listed, ["healthy"]);
+        let pruned = prune(p, true)?;
+        assert_eq!(pruned.len(), 1);
+        assert_eq!(pruned[0].name, "healthy");
+        assert_eq!(pruned[0].reason, Some("archived"));
+        assert!(torn.path.exists() && invalid.path.exists());
+        // Every usable graft is archived, yet caches stay while a damaged
+        // record might still use them.
+        assert!(has_live(p)?);
+        restore(p, "healthy", &healthy.lease)?;
+        let other = f.expired_at_base("other")?;
+        assert!(authenticate(p, &other.name, &other.lease).is_ok());
+
+        // The damaged grafts' own names report the damage and are never reused.
+        let error = authenticate(p, "invalid", &invalid.lease).unwrap_err();
+        assert_eq!(code(&error), "record_damaged");
+        assert!(format!("{error:#}").contains("full Git object ID"));
+        let error = reserve(p, "invalid", None, None, Some("agent"), Value::Null).unwrap_err();
+        assert_eq!(code(&error), "record_damaged");
+        assert_eq!(code(&load(p, "torn").unwrap_err()), "record_damaged");
+        assert_eq!(
+            code(&restore(p, "torn", &torn.lease).unwrap_err()),
+            "record_damaged"
+        );
+        assert_eq!(fs::read(&torn_file)?, torn_bytes);
+        assert_eq!(fs::read(&invalid_file)?, invalid_bytes);
+
+        // A copied record that claims another graft's lease taints both.
+        let mut copy: Value = serde_json::from_slice(&fs::read(record_file(p, &other)?)?)?;
+        let id = Uuid::new_v4().to_string();
+        copy["id"] = json!(id);
+        copy["name"] = json!("impostor");
+        copy["port"] = json!(49999);
+        let copy_file = record_file(p, &other)?.with_file_name(format!("{id}.json"));
+        fs::write(&copy_file, serde_json::to_vec(&copy)?)?;
+        assert_eq!(
+            code(&authenticate(p, "other", &other.lease).unwrap_err()),
+            "record_damaged"
+        );
+        assert_eq!(
+            code(&authenticate(p, "impostor", &other.lease).unwrap_err()),
+            "record_damaged"
+        );
+        assert!(authenticate(p, "healthy", &load(p, "healthy")?.lease).is_ok());
+        assert!(other.path.exists());
+        Ok(())
     }
 
     #[test]
