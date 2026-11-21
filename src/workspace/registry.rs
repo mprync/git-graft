@@ -199,6 +199,9 @@ pub struct Summary {
     pub storage: Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<&'static str>,
+    /// Why prune could not check this graft. It was left as it is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 fn summary(r: &Record, available: bool, reason: Option<&'static str>) -> Summary {
@@ -233,6 +236,7 @@ fn summary(r: &Record, available: bool, reason: Option<&'static str>) -> Summary
             .then(|| format!("{}:{}", r.id, r.previous.len() + 1)),
         storage: r.storage.clone(),
         reason,
+        error: None,
     }
 }
 
@@ -1874,63 +1878,73 @@ fn open_existing_lock(p: &Project, name: &str) -> Result<WorkspaceLock> {
 
 /// Archive eligible expired workspaces. Archives, foreign paths and refs are
 /// retained. A preview performs the same eligibility checks without writing.
+/// An error on one graft is reported on that graft, and prune goes on.
 pub fn prune(p: &Project, apply: bool) -> Result<Vec<Summary>> {
     let mut result = Vec::new();
     for mut r in scan(p)?.records {
         if r.status.retired() || now().saturating_sub(r.heartbeat) < LEASE_SECS {
             continue;
         }
-        if apply && r.retiring_to() == Some(Status::Dropped) {
-            let _lock = open_existing_lock(p, &r.name)?;
-            let reason = match resume(p, &mut r) {
-                Ok(()) => "archived",
-                Err(error) if is_nested_git_error(&error) => "nested_git_metadata",
-                Err(error) => return Err(error),
-            };
-            result.push(summary(&r, false, Some(reason)));
-            continue;
-        }
-        let endpoint =
-            registered_path(p, &r.name, &r.path).and_then(|()| verify_endpoint(p, &r, &r.path));
-        let available = endpoint.is_ok();
-        let reason = if r.locked.is_some() {
-            "locked"
-        } else if r.plan.is_some() || r.transition.is_some() || r.status == Status::Pending {
-            "transition_in_progress"
-        } else if !available {
-            "missing_or_replaced"
-        } else {
-            match open_existing_lock(p, &r.name) {
-                Ok(_lock) => {
-                    let root = workspaces(p, false)?;
-                    let archives = root.join(ARCHIVES);
-                    let archive = if exists(&archives)? {
-                        archive_path(p, &r, false)?
-                    } else {
-                        archives
-                    };
-                    if !same_filesystem(&r.path, &archive)? {
-                        "different_filesystem"
-                    } else if exists(&archive)? {
-                        "archive_occupied"
-                    } else if let Some(reason) =
-                        prune_eligibility(&r, endpoint?).unwrap_or(Some("git_state_unverified"))
-                    {
-                        reason
-                    } else if apply {
-                        begin_retirement(p, &mut r, Status::Dropped)?;
-                        "archived"
-                    } else {
-                        "eligible"
-                    }
-                }
-                Err(error) if crate::api::error_json(&error)["code"] == "workspace_busy" => "busy",
-                Err(error) => return Err(error),
-            }
-        };
-        result.push(summary(&r, available && !r.status.retired(), Some(reason)));
+        result.push(match prune_one(p, &mut r, apply) {
+            Ok((reason, available)) => summary(&r, available, Some(reason)),
+            Err(error) => Summary {
+                error: Some(format!("{error:#}")),
+                ..summary(&r, false, Some("error"))
+            },
+        });
     }
     Ok(result)
+}
+
+/// The prune reason for one expired graft, and whether it is available.
+fn prune_one(p: &Project, r: &mut Record, apply: bool) -> Result<(&'static str, bool)> {
+    if apply && r.retiring_to() == Some(Status::Dropped) {
+        let _lock = open_existing_lock(p, &r.name)?;
+        return match resume(p, r) {
+            Ok(()) => Ok(("archived", false)),
+            Err(error) if is_nested_git_error(&error) => Ok(("nested_git_metadata", false)),
+            Err(error) => Err(error),
+        };
+    }
+    let endpoint =
+        registered_path(p, &r.name, &r.path).and_then(|()| verify_endpoint(p, r, &r.path));
+    let available = endpoint.is_ok();
+    let reason = if r.locked.is_some() {
+        "locked"
+    } else if r.plan.is_some() || r.transition.is_some() || r.status == Status::Pending {
+        "transition_in_progress"
+    } else if !available {
+        "missing_or_replaced"
+    } else {
+        match open_existing_lock(p, &r.name) {
+            Ok(_lock) => {
+                let root = workspaces(p, false)?;
+                let archives = root.join(ARCHIVES);
+                let archive = if exists(&archives)? {
+                    archive_path(p, r, false)?
+                } else {
+                    archives
+                };
+                if !same_filesystem(&r.path, &archive)? {
+                    "different_filesystem"
+                } else if exists(&archive)? {
+                    "archive_occupied"
+                } else if let Some(reason) =
+                    prune_eligibility(r, endpoint?).unwrap_or(Some("git_state_unverified"))
+                {
+                    reason
+                } else if apply {
+                    begin_retirement(p, r, Status::Dropped)?;
+                    "archived"
+                } else {
+                    "eligible"
+                }
+            }
+            Err(error) if crate::api::error_json(&error)["code"] == "workspace_busy" => "busy",
+            Err(error) => return Err(error),
+        }
+    };
+    Ok((reason, available && !r.status.retired()))
 }
 
 #[cfg(test)]
@@ -2024,6 +2038,18 @@ mod tests {
         }
     }
 
+    /// Everything a person could lose in a graft: every ref with its target,
+    /// the stash, the index and the status of every file, ignored included.
+    fn work_in(path: &Path) -> Result<String> {
+        Ok([
+            git::text(path, &["for-each-ref", "--format=%(refname) %(objectname)"])?,
+            git::text(path, &["rev-parse", "HEAD"]).unwrap_or_default(),
+            git::text(path, &["ls-files", "--stage", "--debug"])?,
+            git::text(path, &["status", "--porcelain=v1", "--ignored=matching"])?,
+        ]
+        .join("\n--\n"))
+    }
+
     fn code(error: &anyhow::Error) -> String {
         crate::api::error_json(error)["code"]
             .as_str()
@@ -2035,6 +2061,51 @@ mod tests {
         Ok(state_dir(p, false)?
             .join("records")
             .join(format!("{}.json", r.id)))
+    }
+
+    #[test]
+    fn prune_reports_occupied_archives_and_keeps_going_after_one_graft_fails() -> Result<()> {
+        let f = Fixture::new()?;
+        let p = &f.project;
+        let first = f.expired_at_base("a-first")?;
+        let broken = f.expired_at_base("b-broken")?;
+        let occupied = f.expired_at_base("c-occupied")?;
+        let last = f.expired_at_base("d-last")?;
+        // A foreign directory already holds this graft's archive slot.
+        let slot = archive_path(p, &occupied, true)?;
+        fs::create_dir(&slot)?;
+        fs::write(slot.join("foreign"), "keep")?;
+        // The graft lock is not a file, so prune cannot check this graft.
+        let lock = state_dir(p, false)?.join("locks").join(&broken.name);
+        fs::remove_file(&lock)?;
+        fs::create_dir(&lock)?;
+        let before = work_in(&broken.path)?;
+
+        let applied = prune(p, true)?;
+        let reasons: Vec<_> = applied
+            .iter()
+            .map(|s| (s.name.as_str(), s.reason.unwrap_or_default()))
+            .collect();
+        assert_eq!(
+            reasons,
+            [
+                ("a-first", "archived"),
+                ("b-broken", "error"),
+                ("c-occupied", "archive_occupied"),
+                ("d-last", "archived"),
+            ]
+        );
+        assert!(
+            applied[1]
+                .error
+                .as_deref()
+                .is_some_and(|e| e.contains("not an ordinary file"))
+        );
+        assert!(!first.path.exists() && !last.path.exists());
+        assert_eq!(work_in(&broken.path)?, before);
+        assert!(occupied.path.exists());
+        assert_eq!(fs::read_to_string(slot.join("foreign"))?, "keep");
+        Ok(())
     }
 
     #[test]
