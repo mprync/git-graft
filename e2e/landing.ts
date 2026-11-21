@@ -112,6 +112,76 @@ export const cases: Scenario[] = [
     },
   },
   {
+    name: 'a graft that gains commits once its merge is applied stays active with them',
+    run(ctx) {
+      const name = 'advancing';
+      const workspace = ctx.spawn(name);
+      write(workspace.path, 'feature.txt', 'merged work\n');
+      const tip = commit(ctx, workspace.path, 'merged work');
+      // Commit in the graft right after Git updates the destination.
+      const hook = join(ctx.repo, '.git', 'hooks', 'post-merge');
+      write(ctx.repo, '.git/hooks/post-merge', [
+        '#!/bin/sh',
+        'set -eu',
+        'unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE',
+        'cd "$GRAFT_E2E_ADVANCE"',
+        'printf "later work\\n" > later.txt',
+        'git add later.txt',
+        'git commit -qm "later work"',
+      ].join('\n') + '\n');
+      chmodSync(hook, 0o700);
+      ctx.env.GRAFT_E2E_ADVANCE = workspace.path.replaceAll('\\', '/');
+      let receipt;
+      try {
+        receipt = ctx.cli(landArgs(workspace, name));
+      } finally {
+        delete ctx.env.GRAFT_E2E_ADVANCE;
+        rmSync(hook);
+      }
+      const later = ctx.git(['rev-parse', 'HEAD'], workspace.path);
+      assert.notEqual(later, tip);
+      assert.equal(receipt.action, 'merge');
+      assert.equal(receipt.removed, false);
+      assert.equal(receipt.commit, tip);
+      assert.equal(receipt.graft_tip, tip);
+      assert.equal(receipt.graft_head, later);
+      assert.equal(ctx.git(['rev-parse', 'HEAD']), tip);
+      assert(!ctx.git(['rev-list', 'HEAD']).split('\n').includes(later));
+      assert.equal(existsSync(join(ctx.repo, 'later.txt')), false);
+      assert.equal(ctx.cli(['status', name]).phase, 'ready');
+      assert.equal(read(workspace.path, 'later.txt'), 'later work\n');
+
+      const second = ctx.cli(landArgs(workspace, name));
+      assert.equal(second.removed, true);
+      assert.equal(second.commit, later);
+      assert.equal(read(ctx.repo, 'later.txt'), 'later work\n');
+      assert.equal(existsSync(workspace.path), false);
+    },
+  },
+  {
+    name: 'a merge retry after the graft gained commits finishes without archiving them',
+    run(ctx) {
+      const name = 'retry-advanced';
+      const workspace = ctx.spawn(name);
+      write(workspace.path, 'feature.txt', 'merged work\n');
+      const tip = commit(ctx, workspace.path, 'merged work');
+      leaveIndexedCheckoutJournal(ctx, landArgs(workspace, name));
+      assert.equal(ctx.git(['rev-parse', 'HEAD']), tip);
+      write(workspace.path, 'later.txt', 'later work\n');
+      const later = commit(ctx, workspace.path, 'later work');
+
+      const receipt = ctx.cli(landArgs(workspace, name));
+      assert.equal(receipt.removed, false);
+      assert.equal(receipt.graft_tip, tip);
+      assert.equal(receipt.graft_head, later);
+      assert.equal(existsSync(join(ctx.git(['rev-parse', '--absolute-git-dir']), 'graft', 'checkout-update')), false);
+      assert.equal(ctx.cli(['status', name]).phase, 'ready');
+      assert.equal(ctx.git(['rev-parse', 'HEAD'], workspace.path), later);
+      assert.equal(ctx.cli(landArgs(workspace, name)).commit, later);
+      assert.equal(read(ctx.repo, 'later.txt'), 'later work\n');
+    },
+  },
+  {
     name: 'interrupted first landing preserves work and retries with the same lease',
     async run(ctx) {
       const name = 'interrupted-process';
