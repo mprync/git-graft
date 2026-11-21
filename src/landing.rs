@@ -719,7 +719,12 @@ pub(crate) fn apply_with_destination(
             ],
         )?)?)
     };
-    if let Some(path) = destination(&reference, false)? {
+    // While this merge's own update is pending, report any stop with it.
+    let checked_out = destination(&reference, false).map_err(|error| match &pending {
+        Some(update) => update.explain(error),
+        None => error,
+    })?;
+    if let Some(path) = checked_out {
         apply_in_checkout(
             &path,
             &admin,

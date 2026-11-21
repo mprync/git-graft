@@ -684,11 +684,20 @@ impl Update {
     }
 
     /// Rebuild the private index from the files on disk after an interrupted
-    /// update, so that `read-tree` can finish or reverse it. Each changed
-    /// path takes the entry whose version its file holds. Staged entries for
-    /// other paths are kept. A changed path with any other content or staged
-    /// version stops recovery before a file is written.
-    fn rebuild(&self, path: &Path, admin: &Path, objects: Option<&Path>) -> Result<()> {
+    /// update, so that `read-tree` can finish it (`forward`) or reverse it.
+    /// Each changed path takes the entry whose version its file holds. Git
+    /// removes a file before it writes the replacement, so a missing file
+    /// takes the entry of the side the update moves from, and is written
+    /// again. Staged entries for other paths are kept. A changed path with
+    /// any other content or staged version stops recovery before a file is
+    /// written.
+    fn rebuild(
+        &self,
+        path: &Path,
+        admin: &Path,
+        objects: Option<&Path>,
+        forward: bool,
+    ) -> Result<()> {
         let changes = self.changes(path, objects)?;
         let staged = staged_entries(git::command(path))?;
         let mut edited = Vec::new();
@@ -729,13 +738,14 @@ impl Update {
         let from_old = self.differing(path, objects)?;
         self.write_view(path, objects, index, side(false))?;
         let from_new = self.differing(path, objects)?;
-        // A side without the path holds when Git finds no file there.
+        // A side holds when its file is unchanged or missing. A side without
+        // the path holds when Git finds no file there.
         let holds = |entry: &Entry,
                      own: &BTreeMap<Vec<u8>, u8>,
                      other: &BTreeMap<Vec<u8>, u8>,
                      name: &[u8]| {
             if entry.present() {
-                !own.contains_key(name)
+                own.get(name).is_none_or(|status| *status == b'D')
             } else {
                 other.get(name) == Some(&b'D')
             }
@@ -743,10 +753,14 @@ impl Update {
         let mut chosen = Vec::with_capacity(changes.len());
         for change in &changes {
             let name = &change.path;
-            if holds(&change.old, &from_old, &from_new, name) {
-                chosen.push((&name[..], &change.old));
-            } else if holds(&change.new, &from_new, &from_old, name) {
-                chosen.push((&name[..], &change.new));
+            let old = (&change.old, &from_old, &from_new);
+            let new = (&change.new, &from_new, &from_old);
+            let (first, second) = if forward { (old, new) } else { (new, old) };
+            if let Some((entry, _, _)) = [first, second]
+                .into_iter()
+                .find(|(entry, own, other)| holds(entry, own, other, name))
+            {
+                chosen.push((&name[..], entry));
             } else {
                 edited.push(name.clone());
             }
@@ -793,7 +807,7 @@ impl Update {
             // The files can hold a mix of both versions, and someone may
             // have edited or staged other paths since. Git finishes the
             // update from a private index that matches the files.
-            self.rebuild(path, admin, objects)?;
+            self.rebuild(path, admin, objects, true)?;
         } else {
             ensure!(
                 !super::dirty(path)?,
@@ -825,7 +839,7 @@ impl Update {
         if !self.has_mutated_checkout() {
             return Ok(());
         }
-        self.rebuild(path, admin, None)?;
+        self.rebuild(path, admin, None, false)?;
         self.protect_ignored(path, None)?;
         self.two_tree(path, None, false, true)?;
         // Until the restore finishes, files can again hold either version,
@@ -990,8 +1004,9 @@ mod tests {
     }
 
     /// Leave the journal and files as a `read-tree` stopped partway leaves
-    /// them: the deletions and the first update are on disk, the rest is not,
-    /// and the primary index is untouched.
+    /// them: the deletions and the first update are on disk, the file being
+    /// replaced has been unlinked, the rest is not written, and the primary
+    /// index is untouched.
     fn interrupt(p: &Project, plan: &Plan) -> Result<Update> {
         let mut update = Update::begin(&p.common, plan)?;
         let index = fs::read(p.common.join("index"))?;
@@ -1002,6 +1017,7 @@ mod tests {
         fs::remove_file(repo.join("gone.txt"))?;
         fs::remove_file(repo.join("swap"))?;
         fs::write(repo.join("a.txt"), "A\n")?;
+        fs::remove_file(repo.join("b.txt"))?;
         Ok(update)
     }
 
@@ -1161,7 +1177,7 @@ mod tests {
         assert!(Update::load(&p.common)?.is_none());
         assert_eq!(git::oid(&p.repo, "HEAD")?, moved);
         assert_eq!(read(&p, "a.txt")?, "A\n");
-        assert_eq!(read(&p, "b.txt")?, "b\n");
+        assert!(!p.repo.join("b.txt").exists());
         assert!(!p.repo.join("gone.txt").exists());
         Ok(())
     }
@@ -1182,7 +1198,7 @@ mod tests {
             "{error:#}"
         );
         assert!(lock.exists());
-        assert_eq!(read(&p, "b.txt")?, "b\n");
+        assert!(!p.repo.join("b.txt").exists());
 
         update.record.worker = None;
         update.save()?;
