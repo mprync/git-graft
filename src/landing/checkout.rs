@@ -245,9 +245,12 @@ impl Update {
         if ignored.is_empty() {
             return Ok(());
         }
-        let ignored: BTreeSet<_> = ignored
+        let entries: Vec<&[u8]> = ignored
             .split(|byte| *byte == 0)
             .filter(|path| !path.is_empty())
+            .collect();
+        let ignored: BTreeSet<_> = entries
+            .iter()
             .map(|path| path.strip_suffix(b"/").unwrap_or(path).to_ascii_lowercase())
             .collect();
         let output = self
@@ -265,11 +268,20 @@ impl Update {
         if !output.status.success() {
             return Err(git_failure("check ignored checkout paths", &output));
         }
-        for changed in output
+        let changed: Vec<&[u8]> = output
             .stdout
             .split(|byte| *byte == 0)
             .filter(|path| !path.is_empty())
-        {
+            .collect();
+        // Byte comparison folds ASCII only. The filesystem may also fold other
+        // case and Unicode normalization, so compare what each path resolves to.
+        if let Some(changed) = crate::collision::ignored_collision(path, &entries, &changed)? {
+            bail!(
+                "an ignored path would be overwritten by checkout: {}",
+                String::from_utf8_lossy(changed)
+            );
+        }
+        for changed in changed {
             let mut folded = changed.to_ascii_lowercase();
             let ancestor = folded
                 .iter()

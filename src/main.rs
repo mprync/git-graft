@@ -2,6 +2,7 @@
 mod api;
 mod cache;
 mod cli;
+mod collision;
 mod engine;
 mod git;
 mod landing;

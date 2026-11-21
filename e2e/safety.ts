@@ -1,7 +1,82 @@
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { objectResult, parseExact, type Scenario } from './harness.ts';
+import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
+import { execute, objectResult, parseExact, type Context, type Scenario } from './harness.ts';
+
+/** Hash every file below each root, so a test can prove nothing was written. */
+function snapshot(...roots: string[]): Record<string, string> {
+  const files: Record<string, string> = {};
+  const walk = (path: string) => {
+    const stat = statSync(path, { throwIfNoEntry: false });
+    if (!stat) return;
+    if (stat.isDirectory()) {
+      for (const entry of readdirSync(path)) walk(join(path, entry));
+    } else {
+      files[path] = createHash('sha256').update(readFileSync(path)).digest('hex');
+    }
+  };
+  for (const root of roots) walk(root);
+  return files;
+}
+
+/** Run Graft against a primary at `repo` and return its JSON receipt or error. */
+function graftAt(ctx: Context, repo: string, args: string[]) {
+  const out = execute(ctx.bin, ['--repo', repo, '--json', ...args], repo, ctx.env);
+  assert.ifError(out.error);
+  return { ok: out.status === 0, json: objectResult(JSON.parse(out.status === 0 ? out.stdout : (out.stderr || out.stdout))) };
+}
+
+/** Two grafts with local work, one of them archived, for environment faults. */
+function environment(ctx: Context) {
+  const live = ctx.spawn('live');
+  writeFileSync(join(live.path, 'tracked.txt'), 'committed graft work\n');
+  ctx.git(['commit', '-qam', 'Graft work'], live.path);
+  const tip = ctx.git(['rev-parse', 'HEAD'], live.path);
+  writeFileSync(join(live.path, 'notes.txt'), 'uncommitted graft notes\n');
+  const archived = ctx.spawn('archived');
+  writeFileSync(join(archived.path, 'draft.txt'), 'archived draft\n');
+  ctx.cli(['remove', 'archived', '--lease', archived.lease, '--discard']);
+  return { live, tip, archived, root: dirname(live.path) };
+}
+
+function assertEnvironmentIntact(ctx: Context, env: ReturnType<typeof environment>, root = env.root) {
+  const live = join(root, basename(env.live.path));
+  assert.equal(readFileSync(join(live, 'notes.txt'), 'utf8'), 'uncommitted graft notes\n');
+  assert.equal(ctx.git(['rev-parse', 'HEAD'], live), env.tip);
+  ctx.git(['fsck', '--full'], live);
+  const archives = readdirSync(join(root, '.retired')).filter(entry => /^[a-f0-9-]{36}$/.test(entry));
+  assert.equal(archives.length, 1);
+  assert.equal(readFileSync(join(root, '.retired', archives[0], 'draft.txt'), 'utf8'), 'archived draft\n');
+}
+
+/** Hold a file open on Windows without sharing, as an editor or build tool might. */
+async function holdOpen(ctx: Context, file: string) {
+  const ready = join(ctx.root, 'holder-ready-' + basename(file));
+  const release = join(ctx.root, 'holder-release-' + basename(file));
+  const script = join(ctx.root, 'holder.ps1');
+  writeFileSync(script, [
+    'param($Path, $Ready, $Release)',
+    "$handle = [System.IO.File]::Open($Path, 'Open', 'ReadWrite', 'None')",
+    "Set-Content -LiteralPath $Ready -Value 'ready'",
+    'while (-not (Test-Path -LiteralPath $Release)) { Start-Sleep -Milliseconds 50 }',
+    '$handle.Close()',
+  ].join('\r\n'));
+  const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, file, ready, release],
+    { stdio: 'ignore', windowsHide: true });
+  const exited = new Promise<number | null>((resolve, reject) => { child.once('error', reject); child.once('exit', resolve); });
+  const deadline = Date.now() + 30_000;
+  while (!existsSync(ready)) {
+    assert(Date.now() < deadline && child.exitCode === null, 'the file holder did not start');
+    await delay(25);
+  }
+  return async () => {
+    writeFileSync(release, 'release\n');
+    assert.equal(await exited, 0, 'the file holder failed');
+  };
+}
 
 export const cases: Scenario[] = [
   {
@@ -531,4 +606,168 @@ export const cases: Scenario[] = [
       ctx.git(['fsck', '--full']);
     },
   },
+  {
+    name: 'a moved primary fails closed and its grafts and archives return when it is moved back',
+    run(ctx) {
+      const env = environment(ctx);
+      const moved = join(ctx.root, 'moved project');
+      renameSync(ctx.repo, moved);
+      const before = snapshot(join(moved, '.git', 'graft'), env.root);
+      for (const args of [
+        ['list'], ['status', 'live'], ['merge', 'live', '--lease', env.live.lease],
+        ['remove', 'live', '--lease', env.live.lease, '--discard'], ['prune', '--apply'],
+        ['restore', 'archived', '--lease', env.archived.lease], ['add', 'another'],
+        ['repair', 'live', env.live.path, '--lease', env.live.lease],
+      ]) {
+        const result = graftAt(ctx, moved, args);
+        assert.equal(result.ok, false, `${args[0]} succeeded after the primary moved`);
+        assert.match(String(result.json.message), /different primary/i, args[0]);
+      }
+      assert.deepEqual(snapshot(join(moved, '.git', 'graft'), env.root), before);
+      assert.equal(existsSync(moved + '.graft'), false, 'a graft root was created beside the moved primary');
+      renameSync(moved, ctx.repo);
+      assertEnvironmentIntact(ctx, env);
+      assert.equal(readFileSync(join(String(ctx.cli(['restore', 'archived', '--lease', env.archived.lease]).path), 'draft.txt'), 'utf8'), 'archived draft\n');
+      rmSync(join(env.live.path, 'notes.txt'));
+      assert.equal(ctx.cli(['merge', 'live', '--lease', env.live.lease]).commit, env.tip);
+    },
+  },
+  {
+    name: 'deleting the Graft state leaves grafts and archives as plain recoverable repositories',
+    run(ctx) {
+      const env = environment(ctx);
+      rmSync(join(ctx.repo, '.git', 'graft'), { recursive: true, force: true });
+      const before = snapshot(env.root);
+      assert.deepEqual(ctx.cli(['list']).workspaces, []);
+      // The new state owns nothing, so the old root and names are never
+      // adopted, replaced or pruned.
+      for (const name of ['live', 'fresh']) {
+        assert.match(String(ctx.fail(['add', name]).message), /graft root belongs to another repository/i, name);
+      }
+      assert.match(String(ctx.fail(['prune', '--apply']).message), /graft root belongs to another repository/i);
+      assert.deepEqual(snapshot(env.root), before);
+      assertEnvironmentIntact(ctx, env);
+      // The work is still reachable with plain Git.
+      ctx.git(['fetch', '-q', env.live.path, 'HEAD:refs/heads/recovered']);
+      assert.equal(ctx.git(['show', 'recovered:tracked.txt']), 'committed graft work');
+    },
+  },
+  {
+    name: 'a renamed graft root fails closed and recovers when renamed back',
+    run(ctx) {
+      const env = environment(ctx);
+      const aside = env.root + ' aside';
+      renameSync(env.root, aside);
+      const records = join(ctx.repo, '.git', 'graft', 'workspaces');
+      const before = snapshot(records, aside);
+      for (const args of [
+        ['status', 'live'], ['merge', 'live', '--lease', env.live.lease],
+        ['remove', 'live', '--lease', env.live.lease, '--discard'],
+        ['restore', 'archived', '--lease', env.archived.lease],
+      ]) {
+        assert.match(String(ctx.fail(args).message), /graft root/i, args[0]);
+      }
+      const recordFiles = join(records, 'records');
+      for (const file of readdirSync(recordFiles)) {
+        const path = join(recordFiles, file);
+        writeFileSync(path, JSON.stringify({ ...objectResult(parseExact(readFileSync(path, 'utf8'))), heartbeat: 0 }));
+      }
+      const aged = snapshot(records, aside);
+      const pruned = ctx.cli(['prune', '--apply']);
+      assert(Array.isArray(pruned.retained));
+      assert(pruned.retained.map(objectResult).every(w => w.reason !== 'archived'), JSON.stringify(pruned));
+      assert.deepEqual(snapshot(records, aside), aged);
+      assert.notDeepEqual(aged, before);
+      assert.equal(existsSync(env.root), false);
+      renameSync(aside, env.root);
+      assertEnvironmentIntact(ctx, env);
+      assert.equal(readFileSync(join(String(ctx.cli(['restore', 'archived', '--lease', env.archived.lease]).path), 'draft.txt'), 'utf8'), 'archived draft\n');
+      assert.equal(ctx.cli(['status', 'live']).name, 'live');
+    },
+  },
+  {
+    name: 'git gc --prune=now in the primary keeps every graft and archive intact',
+    run(ctx) {
+      const grafts = (['local', 'isolated'] as const).map(history => {
+        const ws = ctx.spawn(history, ['--history', history]);
+        writeFileSync(join(ws.path, 'tracked.txt'), `${history} committed\n`);
+        ctx.git(['commit', '-qam', `${history} work`], ws.path);
+        writeFileSync(join(ws.path, 'tracked.txt'), `${history} stashed\n`);
+        ctx.git(['stash', '-q'], ws.path);
+        writeFileSync(join(ws.path, 'tracked.txt'), `${history} uncommitted\n`);
+        return { history, ws, tip: ctx.git(['rev-parse', 'HEAD'], ws.path) };
+      });
+      const archived = ctx.spawn('archived-gc');
+      writeFileSync(join(archived.path, 'tracked.txt'), 'archived commit\n');
+      ctx.git(['commit', '-qam', 'Archived work'], archived.path);
+      const archivedTip = ctx.git(['rev-parse', 'HEAD'], archived.path);
+      ctx.cli(['remove', 'archived-gc', '--lease', archived.lease, '--discard']);
+      // Make primary objects unreachable, then prune them immediately.
+      ctx.git(['checkout', '-qb', 'temporary']);
+      writeFileSync(join(ctx.repo, 'temporary.txt'), 'temporary\n');
+      ctx.git(['add', 'temporary.txt']);
+      ctx.git(['commit', '-qm', 'Temporary']);
+      ctx.git(['checkout', '-q', 'main']);
+      ctx.git(['branch', '-qD', 'temporary']);
+      ctx.git(['reflog', 'expire', '--expire=now', '--all']);
+      ctx.git(['gc', '-q', '--prune=now']);
+      for (const { history, ws, tip } of grafts) {
+        ctx.git(['fsck', '--full'], ws.path);
+        assert.equal(ctx.git(['rev-parse', 'HEAD'], ws.path), tip, history);
+        assert.equal(readFileSync(join(ws.path, 'tracked.txt'), 'utf8'), `${history} uncommitted\n`);
+        assert.equal(ctx.git(['show', 'stash@{0}:tracked.txt'], ws.path), `${history} stashed`);
+        ctx.git(['checkout', '-q', '--', 'tracked.txt'], ws.path);
+        ctx.git(['stash', 'drop', '-q'], ws.path);
+      }
+      const restored = String(ctx.cli(['restore', 'archived-gc', '--lease', archived.lease]).path);
+      ctx.git(['fsck', '--full'], restored);
+      assert.equal(ctx.git(['rev-parse', 'HEAD'], restored), archivedTip);
+      ctx.cli(['merge', 'local', '--lease', grafts[0].ws.lease]);
+      assert.equal(ctx.git(['rev-parse', 'main']), grafts[0].tip);
+      ctx.git(['fsck', '--full']);
+    },
+  },
+  ...(process.platform === 'win32' ? [{
+    name: 'Windows open file handles stop archive, move and restore without losing data',
+    async run(ctx) {
+      assert.equal(process.platform, 'win32');
+      const ws = ctx.spawn('held');
+      const file = join(ws.path, 'held.txt');
+      writeFileSync(file, 'open in an editor\n');
+      const attempt = async (args: string[], target: string) => {
+        const release = await holdOpen(ctx, target);
+        let refused: ReturnType<typeof graftAt>;
+        try {
+          refused = graftAt(ctx, ctx.repo, args);
+        } finally {
+          await release();
+        }
+        assert.equal(refused.ok, false, `${args[0]} succeeded while a file was held open`);
+        assert.equal(readFileSync(target, 'utf8'), 'open in an editor\n');
+        const retried = graftAt(ctx, ctx.repo, args);
+        assert.equal(retried.ok, true, JSON.stringify(retried.json));
+        return retried.json;
+      };
+      const moved = join(dirname(ws.path), 'held-moved');
+      await attempt(['move', 'held', moved, '--lease', ws.lease], file);
+      assert.equal(readFileSync(join(moved, 'held.txt'), 'utf8'), 'open in an editor\n');
+      await attempt(['remove', 'held', '--lease', ws.lease, '--discard'], join(moved, 'held.txt'));
+      assert.equal(existsSync(moved), false);
+      const listing = ctx.cli(['list']);
+      assert(Array.isArray(listing.recoverable));
+      const archive = String(objectResult(listing.recoverable.map(objectResult).find(w => w.name === 'held')).archive_path);
+      const restored = await attempt(['restore', 'held', '--lease', ws.lease], join(archive, 'held.txt'));
+      assert.equal(readFileSync(join(String(restored.path), 'held.txt'), 'utf8'), 'open in an editor\n');
+      // A merge archives after updating the destination; the retry completes it.
+      const lease = String(restored.lease);
+      const path = String(restored.path);
+      ctx.git(['add', 'held.txt'], path);
+      ctx.git(['commit', '-qm', 'Held file'], path);
+      const tip = ctx.git(['rev-parse', 'HEAD'], path);
+      const merged = await attempt(['merge', 'held', '--lease', lease], join(path, 'held.txt'));
+      assert.equal(merged.commit, tip);
+      assert.equal(ctx.git(['rev-parse', 'main']), tip);
+      assert.equal(readFileSync(join(ctx.repo, 'held.txt'), 'utf8'), 'open in an editor\n');
+    },
+  } satisfies Scenario] : []),
 ];

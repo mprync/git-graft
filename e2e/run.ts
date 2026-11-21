@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { Context, Unavailable, execute, objectResult, type Scenario } from './harness.ts';
 
 const project = fileURLToPath(new URL('../', import.meta.url));
-const groups = ['lifecycle', 'storage', 'mixed-history', 'local-history', 'dependencies', 'dependency-reuse', 'registered-managers', 'landing', 'recovery', 'undo', 'safety', 'edge-cases', 'mcp', 'workspace', 'space'];
+const groups = ['lifecycle', 'storage', 'mixed-history', 'local-history', 'dependencies', 'dependency-reuse', 'registered-managers', 'landing', 'recovery', 'undo', 'safety', 'edge-cases', 'process-faults', 'mcp', 'workspace', 'space'];
 const args = process.argv.slice(2);
 const group = args[0] === '--group' ? args[1] : undefined;
 if (args.length && (args.length !== 2 || !groups.includes(group ?? ''))) {
