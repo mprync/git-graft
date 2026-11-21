@@ -1,0 +1,67 @@
+name: Bug report
+description: Something in git-graft does not work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. For security problems, use [private reporting](https://github.com/mprync/git-graft/security/advisories/new) instead of this form.
+
+        **Do not paste leases.** A lease is a secret that proves a graft is yours. Remove leases, tokens and private repository data from everything you submit.
+  - type: input
+    id: version
+    attributes:
+      label: git-graft version
+      description: Output of `git graft --version`.
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: For example macOS 15 on Apple silicon, Ubuntu 24.04 x86_64, Windows 11 ARM64.
+    validations:
+      required: true
+  - type: input
+    id: filesystem
+    attributes:
+      label: Filesystem
+      description: The filesystem holding your repository, for example APFS, Btrfs, XFS, ext4 or NTFS.
+    validations:
+      required: true
+  - type: input
+    id: git
+    attributes:
+      label: Git version
+      description: Output of `git --version`. git-graft needs 2.46 or newer.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`git graft doctor` output"
+      description: Run it in your repository and paste the JSON. Remove leases and private paths first.
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The commands you ran, in order, ideally in a fresh repository.
+      placeholder: |
+        1. git graft add example
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Logs or error output (with leases removed), and whether it happens through the CLI, the MCP server or both.

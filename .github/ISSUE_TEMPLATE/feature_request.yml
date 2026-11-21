@@ -1,0 +1,32 @@
+name: Feature request
+description: Suggest an improvement to git-graft
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: Describe the problem or workflow, not just the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like git-graft to do?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you have tried
+      description: Other commands, tools or workarounds, including `git worktree`.
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where does this apply?
+      multiple: true
+      options:
+        - CLI
+        - MCP server
+        - Installers and packaging
+        - Documentation
