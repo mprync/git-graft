@@ -1040,11 +1040,14 @@ export const cases: Scenario[] = [
         assert.equal(readFileSync(sourceModule, 'utf8'), producerEdit);
 
         const forgotten = ctx.cli(layerArgs('remove', name, consumer.lease, key));
+        const retainedPath = string(forgotten.retained_path, 'retained layer');
+        assert.equal(dirname(retainedPath), join(dirname(layers), 'retained-layers'));
         assert.deepEqual(forgotten, {
           action: 'remove', digest, backend: mode.backend, logical_bytes: 0, cloned_bytes: 0, copied_bytes: 0,
-          ...(process.platform === 'win32' ? { retained: true } : {}),
+          retained: true, retained_path: retainedPath,
         });
         assert.deepEqual(readdirSync(layers).filter(entry => entry !== '.git-graft-id'), []);
+        assert.equal(readFileSync(join(retainedPath, moduleFile), 'utf8'), fixtureContents);
         assert.equal(readFileSync(restoredModule, 'utf8'), consumerEdit);
         transfers[mode.name] = { saved, restored, forgotten };
       }

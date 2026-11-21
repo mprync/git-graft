@@ -22,6 +22,17 @@ function npm(ctx: Context, args: string[], cwd = ctx.repo): string {
   return result.stdout.trim();
 }
 
+/** Every entry under `root` with its type and content hash, to prove an install did not change. */
+function tree(root: string): string[] {
+  return readdirSync(root, { recursive: true }).map(String).sort().map(name => {
+    const path = join(root, name);
+    const entry = lstatSync(path);
+    if (entry.isSymbolicLink()) return `${name} link`;
+    if (!entry.isFile()) return `${name} dir`;
+    return `${name} ${createHash('sha256').update(readFileSync(path)).digest('hex')}`;
+  });
+}
+
 export const cases: Scenario[] = [{
   name: 'shared installed dependencies survive an offline additive npm install',
   run(ctx) {
@@ -288,6 +299,8 @@ export const cases: Scenario[] = [{
     assert.equal(restored.digest, saved.digest);
     const installed = join(ws.path, 'node_modules', 'graft-fixture', 'index.js');
     writeFileSync(installed, 'changed');
+    assert.match(String(ctx.fail(layer('restore')).message), /node_modules already exists/);
+    assert.equal(readFileSync(installed, 'utf8'), 'changed');
     assert.equal(readFileSync(original, 'utf8'), 'module.exports = 42;\n');
     assert.deepEqual(readFileSync(cached), bytes);
     ctx.measure('seed_backend', saved.backend);
@@ -311,5 +324,71 @@ export const cases: Scenario[] = [{
     }
     ctx.fail(['deps', 'share', '--snapshot', '--key', 'fixture']);
     assert.equal(readFileSync(join(outside, 'keep'), 'utf8'), 'keep');
+  },
+}, {
+  name: 'a replaced share keeps attached grafts and a failed offline add keeps their install',
+  run(ctx) {
+    const cache = join(ctx.root, 'npm-cache');
+    const manifest = { name: 'consumer', version: '1.0.0', private: true, dependencies: { 'graft-fixture': '1.0.0' } };
+    const install = (directory: string, payloadBytes: number, message: string) => {
+      mkdirSync(directory);
+      const fixture = npmArchive(directory, payloadBytes);
+      const lock = { name: manifest.name, version: manifest.version, lockfileVersion: 3, requires: true, packages: {
+        '': manifest, 'node_modules/graft-fixture': { version: '1.0.0',
+          resolved: 'https://127.0.0.1:1/graft-fixture.tgz', integrity: fixture.integrity },
+      } };
+      writeFileSync(join(ctx.repo, 'package.json'), JSON.stringify(manifest));
+      writeFileSync(join(ctx.repo, 'package-lock.json'), JSON.stringify(lock));
+      ctx.git(['add', 'package.json', 'package-lock.json']);
+      ctx.git(['commit', '-qm', message]);
+      npm(ctx, ['cache', 'add', fixture.path, '--offline', '--cache', cache]);
+      rmSync(join(ctx.repo, 'node_modules'), { recursive: true, force: true });
+      npm(ctx, ['ci', '--offline', '--ignore-scripts', '--cache', cache]);
+    };
+    install(join(ctx.root, 'first-release'), 0, 'first dependency release');
+    const attempt = ctx.command(ctx.bin, ['--repo', ctx.repo, '--json', 'deps', 'share', '--key', 'fixture']);
+    assert.ifError(attempt.error);
+    if (attempt.status !== 0) {
+      assert.equal(objectResult(JSON.parse(attempt.stderr || attempt.stdout)).code, 'cow_unavailable');
+      ctx.unavailable('shared dependencies require native copy-on-write');
+    }
+    const firstShare = objectResult(JSON.parse(attempt.stdout));
+    const old = ctx.spawn('old');
+    assert.equal(objectResult(objectResult(old.result.storage).dependencies).digest, firstShare.digest);
+    const oldModules = join(old.path, 'node_modules');
+    const oldModule = join(oldModules, 'graft-fixture', 'index.js');
+    writeFileSync(oldModule, 'module.exports = "edited in the graft";\n');
+    writeFileSync(join(oldModules, 'graft-note.txt'), 'written by the graft');
+    const oldInstall = tree(oldModules);
+    const state = dirname(String(ctx.cli(['status', 'old', '--env']).cache_dir));
+    const firstLayer = join(state, 'layers', String(firstShare.digest));
+    const firstLayerTree = tree(firstLayer);
+
+    // A new release replaces the share: the attached graft keeps its own install.
+    install(join(ctx.root, 'second-release'), 4096, 'second dependency release');
+    const secondShare = ctx.cli(['deps', 'share', '--key', 'fixture']);
+    assert.equal(secondShare.status, 'registered');
+    assert.notEqual(secondShare.digest, firstShare.digest);
+    assert.deepEqual(tree(oldModules), oldInstall);
+    assert.deepEqual(tree(firstLayer), firstLayerTree);
+    const required = ctx.command(process.execPath, ['-e', "process.stdout.write(require('graft-fixture'))"], old.path);
+    assert.equal(required.status, 0, required.stderr);
+    assert.equal(required.stdout, 'edited in the graft');
+    const next = ctx.spawn('next');
+    assert.equal(objectResult(objectResult(next.result.storage).dependencies).digest, secondShare.digest);
+    assert(existsSync(join(next.path, 'node_modules', 'graft-fixture', 'payload.bin')));
+    assert(!existsSync(join(next.path, 'node_modules', 'graft-note.txt')));
+
+    // An offline add of an uncached package fails before npm changes the install.
+    const inputs = ['package.json', 'package-lock.json'].map(name => readFileSync(join(old.path, name)));
+    const failed = ctx.command(ctx.bin, ['--repo', ctx.repo, '--json', 'deps', 'add', 'old', '--lease', old.lease,
+      '--manager', 'npm', '--offline', 'graft-missing-package@1.0.0']);
+    assert.ifError(failed.error);
+    const receipt = objectResult(JSON.parse(failed.stdout || failed.stderr));
+    assert(failed.status !== 0 || receipt.success === false, failed.stdout);
+    assert.deepEqual(tree(oldModules), oldInstall);
+    assert.deepEqual(['package.json', 'package-lock.json'].map(name => readFileSync(join(old.path, name))), inputs);
+    assert.equal(readFileSync(oldModule, 'utf8'), 'module.exports = "edited in the graft";\n');
+    ctx.cli(['heartbeat', 'old', '--lease', old.lease]);
   },
 }];

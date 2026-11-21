@@ -4,7 +4,8 @@
 //! describes the exact toolchain, install flags and relevant environment. Only
 //! clean, single-package committed source with one root lockfile is eligible.
 //! Transfers require native CoW unless the caller explicitly requests copies.
-//! Layers live until explicitly forgotten.
+//! Layers live until explicitly forgotten, and forgetting one moves it to
+//! [`RETAINED_LAYERS`] rather than deleting it.
 //! Windows copies only the unnamed data stream and read-only attribute; other
 //! source metadata is not represented. Unverifiable Windows layers are retained.
 
@@ -24,6 +25,9 @@ pub(crate) use registered::{
 };
 mod shared;
 pub use shared::{check_attached_for_add, inherit_shared, seed_shared};
+
+/// Project-state directory that keeps layers retired by `deps layer remove`.
+pub(crate) const RETAINED_LAYERS: &str = "retained-layers";
 
 /// Root lockfiles recognised for Node package managers.
 const LOCKS: &[&str] = &[
@@ -415,6 +419,28 @@ fn verify_layer_contents(layer: &Path, digest: &str) -> Result<Value> {
     Ok(value)
 }
 
+/// Name the reason a cache purge must keep this layer, if it must.
+///
+/// Layers saved with `deps layer save` or `deps share --snapshot` (provenance
+/// version 1), and the generation that `deps share` currently registers for new
+/// grafts, exist because the user asked for them. Only `deps layer remove`
+/// retires them. A shared generation that a later `deps share` superseded is a
+/// cache. An unreadable layer or registration is an error, so the purge keeps
+/// the layer and reports it as blocked.
+pub(crate) fn purge_keeps_layer(
+    state: &Path,
+    layer: &Path,
+    digest: &str,
+) -> Result<Option<&'static str>> {
+    if layer_provenance(layer, digest)?["version"] != 2 {
+        return Ok(Some("saved_layer"));
+    }
+    if shared::registered_digest(state)?.as_deref() == Some(digest) {
+        return Ok(Some("registered_shared_layer"));
+    }
+    Ok(None)
+}
+
 /// Verify the generation against its original digest, including after quarantine.
 pub(crate) fn verify_layer(layer: &Path, digest: &str) -> Result<Value> {
     if cfg!(windows) {
@@ -730,22 +756,17 @@ pub fn run(
             let backend = provenance["backend"]
                 .as_str()
                 .context("invalid layer backend")?;
-            let result = Transfer::default().receipt(action, &digest, backend);
-            #[cfg(not(windows))]
-            {
-                fs::remove_dir_all(&layer)?;
-                Ok(result)
-            }
-            #[cfg(windows)]
-            {
-                let retained = state.join("retained-layers");
-                registry::dir(&retained)?;
-                let destination = retained.join(format!("{}-{}", digest, Uuid::new_v4()));
-                publish(&layer, &destination)?;
-                let mut result = result;
-                result["retained"] = json!(true);
-                Ok(result)
-            }
+            let mut result = Transfer::default().receipt(action, &digest, backend);
+            // Retire rather than delete, on every platform: a saved layer can
+            // hold the only copy of a patched install. The user deletes the
+            // retained directory when it is no longer needed.
+            let retained = state.join(RETAINED_LAYERS);
+            registry::dir(&retained)?;
+            let destination = retained.join(format!("{}-{}", digest, Uuid::new_v4()));
+            publish(&layer, &destination)?;
+            result["retained"] = json!(true);
+            result["retained_path"] = json!(destination);
+            Ok(result)
         }
         _ => unreachable!(),
     }
@@ -954,8 +975,14 @@ mod tests {
         let copy = b.join("node_modules/graft-layer-fixture/index.js");
         assert_eq!(fs::read_to_string(&copy)?, "module.exports = 42;\n");
         fs::write(&copy, "changed")?;
+        fs::write(b.join("node_modules/local-patch"), "local")?;
         assert_eq!(fs::read_to_string(&source)?, "module.exports = 42;\n");
         assert!(run(&b, &state, "restore", "node-toolchain", true).is_err());
+        assert_eq!(fs::read_to_string(&copy)?, "changed");
+        assert_eq!(
+            fs::read_to_string(b.join("node_modules/local-patch"))?,
+            "local"
+        );
         fs::write(b.join("package.json"), "{}")?;
         assert!(run(&b, &state, "remove", "node-toolchain", false).is_err());
         let cached_special = cached.parent().unwrap().join("special");
@@ -967,6 +994,26 @@ mod tests {
         let forgotten = run(&a, &state, "remove", "node-toolchain", false)?;
         assert_eq!(forgotten["backend"], "copy");
         assert!(run(&a, &state, "remove", "node-toolchain", false).is_err());
+
+        // Removal retires the layer, bytes intact, into private project state.
+        use std::os::unix::fs::PermissionsExt;
+        let retained_root = state.join(RETAINED_LAYERS);
+        assert_eq!(forgotten["retained"], true);
+        let retained = Path::new(forgotten["retained_path"].as_str().unwrap());
+        assert_eq!(retained.parent(), Some(retained_root.as_path()));
+        assert!(!generation.exists());
+        let kept = retained.join("node_modules/graft-layer-fixture/index.js");
+        assert_eq!(fs::read_to_string(&kept)?, "module.exports = 42;\n");
+        assert_eq!(
+            fs::metadata(&retained_root)?.permissions().mode() & 0o777,
+            0o700
+        );
+        // Saving and removing the same key again keeps both retired copies.
+        run(&a, &state, "save", "node-toolchain", true)?;
+        let again = run(&a, &state, "remove", "node-toolchain", false)?;
+        assert_ne!(again["retained_path"], forgotten["retained_path"]);
+        assert_eq!(fs::read_to_string(&kept)?, "module.exports = 42;\n");
+        assert_eq!(fs::read_dir(&retained_root)?.count(), 2);
         Ok(())
     }
 

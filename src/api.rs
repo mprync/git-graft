@@ -348,7 +348,8 @@ pub struct Gc {
     /// Archive the expired grafts and clean caches. The default is a preview.
     #[arg(long)]
     pub apply: bool,
-    /// Also reclaim package caches and installed layers when all grafts are archived.
+    /// Also reclaim package caches and replaced shared layers when all grafts are archived.
+    /// Saved layers and the registered shared layer stay until `deps layer remove`.
     #[arg(long)]
     pub purge_cache: bool,
 }

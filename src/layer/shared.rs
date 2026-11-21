@@ -100,6 +100,11 @@ impl Active {
     }
 }
 
+/// The layer digest that `deps share` registered for new grafts, if any.
+pub(super) fn registered_digest(state: &Path) -> Result<Option<String>> {
+    Ok(Active::existing(&state.join(MARKER))?.map(|active| active.digest))
+}
+
 fn small_regular_file(path: &Path) -> Result<Vec<u8>> {
     small_file(path, "invalid shared layer state file", |_, _| Ok(()))
 }
@@ -603,6 +608,112 @@ mod tests {
         ] {
             git::bytes(checkout, &["config", key, value])?;
         }
+        Ok(())
+    }
+
+    /// Assert that a purge report keeps exactly these layers, for these reasons.
+    fn assert_kept(report: &Value, expected: &[(&Path, &str)]) {
+        let kept = report["kept"].as_array().expect("kept layers");
+        assert_eq!(kept.len(), expected.len(), "{report}");
+        for (path, reason) in expected {
+            assert!(
+                kept.contains(&json!({"path": path, "reason": reason})),
+                "{report}"
+            );
+        }
+    }
+
+    #[test]
+    fn cache_purge_keeps_saved_and_registered_layers() -> Result<()> {
+        use crate::engine::gc::purge_caches;
+
+        let (_root, project, _lock) = fixture()?;
+        let repo = &project.repo;
+        let state = &project.state;
+        let modules = repo.join("node_modules");
+        fs::create_dir(&modules)?;
+        fs::write(modules.join("payload"), b"installed")?;
+        let layers = state.join("layers");
+        let saved = super::super::run(repo, state, "save", "manual", true)?;
+        let saved = layers.join(saved["digest"].as_str().unwrap());
+
+        let Some(first) = seed_unless_cow_unavailable(&project)? else {
+            for apply in [false, true] {
+                let report = purge_caches(&project, apply)?;
+                assert_kept(&report, &[(&saved, "saved_layer")]);
+                assert!(
+                    !report["candidates"]
+                        .as_array()
+                        .unwrap()
+                        .contains(&json!(saved))
+                );
+            }
+            assert_eq!(fs::read(saved.join("node_modules/payload"))?, b"installed");
+            return Ok(());
+        };
+        let superseded = layers.join(first["digest"].as_str().unwrap());
+
+        // New dependency inputs register a different generation; the first is
+        // now only a cache.
+        fs::write(
+            repo.join(MANIFEST),
+            r#"{"name":"fixture","version":"2.0.0"}"#,
+        )?;
+        fs::write(
+            repo.join("package-lock.json"),
+            r#"{"lockfileVersion":3,"packages":{"":{"name":"fixture","version":"2.0.0"}}}"#,
+        )?;
+        git::bytes(repo, &["commit", "-qam", "upgrade dependencies"])?;
+        fs::write(modules.join("payload"), b"upgraded")?;
+        let second = seed_shared(repo, state, KEY)?;
+        let registered = layers.join(second["digest"].as_str().unwrap());
+        assert_ne!(registered, superseded);
+
+        let preview = purge_caches(&project, false)?;
+        assert_kept(
+            &preview,
+            &[
+                (&saved, "saved_layer"),
+                (&registered, "registered_shared_layer"),
+            ],
+        );
+        let candidates = preview["candidates"].as_array().unwrap();
+        assert!(candidates.contains(&json!(superseded)), "{preview}");
+        assert!(!candidates.contains(&json!(saved)), "{preview}");
+        assert!(!candidates.contains(&json!(registered)), "{preview}");
+
+        let applied = purge_caches(&project, true)?;
+        assert_kept(
+            &applied,
+            &[
+                (&saved, "saved_layer"),
+                (&registered, "registered_shared_layer"),
+            ],
+        );
+        assert!(
+            applied["removed"]
+                .as_array()
+                .unwrap()
+                .contains(&json!(superseded)),
+            "{applied}"
+        );
+        assert!(!superseded.exists());
+        assert_eq!(fs::read(saved.join("node_modules/payload"))?, b"installed");
+        assert_eq!(
+            fs::read(registered.join("node_modules/payload"))?,
+            b"upgraded"
+        );
+        super::super::verify_layer(&saved, saved.file_name().unwrap().to_str().unwrap())?;
+
+        // The registered layer still serves new grafts after the purge.
+        let checkout = _root.path().join("after-purge");
+        clone_checkout(repo, state, &checkout)?;
+        let receipt = inherit_shared(&checkout, state, repo)?.unwrap();
+        assert_eq!(receipt["status"], "attached", "{receipt}");
+        assert_eq!(
+            fs::read(checkout.join("node_modules/payload"))?,
+            b"upgraded"
+        );
         Ok(())
     }
 

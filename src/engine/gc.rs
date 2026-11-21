@@ -55,6 +55,7 @@ pub(crate) fn purge_caches(p: &Project, apply: bool) -> Result<Value> {
     let mut removed = Vec::new();
     let mut blocked = Vec::new();
     let mut retained = Vec::new();
+    let mut kept = Vec::new();
     let mut groups = vec![
         (Kind::Package, p.state.join("cache")),
         (Kind::Layer, p.state.join("layers")),
@@ -141,6 +142,24 @@ pub(crate) fn purge_caches(p: &Project, apply: bool) -> Result<Value> {
                 retained.push(failure(&path, &reason));
                 continue;
             }
+            // Saved and registered layers are user data, not caches.
+            if let Kind::Layer = kind {
+                let keep = name
+                    .to_str()
+                    .context("invalid layer digest")
+                    .and_then(|digest| layer::purge_keeps_layer(&p.state, &path, digest));
+                match keep {
+                    Ok(Some(reason)) => {
+                        kept.push(json!({"path": path, "reason": reason}));
+                        continue;
+                    }
+                    Ok(None) => (),
+                    Err(error) => {
+                        blocked.push(failure(&path, &error));
+                        continue;
+                    }
+                }
+            }
             let verify = |candidate: &Path| -> Result<Verified> {
                 match kind {
                     Kind::Layer => {
@@ -217,7 +236,8 @@ pub(crate) fn purge_caches(p: &Project, apply: bool) -> Result<Value> {
     let eligible = (blocked.is_empty() && retained.is_empty()) || !candidates.is_empty();
     Ok(json!({
         "requested":true, "eligible":eligible, "purged":!removed.is_empty(),
-        "directories":directories,"candidates":candidates,"removed":removed,"blocked":blocked,"retained":retained
+        "directories":directories,"candidates":candidates,"removed":removed,"blocked":blocked,"retained":retained,
+        "kept":kept
     }))
 }
 
