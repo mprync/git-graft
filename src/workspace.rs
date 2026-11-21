@@ -302,18 +302,30 @@ fn clean(path: &Path, allow_ignored: bool) -> Result<()> {
     Ok(())
 }
 
+/// What an archive did. A merge receipt says every commit of the graft was
+/// merged. When `remove --discard` archived commits made after an earlier
+/// merge had landed, the action is `remove`: the receipt still names the
+/// merge that landed, and `head` is the archived graft HEAD whose later
+/// commits were never merged.
 fn receipt(r: &Record) -> Value {
-    match &r.plan {
-        Some(plan) => {
+    match (&r.plan, &r.unmerged_head) {
+        (Some(plan), None) => {
             json!({"action":"merge","name":r.name,"target":plan.target,"previous":plan.old,
             "commit":plan.new,"graft_tip":plan.tip,"removed":true,"recovery_lease":r.lease})
         }
-        None => json!({"action":"remove","name":r.name,"removed":true,"recovery_lease":r.lease}),
+        (Some(plan), Some(head)) => {
+            json!({"action":"remove","name":r.name,"target":plan.target,"previous":plan.old,
+            "commit":plan.new,"graft_tip":plan.tip,"head":head,"unmerged_commits":true,
+            "removed":true,"recovery_lease":r.lease})
+        }
+        (None, _) => {
+            json!({"action":"remove","name":r.name,"removed":true,"recovery_lease":r.lease})
+        }
     }
 }
 
 fn retire(p: &Project, name: &str, lease: &str, status: Status) -> Result<Value> {
-    Ok(receipt(&registry::retire(p, name, lease, status)?))
+    Ok(receipt(&registry::retire(p, name, lease, status, None)?))
 }
 
 fn destination_contains(p: &Project, plan: &crate::landing::Plan) -> Result<bool> {
@@ -457,7 +469,18 @@ fn drop_workspace(p: &Project, opts: &api::DropWorkspace) -> Result<Value> {
             // and the undo receipt if the destination already contains it.
             if destination_contains(p, plan)? {
                 crate::landing::finish_applied_checkout(&p.repo, plan)?;
-                return retire(p, &r.name, &r.lease, Status::Landed);
+                // Commits made after the merged tip were never merged.
+                let head = (!unborn(&r.path)?)
+                    .then(|| git::oid(&r.path, "HEAD"))
+                    .transpose()?
+                    .filter(|head| *head != plan.tip);
+                return Ok(receipt(&registry::retire(
+                    p,
+                    &r.name,
+                    &r.lease,
+                    Status::Landed,
+                    head.as_deref(),
+                )?));
             }
             crate::landing::require_no_pending_checkout(&p.repo, plan)?;
             r.plan = None;

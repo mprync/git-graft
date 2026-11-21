@@ -68,6 +68,10 @@ pub struct Record {
     initialized: bool,
     transition: Option<Transition>,
     previous: Vec<Retirement>,
+    /// The graft HEAD that `remove --discard` archived after a merge had
+    /// already landed an earlier tip: its later commits were never merged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unmerged_head: Option<String>,
 }
 
 impl Record {
@@ -114,6 +118,8 @@ struct Retirement {
     status: Status,
     path: PathBuf,
     plan: Option<Plan>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    unmerged_head: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -423,6 +429,18 @@ fn validate_path(path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Unmerged commits are only recorded beside the merge that did land.
+fn validate_unmerged_head(head: Option<&str>, plan: Option<&Plan>) -> Result<()> {
+    if let Some(head) = head {
+        git::checked_oid(head)?;
+        ensure!(
+            plan.is_some_and(|plan| plan.tip != head),
+            "invalid unmerged graft head"
+        );
+    }
+    Ok(())
+}
+
 fn validate_record(r: &Record) -> Result<()> {
     canonical_uuid(&r.id)?;
     validate_name(&r.name)?;
@@ -445,6 +463,7 @@ fn validate_record(r: &Record) -> Result<()> {
     if let Some(plan) = &r.plan {
         validate_plan(plan)?;
     }
+    validate_unmerged_head(r.unmerged_head.as_deref(), r.plan.as_ref())?;
     ensure!(valid_port(r.port), "invalid workspace port");
     ensure!(
         match r.status {
@@ -469,6 +488,7 @@ fn validate_record(r: &Record) -> Result<()> {
         if let Some(plan) = &prior.plan {
             validate_plan(plan)?;
         }
+        validate_unmerged_head(prior.unmerged_head.as_deref(), prior.plan.as_ref())?;
     }
     ensure!(
         r.archive.is_some()
@@ -780,8 +800,9 @@ fn bad_lease(name: &str) -> anyhow::Error {
 /// The lease belongs to a graft that is now archived. Say so, and how to get
 /// the work back, so an agent does not abandon it. The lease is not repeated.
 fn archived(r: &Record, name_in_use: bool) -> anyhow::Error {
-    let (by, archived_by) = match r.status {
-        Status::Landed => ("merge", "merge"),
+    let (by, archived_by) = match (r.status, &r.unmerged_head) {
+        (Status::Landed, None) => ("merge", "merge"),
+        (Status::Landed, Some(_)) => ("remove --discard after an earlier merge", "remove"),
         _ => (
             "remove, or by prune after its lease expired",
             "remove_or_prune",
@@ -855,6 +876,7 @@ pub fn load_retired(p: &Project, name: &str, lease: &str) -> Result<Record> {
             r.status = receipt.status;
             r.path = receipt.path.clone();
             r.plan = receipt.plan.clone();
+            r.unmerged_head = receipt.unmerged_head.clone();
             r.archive = None;
             r.transition = None;
             return Ok(r);
@@ -1362,6 +1384,7 @@ fn resume(p: &Project, r: &mut Record) -> Result<()> {
                 status: r.status,
                 path: r.path.clone(),
                 plan: r.plan.take(),
+                unmerged_head: r.unmerged_head.take(),
             });
             r.archive = None;
             r.status = if r.initialized {
@@ -1522,6 +1545,7 @@ pub fn reserve(
         initialized: false,
         transition: Some(Transition::Place { from: from.clone() }),
         previous: Vec::new(),
+        unmerged_head: None,
     };
     let result = (|| {
         write_record(&directory, &r)?;
@@ -1649,7 +1673,12 @@ pub fn unlock(p: &Project, name: &str, lease: &str) -> Result<Record> {
     Ok(r)
 }
 
-fn begin_retirement(p: &Project, r: &mut Record, status: Status) -> Result<()> {
+fn begin_retirement(
+    p: &Project,
+    r: &mut Record,
+    status: Status,
+    unmerged_head: Option<&str>,
+) -> Result<()> {
     require_unlocked(r)?;
     ensure!(
         (status == Status::Landed) == r.plan.is_some(),
@@ -1667,6 +1696,7 @@ fn begin_retirement(p: &Project, r: &mut Record, status: Status) -> Result<()> {
         _ => {
             let (archive, from) = retirement_destination(p, r)?;
             r.archive = Some(archive);
+            r.unmerged_head = unmerged_head.map(str::to_owned);
             r.transition = Some(Transition::Retire { status, from });
             persist(p, r)?;
         }
@@ -1748,8 +1778,15 @@ fn retirement_destination(p: &Project, r: &Record) -> Result<(PathBuf, Option<Pa
 }
 
 /// The caller holds the workspace lock until the Git operation and archive
-/// transition have both completed.
-pub fn retire(p: &Project, name: &str, lease: &str, status: Status) -> Result<Record> {
+/// transition have both completed. `unmerged_head` is journaled with a new
+/// retirement only; a replay keeps what the first attempt recorded.
+pub fn retire(
+    p: &Project,
+    name: &str,
+    lease: &str,
+    status: Status,
+    unmerged_head: Option<&str>,
+) -> Result<Record> {
     ensure!(status.retired(), "expected terminal workspace status");
     if let Ok(completed) = load_retired(p, name, lease) {
         ensure!(
@@ -1759,7 +1796,7 @@ pub fn retire(p: &Project, name: &str, lease: &str, status: Status) -> Result<Re
         return Ok(completed);
     }
     let mut r = authenticate(p, name, lease)?;
-    begin_retirement(p, &mut r, status)?;
+    begin_retirement(p, &mut r, status, unmerged_head)?;
     Ok(r)
 }
 
@@ -1847,6 +1884,7 @@ pub fn recoverable(p: &Project) -> Result<Vec<Summary>> {
             r.path = old.path;
             r.status = old.status;
             r.plan = old.plan;
+            r.unmerged_head = old.unmerged_head;
             let mut prior = summary(&r, false, Some("restored"));
             prior.receipt_id = Some(format!("{}:{}", r.id, index + 1));
             result.push(prior);
@@ -2031,7 +2069,7 @@ fn prune_one(p: &Project, r: &mut Record, apply: bool) -> Result<(&'static str, 
                 {
                     reason
                 } else if apply {
-                    begin_retirement(p, r, Status::Dropped)?;
+                    begin_retirement(p, r, Status::Dropped, None)?;
                     "archived"
                 } else {
                     "eligible"
@@ -2427,7 +2465,7 @@ mod tests {
         );
         {
             let _lock = workspace_lock(p, &next.name)?;
-            retire(p, &next.name, &next.lease, Status::Dropped)?;
+            retire(p, &next.name, &next.lease, Status::Dropped, None)?;
         }
         assert_eq!(restore(p, &r.name, &r.lease)?.status, Status::Active);
         Ok(())
@@ -2550,7 +2588,7 @@ mod tests {
         rename_exclusive(&r.path, &archive)?;
         let retired = {
             let _lock = workspace_lock(p, &r.name)?;
-            retire(p, &r.name, &old_lease, Status::Landed)?
+            retire(p, &r.name, &old_lease, Status::Landed, None)?
         };
         assert_eq!(retired.status, Status::Landed);
         assert_eq!(git::oid(&archive, "refs/stash")?, stash);
@@ -2586,7 +2624,7 @@ mod tests {
 
         {
             let _lock = workspace_lock(p, &r.name)?;
-            retire(p, &r.name, &new_lease, Status::Dropped)?;
+            retire(p, &r.name, &new_lease, Status::Dropped, None)?;
         }
         let replacement = f.workspace(&r.name)?;
         assert_ne!(replacement.id, r.id);
@@ -2666,7 +2704,7 @@ mod tests {
         fs::write(r.path.join("partial"), "keep it")?;
         let retired = {
             let _lock = workspace_lock(p, &r.name)?;
-            retire(p, &r.name, &lease, Status::Dropped)?
+            retire(p, &r.name, &lease, Status::Dropped, None)?
         };
         assert_eq!(retired.status, Status::Dropped);
         let restored = restore(p, &r.name, &lease)?;
@@ -2707,7 +2745,7 @@ mod tests {
         assert_eq!(fs::read_to_string(stage.join("partial"))?, "partial work");
         let retired = {
             let _lock = workspace_lock(p, &r.name)?;
-            retire(p, &r.name, &r.lease, Status::Dropped)?
+            retire(p, &r.name, &r.lease, Status::Dropped, None)?
         };
         let archive = retired.archive.context("missing archive")?;
         assert_eq!(fs::read_to_string(archive.join("partial"))?, "partial work");
@@ -2881,7 +2919,7 @@ mod tests {
             let _lock = workspace_lock(p, &r.name)?;
             expect_nested(
                 "drop",
-                retire(p, &r.name, &r.lease, Status::Dropped).unwrap_err(),
+                retire(p, &r.name, &r.lease, Status::Dropped, None).unwrap_err(),
             );
         }
         assert!(load(p, &r.name)?.transition.is_none());

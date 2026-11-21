@@ -493,4 +493,37 @@ export const cases: Scenario[] = [
       ctx.cli(['heartbeat', 'idle', '--lease', String(restored.lease)]);
     },
   },
+  {
+    name: 'remove discard after a merge landed reports the later commits as unmerged',
+    run(ctx) {
+      const w = ctx.spawn('advanced');
+      writeFileSync(join(w.path, 'feature.txt'), 'merged\n');
+      commit(ctx, w.path, 'merged feature');
+      const tip = ctx.git(['rev-parse', 'HEAD'], w.path);
+      // A post-merge hook commits in the graft after the destination updates.
+      const hook = join(ctx.repo, '.git', 'hooks', 'post-merge');
+      mkdirSync(join(ctx.repo, '.git', 'hooks'), { recursive: true });
+      writeFileSync(hook, '#!/bin/sh\nset -eu\nunset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_PREFIX\ncd "$GRAFT_E2E_GRAFT"\ngit commit -q --allow-empty -m "later work"\n', { mode: 0o700 });
+      ctx.env.GRAFT_E2E_GRAFT = process.platform === 'win32' ? w.path.replaceAll('\\', '/') : w.path;
+      try {
+        ctx.fail(['merge', 'advanced', '--lease', w.lease]);
+      } finally {
+        delete ctx.env.GRAFT_E2E_GRAFT;
+        rmSync(hook);
+      }
+      assert.equal(ctx.git(['rev-parse', 'main']), tip);
+      const later = ctx.git(['rev-parse', 'HEAD'], w.path);
+      assert.notEqual(later, tip, 'the hook did not commit in the graft');
+      const receipt = drop(ctx, 'advanced', w.lease, '--discard');
+      assert.equal(receipt.action, 'remove');
+      assert.equal(receipt.unmerged_commits, true);
+      assert.equal(receipt.head, later);
+      assert.equal(receipt.graft_tip, tip);
+      assert.equal(receipt.commit, tip);
+      assert.deepEqual(drop(ctx, 'advanced', w.lease, '--discard'), receipt);
+      assert.equal(ctx.fail(['heartbeat', 'advanced', '--lease', w.lease]).code, 'graft_archived');
+      const restored = ctx.cli(['restore', 'advanced', '--lease', w.lease]);
+      assert.equal(ctx.git(['rev-parse', 'HEAD'], String(restored.path)), later);
+    },
+  },
 ];
