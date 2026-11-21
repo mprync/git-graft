@@ -508,4 +508,71 @@ export const cases: Scenario[] = [
       assert.equal(readFileSync(join(moved, 'stray.txt'), 'utf8'), 'editor recreated this\n');
     },
   },
+  ...(['local', 'isolated'] as const).map((history): Scenario => ({
+    name: `an add killed during its ${history}-history checkout keeps the primary intact and the graft recoverable`,
+    async run(ctx) {
+      // A global smudge filter holds the checkout that add starts.
+      const gate = new Gate(ctx, 'add-' + history);
+      const filter = join(ctx.root, 'hold-filter.sh');
+      const finished = join(gate.dir, 'finished');
+      writeFileSync(filter, ['#!/bin/sh', gate.shell(), 'cat', `printf done > '${finished.replaceAll('\\', '/')}'`, ''].join('\n'));
+      chmodSync(filter, 0o755);
+      writeFileSync(join(ctx.env.HOME!, 'gitconfig'), `[core]\n\tautocrlf = false\n[filter "hold"]\n\tsmudge = '${filter.replaceAll('\\', '/')}'\n\tclean = cat\n`);
+      write(ctx.repo, '.gitattributes', '*.dat filter=hold\n');
+      write(ctx.repo, 'payload.dat', 'filtered payload\n');
+      const base = commit(ctx, ctx.repo, 'Filtered file');
+      const index = readFileSync(join(ctx.repo, '.git', 'index'));
+      const id = randomUUID();
+      const args = ['--repo', ctx.repo, '--json', 'add', 'interrupted', '--history', history, '--request-id', id];
+      gate.arm();
+      const child = spawn(ctx.bin, args, { cwd: ctx.repo, env: ctx.env, stdio: 'ignore', windowsHide: true });
+      const exited = new Promise(resolve => child.once('exit', resolve));
+      try {
+        await waitFor(() => existsSync(gate.reached) || child.exitCode !== null, 'the checkout filter');
+        assert(existsSync(gate.reached), 'add finished before its checkout ran the filter');
+        assert(child.kill('SIGKILL'), 'could not kill add');
+        await exited;
+      } finally {
+        gate.open();
+        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+        await exited;
+      }
+      // The primary is untouched by the interrupted add.
+      assert.equal(ctx.git(['rev-parse', 'HEAD']), base);
+      assert.deepEqual(readFileSync(join(ctx.repo, '.git', 'index')), index);
+      assert.equal(ctx.git(['status', '--porcelain']), '');
+      assert.equal(readFileSync(join(ctx.repo, 'payload.dat'), 'utf8'), 'filtered payload\n');
+      // The filter outlives the killed add; let it finish before retrying.
+      await waitFor(() => existsSync(finished), 'the orphaned checkout filter');
+      // Retrying the same request completes the graft; another request cannot take the name.
+      assert.equal(ctx.fail(['add', 'interrupted', '--request-id', randomUUID()]).code, 'already_exists');
+      const retried = await graft(ctx, ['add', 'interrupted', '--history', history, '--request-id', id]);
+      let path: string;
+      if (retried.ok) {
+        path = String(retried.json.path);
+      } else {
+        // An unfinishable creation can be archived and restored with its lease.
+        assert.equal(retried.json.code, 'spawn_incomplete', JSON.stringify(retried.json));
+        ctx.cli(['remove', 'interrupted', '--lease', id, '--discard']);
+        path = restore(ctx, 'interrupted', id);
+      }
+      assert.equal(ctx.git(['rev-parse', 'HEAD'], path), base);
+      assert.equal(readFileSync(join(path, 'payload.dat'), 'utf8'), 'filtered payload\n');
+      ctx.git(['fsck', '--full'], path);
+      // Known gap: a local-history add reserves the graft's index with an
+      // empty index.lock, and nothing reclaims it after a kill. It holds no
+      // data, so deleting it, as Git's own message suggests, makes the graft
+      // usable. Until recovery reclaims it, pin that it is Graft's empty file.
+      const reservation = join(path, '.git', 'index.lock');
+      if (existsSync(reservation)) {
+        assert.equal(history, 'local', 'an isolated add left an index lock');
+        assert.equal(readFileSync(reservation).length, 0);
+        rmSync(reservation);
+      }
+      // The recovered graft is usable: Git can write its index and commit.
+      write(path, 'after.txt', 'work after recovery\n');
+      ctx.git(['add', 'after.txt'], path);
+      ctx.git(['commit', '-qm', 'Work after recovery'], path);
+    },
+  })),
 ];
