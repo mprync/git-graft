@@ -43,8 +43,9 @@ struct Record {
     token: String,
     phase: Phase,
     directory: DirectoryIdentity,
-    /// The native `read-tree` that writes files during `Updating`. A retry
-    /// changes nothing until this process has exited.
+    /// The last native Git command that locked the private index, such as
+    /// the `read-tree` that writes files during `Updating`. A retry changes
+    /// nothing while its lock remains and this process may still be running.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     worker: Option<u32>,
 }
@@ -93,25 +94,6 @@ fn listed(paths: &[Vec<u8>]) -> String {
         names.push(format!("and {} more", paths.len() - names.len()));
     }
     names.join(", ")
-}
-
-/// Run Git with `input` on standard input and fail with its diagnostics.
-fn run_with_input(mut command: Command, input: &[u8], operation: &str) -> Result<()> {
-    let mut child = command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()?;
-    let written = child
-        .stdin
-        .take()
-        .context("missing Git input")?
-        .write_all(input);
-    let output = child.wait_with_output()?;
-    if !output.status.success() {
-        return Err(git_failure(operation, &output));
-    }
-    Ok(written?)
 }
 
 /// Stage-zero entries of the index Git reads for `command`, by path.
@@ -250,8 +232,10 @@ impl Update {
         )
     }
 
+    /// Record a new phase. Every earlier private Git command has exited.
     fn set_phase(&mut self, phase: Phase) -> Result<()> {
         self.record.phase = phase;
+        self.record.worker = None;
         self.save()
     }
 
@@ -409,20 +393,37 @@ impl Update {
         Ok(command)
     }
 
-    /// Run the native file update, first recording its process ID so a
-    /// retry can prove it has exited before touching the same files.
-    fn run_worker(&mut self, mut command: Command) -> Result<Output> {
-        self.record.worker = None;
-        self.save()?;
-        let child = command
+    /// Run a Git command that locks the private index, recording its
+    /// process ID so a retry can prove it has exited before it reclaims the
+    /// lock or touches the same files. `input` goes to standard input.
+    fn run_private(&mut self, mut command: Command, input: Option<&[u8]>) -> Result<Output> {
+        if self.record.worker.is_some() {
+            // Never leave an exited process on record for a live lock.
+            self.record.worker = None;
+            self.save()?;
+        }
+        let mut child = command
+            .stdin(if input.is_some() {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()?;
         self.record.worker = Some(child.id());
         let recorded = self.save();
+        let written = match (child.stdin.take(), input) {
+            (Some(mut stdin), Some(input)) => stdin.write_all(input),
+            _ => Ok(()),
+        };
         let output = child.wait_with_output();
         recorded?;
-        Ok(output?)
+        let output = output?;
+        if output.status.success() {
+            written?;
+        }
+        Ok(output)
     }
 
     /// Move the files from one recorded commit to the other with Git's
@@ -446,11 +447,7 @@ impl Update {
             command.arg("-n");
         }
         command.args([&from, &to]);
-        let output = if dry_run {
-            command.output()?
-        } else {
-            self.run_worker(command)?
-        };
+        let output = self.run_private(command, None)?;
         if !output.status.success() {
             return Err(git_failure("update destination checkout", &output));
         }
@@ -622,7 +619,7 @@ impl Update {
     /// Write a private index: `index` with the given entry for each path,
     /// refreshed against the files on disk.
     fn write_view<'a>(
-        &self,
+        &mut self,
         path: &Path,
         objects: Option<&Path>,
         index: Option<&[u8]>,
@@ -646,12 +643,14 @@ impl Update {
         if !removals.is_empty() {
             let mut command = self.index_command(path, objects)?;
             command.args(["update-index", "-z", "--index-info"]);
-            run_with_input(command, &removals, "build recovery index")?;
+            let output = self.run_private(command, Some(&removals))?;
+            if !output.status.success() {
+                return Err(git_failure("build recovery index", &output));
+            }
         }
-        let output = self
-            .index_command(path, objects)?
-            .args(["update-index", "-q", "--refresh"])
-            .output()?;
+        let mut command = self.index_command(path, objects)?;
+        command.args(["update-index", "-q", "--refresh"]);
+        let output = self.run_private(command, None)?;
         if !output.status.success() {
             return Err(git_failure("refresh recovery index", &output));
         }
@@ -692,7 +691,7 @@ impl Update {
     /// any other content or staged version stops recovery before a file is
     /// written.
     fn rebuild(
-        &self,
+        &mut self,
         path: &Path,
         admin: &Path,
         objects: Option<&Path>,
@@ -1179,6 +1178,32 @@ mod tests {
         assert_eq!(read(&p, "a.txt")?, "A\n");
         assert!(!p.repo.join("b.txt").exists());
         assert!(!p.repo.join("gone.txt").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn every_command_that_locks_the_private_index_is_recorded() -> Result<()> {
+        let (_temp, p, _lock, plan) = partial_fixture()?;
+        let mut update = Update::begin(&p.common, &plan)?;
+        let index = fs::read(p.common.join("index"))?;
+        update.seed(Some(&index))?;
+        let recorded =
+            |update: &Update| -> Result<Option<u32>> { Ok(read_record(&update.directory)?.worker) };
+        assert_eq!(recorded(&update)?, None);
+        update.two_tree(&p.repo, None, true, true)?;
+        let dry_run = recorded(&update)?.context("the dry run was not recorded")?;
+        let changes = update.changes(&p.repo, None)?;
+        update.write_view(
+            &p.repo,
+            None,
+            Some(&index),
+            changes.iter().map(|c| (&c.path[..], &c.new)),
+        )?;
+        let view = recorded(&update)?.context("the recovery index was not recorded")?;
+        assert_ne!(view, dry_run);
+        update.set_phase(Phase::Updating)?;
+        assert_eq!(recorded(&update)?, None);
+        update.clear(&p.common)?;
         Ok(())
     }
 
