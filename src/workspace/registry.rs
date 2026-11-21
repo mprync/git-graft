@@ -1562,11 +1562,7 @@ pub fn restore(p: &Project, name: &str, lease: &str) -> Result<Record> {
     if r.transition.is_none() {
         // A missing or hand-edited archive is left exactly as found.
         let archive = recorded_archive(p, &r)
-            .and_then(|archive| {
-                verify_checkout(p, &r, &archive)?;
-                require_movable_git(&r, &archive)?;
-                Ok(archive)
-            })
+            .and_then(|archive| verify_checkout(p, &r, &archive).map(|()| archive))
             .map_err(|error| {
                 fault(
                     "archive_damaged",
@@ -1576,6 +1572,7 @@ pub fn restore(p: &Project, name: &str, lease: &str) -> Result<Record> {
                     json!({"name": name, "archive_path": r.archive}),
                 )
             })?;
+        require_movable_git(&r, &archive)?;
         safe_destination(p, &r, &r.path)?;
         ensure_unoccupied(&r.path)?;
         ensure!(
