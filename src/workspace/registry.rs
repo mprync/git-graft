@@ -777,6 +777,37 @@ fn bad_lease(name: &str) -> anyhow::Error {
     )
 }
 
+/// The lease belongs to a graft that is now archived. Say so, and how to get
+/// the work back, so an agent does not abandon it. The lease is not repeated.
+fn archived(r: &Record, name_in_use: bool) -> anyhow::Error {
+    let (by, archived_by) = match r.status {
+        Status::Landed => ("merge", "merge"),
+        _ => (
+            "remove, or by prune after its lease expired",
+            "remove_or_prune",
+        ),
+    };
+    let next = if name_in_use {
+        format!(
+            "Another graft now uses the name {0}; archive that graft first, then run `git graft restore {0} --lease <this lease>` (MCP: graft_restore) to reopen this one",
+            r.name
+        )
+    } else {
+        format!(
+            "Run `git graft restore {} --lease <this lease>` (MCP: graft_restore) to reopen it",
+            r.name
+        )
+    };
+    fault(
+        "graft_archived",
+        format!(
+            "Graft {} was archived by {by}. Its files, commits and stashes are kept in the archive. {next}",
+            r.name
+        ),
+        json!({"name":r.name,"archived_by":archived_by,"archive_path":r.archive,"name_in_use":name_in_use}),
+    )
+}
+
 pub fn load(p: &Project, name: &str) -> Result<Record> {
     validate_name(name)?;
     let registry = scan(p)?;
@@ -797,6 +828,13 @@ pub fn authenticate(p: &Project, name: &str, lease: &str) -> Result<Record> {
         && !r.status.retired()
     {
         return Ok(r.clone());
+    }
+    if let Some(r) = registry
+        .records
+        .iter()
+        .find(|r| r.name == name && r.lease == lease && r.status.retired())
+    {
+        return Err(archived(r, live.is_some_and(|live| live.id != r.id)));
     }
     Err(match live {
         Some(_) => bad_lease(name),
@@ -2353,6 +2391,45 @@ mod tests {
         );
         assert!(authenticate(p, "healthy", &load(p, "healthy")?.lease).is_ok());
         assert!(other.path.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn an_archived_lease_says_how_to_restore_without_showing_a_lease() -> Result<()> {
+        let f = Fixture::new()?;
+        let p = &f.project;
+        let r = f.expired_at_base("idle")?;
+        assert_eq!(prune(p, true)?[0].reason, Some("archived"));
+        let error = authenticate(p, &r.name, &r.lease).unwrap_err();
+        let reported = crate::api::error_json(&error);
+        assert_eq!(reported["code"], "graft_archived");
+        assert_eq!(reported["details"]["archived_by"], "remove_or_prune");
+        assert_eq!(reported["details"]["name_in_use"], false);
+        let message = reported["message"].as_str().unwrap_or_default();
+        assert!(message.contains("prune") && message.contains("git graft restore idle"));
+        assert!(!reported.to_string().contains(&r.lease));
+        // Another lease, or none, still learns nothing about the archive.
+        let stranger = Uuid::new_v4().to_string();
+        assert_eq!(
+            code(&authenticate(p, &r.name, &stranger).unwrap_err()),
+            "not_found"
+        );
+
+        // When the name is reused, the hint says to free it first.
+        let next = f.expired_at_base("idle")?;
+        let reported = crate::api::error_json(&authenticate(p, &r.name, &r.lease).unwrap_err());
+        assert_eq!(reported["code"], "graft_archived");
+        assert_eq!(reported["details"]["name_in_use"], true);
+        assert!(!reported.to_string().contains(&next.lease));
+        assert_eq!(
+            code(&authenticate(p, &r.name, &stranger).unwrap_err()),
+            "lease_mismatch"
+        );
+        {
+            let _lock = workspace_lock(p, &next.name)?;
+            retire(p, &next.name, &next.lease, Status::Dropped)?;
+        }
+        assert_eq!(restore(p, &r.name, &r.lease)?.status, Status::Active);
         Ok(())
     }
 

@@ -363,11 +363,9 @@ fn destination_contains(p: &Project, plan: &crate::landing::Plan) -> Result<bool
 
 fn land_workspace(p: &Project, opts: &api::Land) -> Result<Value> {
     let _lock = registry::workspace_lock(p, &opts.name)?;
-    if let Ok(r) = registry::load_retired(p, &opts.name, &opts.lease) {
-        ensure!(
-            r.plan.as_ref().is_some_and(|plan| plan.target == opts.into),
-            "retirement does not match requested merge"
-        );
+    if let Ok(r) = registry::load_retired(p, &opts.name, &opts.lease)
+        && r.plan.as_ref().is_some_and(|plan| plan.target == opts.into)
+    {
         return Ok(receipt(&r));
     }
     let mut r = registry::authenticate(p, &opts.name, &opts.lease)?;
@@ -433,11 +431,11 @@ fn land_workspace(p: &Project, opts: &api::Land) -> Result<Value> {
 
 fn drop_workspace(p: &Project, opts: &api::DropWorkspace) -> Result<Value> {
     let _lock = registry::workspace_lock(p, &opts.name)?;
-    if let Ok(r) = registry::load_retired(p, &opts.name, &opts.lease) {
-        ensure!(
-            r.status == Status::Dropped || opts.discard,
-            "graft was archived by merge"
-        );
+    // Replay the receipt of an earlier remove. Anything else archived with
+    // this lease gets authenticate's graft_archived error and restore hint.
+    if let Ok(r) = registry::load_retired(p, &opts.name, &opts.lease)
+        && (r.status == Status::Dropped || opts.discard)
+    {
         return Ok(receipt(&r));
     }
     let mut r = registry::authenticate(p, &opts.name, &opts.lease)?;

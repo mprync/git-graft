@@ -465,4 +465,32 @@ export const cases: Scenario[] = [
       ctx.cli(['restore', 'clean', '--lease', clean.lease]);
     },
   },
+  {
+    name: 'an agent whose graft was pruned is told it was archived and can restore it',
+    async run(ctx) {
+      const w = ctx.spawn('idle');
+      const head = ctx.git(['rev-parse', 'HEAD'], w.path);
+      expire(ctx, w.result.id);
+      assert.equal(reasons(ctx.cli(['prune', '--apply'])).idle, 'archived');
+      for (const args of [
+        ['heartbeat', 'idle', '--lease', w.lease],
+        ['exec', 'idle', '--lease', w.lease, '--', process.execPath, '-e', ''],
+        ['merge', 'idle', '--lease', w.lease],
+        ['lock', 'idle', '--lease', w.lease],
+      ]) {
+        const error = ctx.fail(args);
+        assert.equal(error.code, 'graft_archived', args[0]);
+        assert.match(String(error.message), /archived by remove, or by prune/);
+        assert.match(String(error.message), /git graft restore idle --lease/);
+        assert.equal(object(error.details).archived_by, 'remove_or_prune');
+        assert.equal(JSON.stringify(error).includes(w.lease), false, `${args[0]} disclosed the lease`);
+      }
+      const tool = await mcpTool(ctx, 'graft_renew', { name: 'idle', lease: w.lease });
+      assert.equal(tool.isError, true);
+      assert.equal(tool.content.code, 'graft_archived');
+      const restored = ctx.cli(['restore', 'idle', '--lease', w.lease]);
+      assert.equal(ctx.git(['rev-parse', 'HEAD'], String(restored.path)), head);
+      ctx.cli(['heartbeat', 'idle', '--lease', String(restored.lease)]);
+    },
+  },
 ];
