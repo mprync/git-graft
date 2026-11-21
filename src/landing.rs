@@ -638,7 +638,7 @@ fn apply_in_checkout(
     })();
     if let Err(error) = result {
         if pending.has_mutated_checkout() {
-            return Err(pending.recovery_required(format!("{error:#}")));
+            return Err(pending.explain(error));
         }
         pending.clear(admin)?;
         return Err(error);
@@ -665,9 +665,11 @@ pub(crate) fn apply_with_destination(
     checked_oid(&plan.old)?;
     checked_oid(&plan.new)?;
     let admin = common_dir(repo)?;
-    let pending = checkout::Update::load(&admin)?;
-    if let Some(update) = &pending {
-        update.matches(plan)?;
+    let mut pending = checkout::Update::load(&admin)?;
+    if let Some(update) = pending.take_if(|update| !update.is_for(plan)) {
+        // Another merge or undo stopped partway through its checkout update.
+        // Settle it before this one reads or changes the same checkout.
+        settle_other(repo, &admin, update, &destination)?;
     }
     let current = branch_tip(repo, &reference)?;
     if !is_ancestor(object_repo, &plan.old, &plan.new)? {
@@ -679,19 +681,24 @@ pub(crate) fn apply_with_destination(
             && is_ancestor(repo, &plan.new, &current)?)
     {
         if let Some(update) = pending {
-            ensure!(
-                update.finished_index(),
-                update.recovery_required("the checkout index was not finalized")
-            );
+            if !update.finished_index() {
+                return Err(set_aside(
+                    &admin,
+                    update,
+                    "the destination already contains the merge",
+                ));
+            }
             update.clear(&admin)?;
         }
         return Ok(());
     }
     if current != plan.old {
         if let Some(update) = pending {
-            return Err(
-                update.recovery_required("the destination branch moved during checkout recovery")
-            );
+            return Err(set_aside(
+                &admin,
+                update,
+                "the destination branch moved after the checkout update was interrupted",
+            ));
         }
         bail!(
             "destination tip changed after merge was planned: {}",
@@ -731,9 +738,11 @@ pub(crate) fn apply_with_destination(
         )?;
     } else {
         if let Some(update) = pending {
-            return Err(
-                update.recovery_required("the destination is no longer checked out in the primary")
-            );
+            return Err(set_aside(
+                &admin,
+                update,
+                "the destination is no longer checked out in the primary",
+            ));
         }
         // Hold the primary HEAD as well as the exact destination branch.
         // Otherwise an unchecked destination could become the primary's
@@ -798,6 +807,85 @@ pub(crate) fn apply_with_destination(
         );
     }
     Ok(())
+}
+
+/// Stop tracking an interrupted checkout update that can no longer finish.
+/// Its files stay exactly as they are and its journal is kept.
+fn set_aside(admin: &Path, update: checkout::Update, reason: &str) -> anyhow::Error {
+    let plan = update.plan().clone();
+    match update.set_aside(admin) {
+        Ok(path) => fault(
+            "checkout_update_set_aside",
+            format!(
+                "The checkout update of {} was interrupted and {reason}, so Graft set the update aside without changing any file. Check git status in the primary, then retry. The saved original index is in {}.",
+                plan.target,
+                path.display()
+            ),
+            json!({"target":plan.target,"previous":plan.old,"commit":plan.new,
+                "graft_tip":plan.tip,"recovery_path":path}),
+        ),
+        Err(error) => error,
+    }
+}
+
+/// Settle a checkout journal left by a different merge or undo. A finished
+/// or unstarted update is cleared. An update stopped partway is reversed
+/// from the files on disk, while the branch still holds its previous commit
+/// and Git holds the index, HEAD and branch locks. The other graft keeps its
+/// plan, so retrying its merge applies it again from the start.
+fn settle_other(
+    repo: &Path,
+    admin: &Path,
+    mut update: checkout::Update,
+    destination: &impl Fn(&str, bool) -> Result<Option<PathBuf>>,
+) -> Result<()> {
+    if !update.has_mutated_checkout() {
+        return update.clear(admin);
+    }
+    let plan = update.plan().clone();
+    let reference = branch_ref(repo, &plan.target)?;
+    let current = recovery::listed_ref(repo, &reference)?
+        .filter(|(_, symbolic)| symbolic.is_empty())
+        .map(|(oid, _)| oid);
+    if let Some(current) = &current
+        && update.finished_index()
+        && git::oid(repo, &plan.new).is_ok()
+        && is_ancestor(repo, &plan.new, current)?
+    {
+        return update.clear(admin);
+    }
+    let path = match destination(&reference, false)? {
+        Some(path) if current.as_deref() == Some(plan.old.as_str()) => path,
+        _ => {
+            return Err(set_aside(
+                admin,
+                update,
+                "its branch has since moved or is no longer checked out",
+            ));
+        }
+    };
+    let format = git::text(&path, &["rev-parse", "--show-ref-format"])?;
+    let result = (|| -> Result<()> {
+        let _index = update.acquire_index(admin, true)?;
+        let edits = format!("verify HEAD {}\n", plan.old);
+        recovery::transaction_with_objects(&path, &edits, None, None, || {
+            if symbolic_ref(&path, "HEAD")?.as_deref() != Some(reference.as_str())
+                || branch_tip(&path, &reference)? != plan.old
+            {
+                bail!(
+                    "destination branch changed while restoring its checkout: {}",
+                    plan.target
+                );
+            }
+            verify_ref_locks(admin, &reference, &format)?;
+            check_destination(admin, &path, true)?;
+            update.restore_previous(&path, admin)
+        })
+    })();
+    if let Err(error) = result {
+        return Err(update.explain(error));
+    }
+    update.clear(admin)
 }
 
 pub(crate) fn require_no_pending_checkout(repo: &Path, plan: &Plan) -> Result<()> {
