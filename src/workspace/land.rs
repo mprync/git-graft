@@ -984,6 +984,48 @@ mod tests {
         Ok(())
     }
 
+    /// Branches that exist only in `packed-refs`, as after `git gc` or
+    /// `git pack-refs --all`, land through the same compare-and-swap.
+    #[test]
+    fn lands_into_branches_stored_only_in_packed_refs() -> Result<()> {
+        let fixture = Fixture::new()?;
+        run(&fixture.p.repo, &["branch", "release"]);
+        write(&fixture.workspace, "feature.txt", "feature\n");
+        let tip = commit(&fixture.workspace, "feature");
+        run(&fixture.p.repo, &["pack-refs", "--all", "--prune"]);
+        let refs = fixture.p.repo.join(".git/refs/heads");
+        assert!(!refs.join("main").exists() && !refs.join("release").exists());
+
+        let release = prepare(
+            &fixture.p,
+            &fixture.workspace,
+            &Land {
+                into: "release".into(),
+                ..Fixture::options()
+            },
+            &[],
+        )?;
+        apply(&fixture.p, &release)?;
+        assert_eq!(run(&fixture.p.repo, &["rev-parse", "release"]), tip);
+        assert_eq!(run(&fixture.p.repo, &["rev-parse", "main"]), fixture.base);
+        assert!(!fixture.p.repo.join("feature.txt").exists());
+
+        let main = fixture.plan()?;
+        apply(&fixture.p, &main)?;
+        assert_eq!(run(&fixture.p.repo, &["rev-parse", "HEAD"]), tip);
+        assert_eq!(
+            fs::read_to_string(fixture.p.repo.join("feature.txt"))?,
+            "feature\n"
+        );
+        assert_eq!(run(&fixture.p.repo, &["status", "--porcelain"]), "");
+        // A stale packed value never shadows the advanced loose refs.
+        run(&fixture.p.repo, &["pack-refs", "--all"]);
+        assert_eq!(run(&fixture.p.repo, &["rev-parse", "release"]), tip);
+        assert_eq!(run(&fixture.p.repo, &["rev-parse", "main"]), tip);
+        run(&fixture.p.repo, &["fsck", "--full"]);
+        Ok(())
+    }
+
     #[test]
     fn refuses_sparse_and_busy_primary_checkout() {
         let fixture = Fixture::new().unwrap();
