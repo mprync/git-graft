@@ -675,7 +675,13 @@ pub fn run(repo: &Path, command: Command) -> Result<Value> {
         r.status == Status::Active && r.plan.is_none(),
         "graft has a pending operation"
     );
-    let _workspace_lock = registry::workspace_lock(p, name)?;
+    // Exec shares the graft lock with the process it starts, so a process
+    // left running in the background still blocks merge, remove and prune.
+    // Heartbeats share it too, so an agent can renew its lease meanwhile.
+    let (_workspace_lock, exec_lock) = match command {
+        Command::Exec(_) | Command::Heartbeat(_) => (None, Some(registry::exec_lock(p, name)?)),
+        _ => (Some(registry::workspace_lock(p, name)?), None),
+    };
     registry::verify(p, &r)?;
     let now = crate::registry::now();
     if r.heartbeat != now {
@@ -692,7 +698,10 @@ pub fn run(repo: &Path, command: Command) -> Result<Value> {
             let runtime = Runtime::new(&r.path, &p.state, r.port, &r.id)?;
             runtime.prepare_private_directory()?;
             drop(lock);
-            runtime.execute_registered(&a.argv, &profile)
+            let hold = exec_lock
+                .as_ref()
+                .context("exec requires the shared graft lock")?;
+            runtime.execute_registered(&a.argv, &profile, hold)
         }
         Command::AddDep(a) => {
             let attached = engine::check_dependency(&r.path, &r.storage["dependencies"], &a)?;

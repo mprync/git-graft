@@ -354,6 +354,27 @@ pub(super) fn workspace_lock(p: &Project, name: &str) -> Result<WorkspaceLock> {
     lock_in(&state_dir(p, false)?, name)
 }
 
+/// Hold the graft lock shared for `exec`. The caller passes the open file to
+/// the process it starts, so the hold lasts while that process or any
+/// descendant that kept the file open is running, even after `exec` returns.
+/// Other `exec` calls share it; lifecycle operations, which need the lock
+/// exclusively, report `workspace_busy` until the last holder exits.
+pub(super) fn exec_lock(p: &Project, name: &str) -> Result<File> {
+    validate_name(name)?;
+    let path = state_dir(p, false)?.join("locks");
+    dir(&path)?;
+    let file = open_lock(&path.join(name))?;
+    match file.try_lock_shared() {
+        Ok(()) => Ok(file),
+        Err(fs::TryLockError::WouldBlock) => Err(fault(
+            "workspace_busy",
+            "A command is running in this workspace",
+            json!({"name":name}),
+        )),
+        Err(error) => Err(io::Error::from(error).into()),
+    }
+}
+
 fn try_lock(file: File, name: &str) -> Result<WorkspaceLock> {
     match file.try_lock() {
         Ok(()) => Ok(WorkspaceLock(file)),

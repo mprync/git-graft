@@ -134,6 +134,45 @@ impl Runtime {
     }
 }
 
+/// Let the started process, and the processes it starts in turn, inherit
+/// `file`. Git Graft opens every other file close-on-exec.
+#[cfg(unix)]
+fn inherit(command: &mut Command, file: &std::fs::File) -> Result<()> {
+    use std::os::{fd::AsRawFd, unix::process::CommandExt};
+    let fd = file.as_raw_fd();
+    // SAFETY: fcntl is async-signal-safe and changes only this descriptor
+    // in the forked child, which owns its copy of the descriptor table.
+    unsafe {
+        command.pre_exec(move || {
+            if libc::fcntl(fd, libc::F_SETFD, 0) == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    Ok(())
+}
+
+/// Let the started process, and the processes it starts in turn, inherit
+/// `file`. Windows children inherit only handles marked inheritable.
+#[cfg(windows)]
+fn inherit(_command: &mut Command, file: &std::fs::File) -> Result<()> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::{HANDLE_FLAG_INHERIT, SetHandleInformation};
+    // SAFETY: the handle is owned by `file`, which outlives the child's start.
+    if unsafe {
+        SetHandleInformation(
+            file.as_raw_handle(),
+            HANDLE_FLAG_INHERIT,
+            HANDLE_FLAG_INHERIT,
+        )
+    } == 0
+    {
+        return Err(io::Error::last_os_error().into());
+    }
+    Ok(())
+}
+
 fn capture(mut reader: impl Read) -> io::Result<(String, bool)> {
     let mut retained = Vec::new();
     let mut truncated = false;
@@ -249,10 +288,14 @@ impl Runtime {
             "python_environment": self.private.join("venv")})
     }
 
+    /// Run a program in the graft. The child inherits `hold`, the graft's
+    /// shared lock, so the graft stays busy for lifecycle operations while the
+    /// child or any descendant that keeps the file open is still running.
     pub(crate) fn execute_registered(
         &self,
         argv: &[String],
         selection: &ManagerSelection,
+        hold: &std::fs::File,
     ) -> Result<Value> {
         let (program, args) = argv.split_first().context("command must not be empty")?;
         ensure!(!program.is_empty(), "command must not be empty");
@@ -260,6 +303,7 @@ impl Runtime {
         self.configure(&mut command)?;
         selection.configure(&mut command)?;
         command.args(args);
+        inherit(&mut command, hold)?;
         let mut result = Self::capture_command(command, program)?;
         if matches!(selection, ManagerSelection::InvalidRegistry) {
             result["registered_manager"] =
@@ -270,7 +314,8 @@ impl Runtime {
 
     #[cfg(test)]
     fn execute(&self, argv: &[String]) -> Result<Value> {
-        self.execute_registered(argv, &ManagerSelection::Unregistered)
+        let hold = tempfile::tempfile()?;
+        self.execute_registered(argv, &ManagerSelection::Unregistered, &hold)
     }
 
     pub(crate) fn install(

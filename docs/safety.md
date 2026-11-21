@@ -43,3 +43,9 @@ Use `git graft prune` to preview cleanup before applying it with `git graft prun
 On macOS, Graft rejects extended allow ACL entries on its primary private registry and managed graft root, including entries inherited before publication. It does not change permission entries, and it does not walk ordinary source ACLs outside these gates.
 
 On Windows, Graft relies on inherited ACLs and does not verify private DACLs. Use a private Git administrative directory and a graft parent whose ACLs allow only trusted users; apply the same care to custom graft destinations.
+
+### Processes left running in a graft
+
+`exec` shares the graft's lock with the process it starts, and that process passes the lock on to the processes it starts in turn. While any of them still holds it, `merge`, `remove`, `prune`, `move`, `lock` and dependency changes report `workspace_busy`, even after `exec` has returned. A job left running in the background, such as `nohup npm run dev &`, keeps the graft busy until it exits; further `exec` calls and lease renewals still work. Stop the job before you merge or archive the graft.
+
+Graft cannot see a process that closes inherited files, such as a daemon, a child that Python's `subprocess` starts with its default `close_fds=True`, or a child that Node.js starts on macOS. It also cannot see processes it did not start, such as an editor or a terminal. If one of these is still writing when the graft is archived, it keeps writing into the archive under `.retired`, because the archive is the same directory renamed. Nothing is lost, but a later `restore` shows those writes. On Windows, an open file or a working directory inside the graft usually makes the archive rename fail, and the operation can be retried after the process exits.
