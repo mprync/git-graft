@@ -366,7 +366,10 @@ impl Update {
             Some(pid) => format!(
                 "Git process {pid} from the interrupted update may still be writing files. Wait for it to exit, then retry"
             ),
-            None => "the interrupted Git update still holds its private index lock".into(),
+            None => format!(
+                "the interrupted Git update still holds its private index lock. If no Git process is running in this repository, delete {} and retry; it only guards Graft's private index, which the retry rebuilds from the files on disk",
+                lock.display()
+            ),
         }))
     }
 

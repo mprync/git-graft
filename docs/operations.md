@@ -107,4 +107,27 @@ On retry, Graft compares each file the update changes with its previous and merg
 
 Recovery stops before writing any file, and names the paths in `paths`, when a changed file holds neither version or a changed path has a newly staged version. Keep a copy of those edits, return each file to either version or record and unstage the staged version, then retry. If the process tree was killed, Git can leave its own `HEAD.lock` or branch lock; Graft reports the lock path and does not remove it. Follow Git's advice once no Git command is running, then retry.
 
-If the destination branch moved or is no longer checked out, the update can no longer finish. Graft returns `checkout_update_set_aside`, changes no file and keeps the journal at the reported `recovery_path`. Check `git status` in the primary, then retry the merge, which plans again against the current branch. The graft cannot be pruned while its checkout update is pending.
+If the destination branch moved or is no longer checked out, the update can no longer finish. Graft returns `checkout_update_set_aside`, changes no further file and keeps the journal at the reported `recovery_path`. Files the stopped update had already written stay as they are and show in `git status`. Check `git status` in the primary, then retry the merge, which plans again against the current branch. The graft cannot be pruned while its checkout update is pending.
+
+## Safety error codes and receipt fields
+
+These codes and fields tell you that Graft kept something instead of deleting or overwriting it. Every error here leaves the graft, its archive and the primary's files as they were. Error codes appear as `code` in CLI JSON errors and MCP tool results.
+
+| Code or field | Meaning | What to do |
+| --- | --- | --- |
+| `unmerged_work` | `remove` without `--discard` found work a merge never took: commits, a moved or detached HEAD, other branches, tags, a stash or other refs. `details.found` lists them. | Merge the graft, or archive it with `remove --discard` and keep the `recovery_lease`. |
+| `unmerged_commits` (with `head`) | A `remove --discard` receipt with `"action":"remove"` after an earlier merge had landed. `commit` and `graft_tip` name that merge; `head` is the archived graft HEAD whose later commits were never merged. | Keep the `recovery_lease`. Restore the graft to merge the later commits. |
+| `"removed": false` (with `graft_head`) | A merge receipt: the graft gained commits after `graft_tip` was merged, so it stays active with the same lease and files. | Merge it again to land `graft_head`. |
+| `graft_archived` | The lease belongs to an archived graft. `details.archived_by` is `merge`, `remove` or `remove_or_prune`; `details.name_in_use` says whether another graft now holds the name. | Run `restore NAME --lease TOKEN`. If the name is in use, archive that graft first. |
+| `record_damaged` | The record file of this graft cannot be read or conflicts with another record. `details.file` names it. Graft never rewrites, moves or deletes it. | Repair the file from a backup or move it aside yourself. Other grafts keep working. |
+| `damaged_records` | A `list` and `prune` field naming each damaged record file and its error. Prune skips them. | As for `record_damaged`. |
+| `primary_moved` | Every record names one other primary path, so the primary was moved or copied. `details.recorded_primary` is that path. Nothing is read or written. | Move the primary back to `recorded_primary`. Do not edit or move the record files. |
+| `already_exists` | `restore` found another graft using the name, or a file or directory at the graft's path. | Merge or remove the other graft, or move the existing path aside after saving its data, then retry. |
+| `archive_damaged` | The archive at `details.archive_path` is missing or was changed by hand. Restore leaves it exactly as found. | Copy what you need from it, or put back the missing Git files and retry. |
+| `checkout_recovery_required` | A checkout update of the primary was interrupted. `details.paths` lists files that need attention. | Retry the same merge or undo with the same lease. See [interrupted checkout update](#interrupted-checkout-update). |
+| `checkout_update_set_aside` | An interrupted checkout update can no longer finish because its branch moved or is no longer checked out. The journal stays at `details.recovery_path`. | Check `git status` in the primary, then retry the merge. |
+| `git_busy` | A Git lock or an unreadable index in the graft or primary is held by a command Graft did not start, or cannot prove has exited. | Wait for the Git command to finish. Remove a lock only once no Git command is running. |
+| `workspace_busy` | Another Graft command, or a process started by `exec` (including background jobs), holds the graft. | Wait, or stop the background job, then retry. |
+| `kept` | A `gc --purge-cache` field listing saved layers (`saved_layer`) and the registered shared layer (`registered_shared_layer`) it did not delete. | Retire them with `deps layer remove` when no longer needed. |
+| `retained`, `retained_path` | `deps layer remove` moved the layer to `.git/graft/retained-layers/` instead of deleting it. | Delete `retained_path` yourself once you no longer need the install. |
+| prune `reason` `error`, `archive_occupied`, `busy` | Prune could not check or archive this graft (`error` carries the message), found its archive path occupied, or found it busy. It went on with the others. | Fix the named problem, then rerun `prune`. |

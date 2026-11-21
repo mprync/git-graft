@@ -24,5 +24,13 @@ First public release.
 - Platforms: macOS (Intel, Apple silicon), Linux (x86_64, aarch64; static musl) and Windows (x64, ARM64). Disk savings need APFS, Btrfs or XFS; on ext4 and NTFS grafts work but files are full copies. Requires Git 2.46 or newer.
 - Installers: `install.sh` and `install.ps1` (checksum and provenance verified), Homebrew, Scoop, Chocolatey, winget, `.deb`, `.rpm`, `.apk` and Arch packages, and `cargo install --locked git-graft`. Releases publish `SHA256SUMS` and signed build provenance.
 
+### Safety
+
+- `remove` refuses unmerged commits, branches, tags and stashes (`unmerged_work`); `remove --discard` after a landed merge reports `unmerged_commits`, and a merge whose graft gained commits keeps it active (`"removed": false`).
+- A damaged record (`record_damaged`) no longer blocks other grafts or prune, a moved primary fails closed (`primary_moved`), and archived leases name how to restore (`graft_archived`).
+- Interrupted checkout updates resume or reverse from the files on disk, stale staging locks are reclaimed, and `exec` background jobs keep their graft busy.
+- Merges refuse paths that the filesystem folds onto ignored files by Unicode case or normalization.
+- Cache purges keep saved and registered layers, `deps layer remove` retires layers to `.git/graft/retained-layers/`, and restore reports `already_exists` and `archive_damaged` without touching the archive.
+
 [Unreleased]: https://github.com/mprync/git-graft/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/mprync/git-graft/releases/tag/v0.1.0

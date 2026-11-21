@@ -376,23 +376,26 @@ pub(super) fn exec_lock(p: &Project, name: &str) -> Result<File> {
     let file = open_lock(&path.join(name))?;
     match file.try_lock_shared() {
         Ok(()) => Ok(file),
-        Err(fs::TryLockError::WouldBlock) => Err(fault(
-            "workspace_busy",
-            "A command is running in this workspace",
-            json!({"name":name}),
-        )),
+        Err(fs::TryLockError::WouldBlock) => Err(busy(name)),
         Err(error) => Err(io::Error::from(error).into()),
     }
+}
+
+/// Another Graft command, or a process that `exec` started, holds the graft.
+fn busy(name: &str) -> anyhow::Error {
+    fault(
+        "workspace_busy",
+        format!(
+            "Another Graft command, or a process started with exec, is using graft {name}. Wait for it to finish, or stop background jobs started with exec, then retry. Nothing was changed"
+        ),
+        json!({"name":name}),
+    )
 }
 
 fn try_lock(file: File, name: &str) -> Result<WorkspaceLock> {
     match file.try_lock() {
         Ok(()) => Ok(WorkspaceLock(file)),
-        Err(fs::TryLockError::WouldBlock) => Err(fault(
-            "workspace_busy",
-            "A command is running in this workspace",
-            json!({"name":name}),
-        )),
+        Err(fs::TryLockError::WouldBlock) => Err(busy(name)),
         Err(error) => Err(io::Error::from(error).into()),
     }
 }
