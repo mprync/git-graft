@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { execFile, spawn as spawnProcess } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import { setTimeout as delay } from 'node:timers/promises';
+import { Running, waitFor } from './checkout-faults.ts';
 import { leaveIndexedCheckoutJournal } from './checkout-journal.ts';
-import type { Scenario } from './harness.ts';
+import { objectResult, type Scenario } from './harness.ts';
 
 type Context = Parameters<Scenario['run']>[0];
 type Workspace = ReturnType<Context['spawn']>;
@@ -59,6 +60,239 @@ function packageFiles(root: string, item?: { name: string; version: string; sect
 }
 
 export const cases: Scenario[] = [
+  {
+    name: 'a merge --commit killed while staging releases its graft index lock on retry',
+    async run(ctx) {
+      const name = 'staging';
+      const workspace = ctx.spawn(name);
+      const old = ctx.git(['rev-parse', 'HEAD']);
+      const lock = join(workspace.path, '.git', 'index.lock');
+      // A Git lock that Graft did not create is reported and kept.
+      writeFileSync(lock, 'held by another Git command\n');
+      const busy = ctx.fail(landArgs(workspace, name, '--commit', 'staged work'));
+      assert.equal(busy.code, 'git_busy');
+      assert.equal(readFileSync(lock, 'utf8'), 'held by another Git command\n');
+      rmSync(lock);
+
+      // A global clean filter blocks git add while Graft holds the lock.
+      const fault = join(ctx.root, 'staging fault');
+      mkdirSync(fault);
+      const dir = fault.replaceAll('\\', '/');
+      const script = join(fault, 'clean.sh');
+      writeFileSync(script, `#!/bin/sh\nif [ -f '${dir}/armed' ]; then : > '${dir}/ready'; while [ ! -f '${dir}/release' ]; do sleep 0.1; done; fi\nexec cat\n`, { mode: 0o755 });
+      const config = ctx.env.GIT_CONFIG_GLOBAL;
+      assert(typeof config === 'string');
+      appendFileSync(config, `[filter "slow"]\n\tclean = sh '${script.replaceAll('\\', '/')}'\n\tsmudge = cat\n`);
+      write(workspace.path, '.git/info/attributes', '*.slow filter=slow\n');
+      write(workspace.path, 'feature.slow', 'work staged by merge --commit\n');
+      write(workspace.path, 'notes.txt', 'more uncommitted work\n');
+      writeFileSync(join(fault, 'armed'), '');
+      const merge = new Running(ctx, landArgs(workspace, name, '--commit', 'staged work'));
+      try {
+        await waitFor(() => existsSync(join(fault, 'ready')) || !merge.running(), 'the staging filter');
+        assert(existsSync(join(fault, 'ready')), 'the merge exited before staging');
+        merge.killCli();
+        await merge.exit();
+      } finally {
+        rmSync(join(fault, 'armed'));
+        writeFileSync(join(fault, 'release'), '');
+      }
+      assert.match(readFileSync(lock, 'utf8'), /^git-graft staging /);
+      assert.equal(read(workspace.path, 'feature.slow'), 'work staged by merge --commit\n');
+      assert.equal(read(workspace.path, 'notes.txt'), 'more uncommitted work\n');
+      assert.equal(ctx.git(['rev-parse', 'HEAD']), old);
+      assert.equal(ctx.cli(['status', name]).phase, 'ready');
+
+      const receipt = ctx.cli(landArgs(workspace, name, '--commit', 'staged work'));
+      assert.equal(receipt.removed, true);
+      assert.equal(existsSync(lock), false);
+      assert.equal(read(ctx.repo, 'feature.slow'), 'work staged by merge --commit\n');
+      assert.equal(read(ctx.repo, 'notes.txt'), 'more uncommitted work\n');
+      assert.equal(ctx.git(['show', '-s', '--format=%s', 'HEAD']), 'staged work');
+    },
+  },
+  {
+    name: 'a graft that gains commits once its merge is applied stays active with them',
+    run(ctx) {
+      const name = 'advancing';
+      const workspace = ctx.spawn(name);
+      write(workspace.path, 'feature.txt', 'merged work\n');
+      const tip = commit(ctx, workspace.path, 'merged work');
+      // Commit in the graft right after Git updates the destination.
+      const hook = join(ctx.repo, '.git', 'hooks', 'post-merge');
+      write(ctx.repo, '.git/hooks/post-merge', [
+        '#!/bin/sh',
+        'set -eu',
+        'unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE',
+        'cd "$GRAFT_E2E_ADVANCE"',
+        'printf "later work\\n" > later.txt',
+        'git add later.txt',
+        'git commit -qm "later work"',
+      ].join('\n') + '\n');
+      chmodSync(hook, 0o700);
+      ctx.env.GRAFT_E2E_ADVANCE = workspace.path.replaceAll('\\', '/');
+      let receipt;
+      try {
+        receipt = ctx.cli(landArgs(workspace, name));
+      } finally {
+        delete ctx.env.GRAFT_E2E_ADVANCE;
+        rmSync(hook);
+      }
+      const later = ctx.git(['rev-parse', 'HEAD'], workspace.path);
+      assert.notEqual(later, tip);
+      assert.equal(receipt.action, 'merge');
+      assert.equal(receipt.removed, false);
+      assert.equal(receipt.commit, tip);
+      assert.equal(receipt.graft_tip, tip);
+      assert.equal(receipt.graft_head, later);
+      assert.equal(ctx.git(['rev-parse', 'HEAD']), tip);
+      assert(!ctx.git(['rev-list', 'HEAD']).split('\n').includes(later));
+      assert.equal(existsSync(join(ctx.repo, 'later.txt')), false);
+      assert.equal(ctx.cli(['status', name]).phase, 'ready');
+      assert.equal(read(workspace.path, 'later.txt'), 'later work\n');
+
+      const second = ctx.cli(landArgs(workspace, name));
+      assert.equal(second.removed, true);
+      assert.equal(second.commit, later);
+      assert.equal(read(ctx.repo, 'later.txt'), 'later work\n');
+      assert.equal(existsSync(workspace.path), false);
+    },
+  },
+  {
+    name: 'a merge retry after the graft gained commits finishes without archiving them',
+    run(ctx) {
+      const name = 'retry-advanced';
+      const workspace = ctx.spawn(name);
+      write(workspace.path, 'feature.txt', 'merged work\n');
+      const tip = commit(ctx, workspace.path, 'merged work');
+      leaveIndexedCheckoutJournal(ctx, landArgs(workspace, name));
+      assert.equal(ctx.git(['rev-parse', 'HEAD']), tip);
+      write(workspace.path, 'later.txt', 'later work\n');
+      const later = commit(ctx, workspace.path, 'later work');
+
+      const receipt = ctx.cli(landArgs(workspace, name));
+      assert.equal(receipt.removed, false);
+      assert.equal(receipt.graft_tip, tip);
+      assert.equal(receipt.graft_head, later);
+      assert.equal(existsSync(join(ctx.git(['rev-parse', '--absolute-git-dir']), 'graft', 'checkout-update')), false);
+      assert.equal(ctx.cli(['status', name]).phase, 'ready');
+      assert.equal(ctx.git(['rev-parse', 'HEAD'], workspace.path), later);
+      assert.equal(ctx.cli(landArgs(workspace, name)).commit, later);
+      assert.equal(read(ctx.repo, 'later.txt'), 'later work\n');
+    },
+  },
+  {
+    name: 'a merge killed after Git prepared the destination ref retries the same plan',
+    async run(ctx) {
+      const name = 'prepared-kill';
+      const workspace = ctx.spawn(name);
+      const old = ctx.git(['rev-parse', 'HEAD']);
+      write(workspace.path, 'feature.txt', 'prepared work\n');
+      const tip = commit(ctx, workspace.path, 'prepared work');
+      const ready = join(ctx.root, 'prepared-ready');
+      const release = join(ctx.root, 'prepared-release');
+      const hook = join(ctx.repo, '.git', 'hooks', 'reference-transaction');
+      write(ctx.repo, '.git/hooks/reference-transaction', [
+        '#!/bin/sh',
+        '[ "$1" = prepared ] || exit 0',
+        'grep -q " refs/heads/main$" || exit 0',
+        `: > '${ready.replaceAll('\\', '/')}'`,
+        `while [ ! -f '${release.replaceAll('\\', '/')}' ]; do sleep 0.1; done`,
+      ].join('\n') + '\n');
+      chmodSync(hook, 0o700);
+      const index = readFileSync(join(ctx.repo, '.git', 'index'));
+      const merge = new Running(ctx, landArgs(workspace, name));
+      try {
+        await waitFor(() => existsSync(ready) || !merge.running(), 'the prepared reference hook');
+        assert(existsSync(ready), 'the merge exited before Git prepared the ref');
+        merge.killCli();
+        await merge.exit();
+      } finally {
+        writeFileSync(release, '');
+      }
+      // Git aborts the transaction when Graft's input closes.
+      await waitFor(() => !existsSync(join(ctx.repo, '.git', 'HEAD.lock')), 'Git to release the ref locks');
+      rmSync(hook);
+      const journal = join(ctx.repo, '.git', 'graft', 'checkout-update');
+      assert.equal(objectResult(JSON.parse(readFileSync(join(journal, 'record.json'), 'utf8'))).phase, 'Prepared');
+      assert.equal(ctx.git(['rev-parse', 'HEAD']), old);
+      assert.deepEqual(readFileSync(join(ctx.repo, '.git', 'index')), index);
+      assert.equal(existsSync(join(ctx.repo, 'feature.txt')), false);
+      const receipt = ctx.cli(landArgs(workspace, name));
+      assert.equal(receipt.commit, tip);
+      assert.equal(read(ctx.repo, 'feature.txt'), 'prepared work\n');
+      assert.equal(existsSync(journal), false);
+      assert.equal(existsSync(join(ctx.repo, '.git', 'index.lock')), false);
+    },
+  },
+  {
+    name: 'merge waits for an unfinished merge or rebase in the primary and leaves it intact',
+    run(ctx) {
+      const name = 'busy-primary';
+      const workspace = ctx.spawn(name);
+      write(workspace.path, 'feature.txt', 'graft work\n');
+      const tip = commit(ctx, workspace.path, 'graft work');
+      const base = ctx.git(['rev-parse', 'HEAD']);
+      ctx.git(['switch', '-qc', 'side']);
+      write(ctx.repo, 'tracked.txt', 'side change\n');
+      commit(ctx, ctx.repo, 'side change');
+      ctx.git(['switch', '-q', 'main']);
+      write(ctx.repo, 'tracked.txt', 'main change\n');
+      const main = commit(ctx, ctx.repo, 'main change');
+      for (const start of [['merge', 'side'], ['rebase', 'side']]) {
+        assert.notEqual(ctx.command('git', start).status, 0, 'expected a conflict');
+        const status = ctx.git(['status', '--porcelain']);
+        const error = ctx.fail(landArgs(workspace, name));
+        assert.match(String(error.message), /unfinished|Finish the Git operation/);
+        assert.equal(ctx.git(['status', '--porcelain']), status);
+        assert.match(read(ctx.repo, 'tracked.txt'), /<<<<<<<.*\n/);
+        assert.equal(ctx.git(['rev-parse', 'refs/heads/main']), main);
+        ctx.git([start[0], '--abort']);
+      }
+      assert.notEqual(base, main);
+      const receipt = ctx.cli(landArgs(workspace, name));
+      assert.equal(receipt.removed, true);
+      assert.deepEqual(parents(ctx), [main, tip]);
+      assert.equal(read(ctx.repo, 'tracked.txt'), 'main change\n');
+    },
+  },
+  {
+    name: 'a destination that moves during merge --commit replans and keeps both histories',
+    run(ctx) {
+      const name = 'moving';
+      const workspace = ctx.spawn(name);
+      const old = ctx.git(['rev-parse', 'HEAD']);
+      ctx.git(['switch', '-qc', 'side']);
+      write(ctx.repo, 'side.txt', 'moved the destination\n');
+      const side = commit(ctx, ctx.repo, 'moved the destination');
+      ctx.git(['switch', '-q', 'main']);
+      // The graft's pre-commit hook advances main after Graft read its tip.
+      const hooks = join(ctx.root, 'moving-hooks');
+      write(hooks, 'pre-commit', [
+        '#!/bin/sh',
+        'set -eu',
+        'unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE',
+        `[ -f '${join(ctx.root, 'moved').replaceAll('\\', '/')}' ] && exit 0`,
+        `: > '${join(ctx.root, 'moved').replaceAll('\\', '/')}'`,
+        `git -C '${ctx.repo.replaceAll('\\', '/')}' merge -q --ff-only side`,
+      ].join('\n') + '\n');
+      chmodSync(join(hooks, 'pre-commit'), 0o755);
+      ctx.git(['config', '--local', 'core.hooksPath', hooks], workspace.path);
+      write(workspace.path, 'feature.txt', 'graft work\n');
+      const error = ctx.fail(landArgs(workspace, name, '--commit', 'graft work'));
+      assert.match(String(error.message), /changed after merge was planned/);
+      assert.equal(ctx.git(['rev-parse', 'HEAD']), side);
+      assert.notEqual(side, old);
+      const tip = ctx.git(['rev-parse', 'HEAD'], workspace.path);
+      assert.equal(ctx.git(['show', '-s', '--format=%s', tip], workspace.path), 'graft work');
+      assert.equal(ctx.cli(['status', name]).phase, 'ready');
+      const receipt = ctx.cli(landArgs(workspace, name));
+      assert.equal(receipt.removed, true);
+      assert.deepEqual(parents(ctx), [side, tip]);
+      assert.equal(read(ctx.repo, 'side.txt'), 'moved the destination\n');
+      assert.equal(read(ctx.repo, 'feature.txt'), 'graft work\n');
+    },
+  },
   {
     name: 'interrupted first landing preserves work and retries with the same lease',
     async run(ctx) {

@@ -170,11 +170,53 @@ fn index_entries(bytes: &[u8]) -> Result<BTreeMap<&[u8], &[u8]>> {
         .collect()
 }
 
+/// Marks the graft index lock that `merge --commit` holds while staging.
+const STAGING_LOCK: &str = "git-graft staging ";
+
+/// Release the graft index lock left by a `merge --commit` that was killed
+/// while staging. Call this only while holding the graft's workspace lock.
+/// Every Graft process that stages a graft holds that lock until it exits,
+/// so a staging lock found under it belongs to a process that has exited.
+/// The index itself is replaced only by an atomic rename, so it holds the
+/// state before or after staging; Git must still be able to read it.
+pub(crate) fn reclaim_staging_lock(workspace: &Path) -> Result<()> {
+    let lock = git::absolute_git_dir(workspace)?.join("index.lock");
+    if !registry::exists(&lock)? {
+        return Ok(());
+    }
+    let marker = registry::regular(&lock)?;
+    let staging = marker
+        .strip_prefix(STAGING_LOCK.as_bytes())
+        .and_then(|rest| rest.strip_suffix(b"\n"))
+        .and_then(|token| std::str::from_utf8(token).ok())
+        .is_some_and(|token| uuid::Uuid::parse_str(token).is_ok());
+    if !staging {
+        // A native Git lock. The idle check reports it as git_busy.
+        return Ok(());
+    }
+    let output = git::command(workspace)
+        .args(["ls-files", "--stage"])
+        .stdout(std::process::Stdio::null())
+        .output()?;
+    if !output.status.success() {
+        return Err(fault(
+            "git_busy",
+            format!(
+                "An interrupted merge --commit left the graft index unreadable, so Graft kept its index lock at {}. Inspect the graft with Git before retrying",
+                lock.display()
+            ),
+            json!({"marker":"index.lock","path":lock,"detail":String::from_utf8_lossy(&output.stderr).trim()}),
+        ));
+    }
+    fs::remove_file(&lock)?;
+    Ok(())
+}
+
 fn stage_workspace(workspace: &Path, installations: &[&str]) -> Result<()> {
     let admin = git::absolute_git_dir(workspace)?;
     let _lock = checkout::IndexLock::create(
         admin.join("index.lock"),
-        format!("git-graft staging {}\n", uuid::Uuid::new_v4()),
+        format!("{STAGING_LOCK}{}\n", uuid::Uuid::new_v4()),
     )?;
     git::check_idle_with_locks(workspace, true, false)?;
     // Ask Git about the recorded directories, respecting the current checkout's
@@ -638,7 +680,7 @@ fn apply_in_checkout(
     })();
     if let Err(error) = result {
         if pending.has_mutated_checkout() {
-            return Err(pending.recovery_required(format!("{error:#}")));
+            return Err(pending.explain(error));
         }
         pending.clear(admin)?;
         return Err(error);
@@ -665,9 +707,11 @@ pub(crate) fn apply_with_destination(
     checked_oid(&plan.old)?;
     checked_oid(&plan.new)?;
     let admin = common_dir(repo)?;
-    let pending = checkout::Update::load(&admin)?;
-    if let Some(update) = &pending {
-        update.matches(plan)?;
+    let mut pending = checkout::Update::load(&admin)?;
+    if let Some(update) = pending.take_if(|update| !update.is_for(plan)) {
+        // Another merge or undo stopped partway through its checkout update.
+        // Settle it before this one reads or changes the same checkout.
+        settle_other(repo, &admin, update, &destination)?;
     }
     let current = branch_tip(repo, &reference)?;
     if !is_ancestor(object_repo, &plan.old, &plan.new)? {
@@ -679,19 +723,24 @@ pub(crate) fn apply_with_destination(
             && is_ancestor(repo, &plan.new, &current)?)
     {
         if let Some(update) = pending {
-            ensure!(
-                update.finished_index(),
-                update.recovery_required("the checkout index was not finalized")
-            );
+            if !update.finished_index() {
+                return Err(set_aside(
+                    &admin,
+                    update,
+                    "the destination already contains the merge",
+                ));
+            }
             update.clear(&admin)?;
         }
         return Ok(());
     }
     if current != plan.old {
         if let Some(update) = pending {
-            return Err(
-                update.recovery_required("the destination branch moved during checkout recovery")
-            );
+            return Err(set_aside(
+                &admin,
+                update,
+                "the destination branch moved after the checkout update was interrupted",
+            ));
         }
         bail!(
             "destination tip changed after merge was planned: {}",
@@ -712,7 +761,12 @@ pub(crate) fn apply_with_destination(
             ],
         )?)?)
     };
-    if let Some(path) = destination(&reference, false)? {
+    // While this merge's own update is pending, report any stop with it.
+    let checked_out = destination(&reference, false).map_err(|error| match &pending {
+        Some(update) => update.explain(error),
+        None => error,
+    })?;
+    if let Some(path) = checked_out {
         apply_in_checkout(
             &path,
             &admin,
@@ -731,9 +785,11 @@ pub(crate) fn apply_with_destination(
         )?;
     } else {
         if let Some(update) = pending {
-            return Err(
-                update.recovery_required("the destination is no longer checked out in the primary")
-            );
+            return Err(set_aside(
+                &admin,
+                update,
+                "the destination is no longer checked out in the primary",
+            ));
         }
         // Hold the primary HEAD as well as the exact destination branch.
         // Otherwise an unchecked destination could become the primary's
@@ -798,6 +854,85 @@ pub(crate) fn apply_with_destination(
         );
     }
     Ok(())
+}
+
+/// Stop tracking an interrupted checkout update that can no longer finish.
+/// Its files stay exactly as they are and its journal is kept.
+fn set_aside(admin: &Path, update: checkout::Update, reason: &str) -> anyhow::Error {
+    let plan = update.plan().clone();
+    match update.set_aside(admin) {
+        Ok(path) => fault(
+            "checkout_update_set_aside",
+            format!(
+                "The checkout update of {} was interrupted and {reason}, so Graft set the update aside without changing any file. Check git status in the primary, then retry. The saved original index is in {}.",
+                plan.target,
+                path.display()
+            ),
+            json!({"target":plan.target,"previous":plan.old,"commit":plan.new,
+                "graft_tip":plan.tip,"recovery_path":path}),
+        ),
+        Err(error) => error,
+    }
+}
+
+/// Settle a checkout journal left by a different merge or undo. A finished
+/// or unstarted update is cleared. An update stopped partway is reversed
+/// from the files on disk, while the branch still holds its previous commit
+/// and Git holds the index, HEAD and branch locks. The other graft keeps its
+/// plan, so retrying its merge applies it again from the start.
+fn settle_other(
+    repo: &Path,
+    admin: &Path,
+    mut update: checkout::Update,
+    destination: &impl Fn(&str, bool) -> Result<Option<PathBuf>>,
+) -> Result<()> {
+    if !update.has_mutated_checkout() {
+        return update.clear(admin);
+    }
+    let plan = update.plan().clone();
+    let reference = branch_ref(repo, &plan.target)?;
+    let current = recovery::listed_ref(repo, &reference)?
+        .filter(|(_, symbolic)| symbolic.is_empty())
+        .map(|(oid, _)| oid);
+    if let Some(current) = &current
+        && update.finished_index()
+        && git::oid(repo, &plan.new).is_ok()
+        && is_ancestor(repo, &plan.new, current)?
+    {
+        return update.clear(admin);
+    }
+    let path = match destination(&reference, false)? {
+        Some(path) if current.as_deref() == Some(plan.old.as_str()) => path,
+        _ => {
+            return Err(set_aside(
+                admin,
+                update,
+                "its branch has since moved or is no longer checked out",
+            ));
+        }
+    };
+    let format = git::text(&path, &["rev-parse", "--show-ref-format"])?;
+    let result = (|| -> Result<()> {
+        let _index = update.acquire_index(admin, true)?;
+        let edits = format!("verify HEAD {}\n", plan.old);
+        recovery::transaction_with_objects(&path, &edits, None, None, || {
+            if symbolic_ref(&path, "HEAD")?.as_deref() != Some(reference.as_str())
+                || branch_tip(&path, &reference)? != plan.old
+            {
+                bail!(
+                    "destination branch changed while restoring its checkout: {}",
+                    plan.target
+                );
+            }
+            verify_ref_locks(admin, &reference, &format)?;
+            check_destination(admin, &path, true)?;
+            update.restore_previous(&path, admin)
+        })
+    })();
+    if let Err(error) = result {
+        return Err(update.explain(error));
+    }
+    update.clear(admin)
 }
 
 pub(crate) fn require_no_pending_checkout(repo: &Path, plan: &Plan) -> Result<()> {

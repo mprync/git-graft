@@ -389,9 +389,11 @@ fn destination(p: &Project, reference: &str, owns_head_lock: bool) -> Result<Opt
     let primary_checkout = match bare.as_str() {
         "true" => false,
         "false" => {
+            let lock = admin.join("HEAD.lock");
             ensure!(
-                owns_head_lock || !registry::exists(&admin.join("HEAD.lock"))?,
-                "primary checkout HEAD is locked"
+                owns_head_lock || !registry::exists(&lock)?,
+                "Git's lock {} exists, so the primary checkout HEAD is locked. Wait for the Git command that holds it; if none is running, an interrupted command left it",
+                lock.display()
             );
             head_points_at(&p.repo, "HEAD", reference)?
         }

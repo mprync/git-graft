@@ -389,11 +389,16 @@ fn land_workspace(p: &Project, opts: &api::Land) -> Result<Value> {
         return retire(p, &r.name, &r.lease, Status::Landed);
     }
     ensure!(r.status == Status::Active, "graft creation is incomplete");
+    // We hold the workspace lock, which a killed merge --commit has released.
+    crate::landing::reclaim_staging_lock(&r.path)?;
     registry::preflight_retire(p, &r)?;
     if let Some(plan) = &r.plan {
         ensure!(plan.target == opts.into, "retry merge into {}", plan.target);
         if destination_contains(p, plan)? {
             crate::landing::finish_applied_checkout(&p.repo, plan)?;
+            if git::oid(&r.path, "HEAD")? != plan.tip {
+                return keep_advanced(p, r);
+            }
         }
     }
     if !opts.discard_ignored {
@@ -433,12 +438,25 @@ fn land_workspace(p: &Project, opts: &api::Land) -> Result<Value> {
         }
         return Err(error);
     }
+    if git::oid(&r.path, "HEAD")? != plan.tip {
+        return keep_advanced(p, r);
+    }
     clean(&r.path, opts.discard_ignored)?;
-    ensure!(
-        git::oid(&r.path, "HEAD")? == plan.tip,
-        "graft advanced; archiving remains pending"
-    );
     retire(p, &r.name, &r.lease, Status::Landed)
+}
+
+/// Finish a merge whose graft gained commits after the merged tip. Archiving
+/// would present those commits as merged, so the graft stays active with its
+/// lease and every file, and the receipt names both tips.
+fn keep_advanced(p: &Project, mut r: Record) -> Result<Value> {
+    let plan = r.plan.take().context("no merge is pending")?;
+    let head = git::oid(&r.path, "HEAD")?;
+    registry::save(p, &r)?;
+    Ok(
+        json!({"action":"merge","name":r.name,"target":plan.target,"previous":plan.old,
+        "commit":plan.new,"graft_tip":plan.tip,"graft_head":head,"removed":false,
+        "message":format!("Merged the graft up to {}. The graft has later work at {head}, so it stays active; merge it again to land that work.", plan.tip)}),
+    )
 }
 
 fn drop_workspace(p: &Project, opts: &api::DropWorkspace) -> Result<Value> {

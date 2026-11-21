@@ -23,7 +23,9 @@ When reusing a mixed pack, Graft edits an unlinked copy, has Git index its conte
 | Reopen a merged or removed graft | `git graft restore NAME --lease TOKEN`; save the new active lease. |
 | Reverse a merge | `git graft merge NAME --undo --lease TOKEN` appends a reversal commit if the destination still points at the merge commit. |
 | Destination advanced | Review subsequent commits and use an ordinary reviewed reversal. |
-| `checkout_recovery_required` | Retry the same merge or undo with the same lease before editing. If it still stops, preserve files and the index and follow [checkout recovery](operations.md#interrupted-checkout-update). |
+| `checkout_recovery_required` | Retry the same merge or undo with the same lease. Graft finishes or reverses the update from the files on disk and keeps untracked, ignored, edited and staged files. If it names `paths`, follow [checkout recovery](operations.md#interrupted-checkout-update). |
+| `checkout_update_set_aside` | The branch moved or is no longer checked out after the update stopped. No file was changed; check `git status` in the primary and retry the merge. |
+| Merge receipt with `"removed": false` | The graft gained commits after the merge applied and stays active. Merge it again to land them. |
 | Name or path is occupied | Restore fails as `already_exists`. Inspect the collision and preserve the existing data before retrying. |
 | `archive_damaged` | The archive at `details.archive_path` is missing or was changed by hand. Restore leaves it exactly as found. Copy what you need from it, or put back the missing Git files and retry. |
 
