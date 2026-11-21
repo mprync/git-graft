@@ -415,6 +415,28 @@ fn verify_layer_contents(layer: &Path, digest: &str) -> Result<Value> {
     Ok(value)
 }
 
+/// Name the reason a cache purge must keep this layer, if it must.
+///
+/// Layers saved with `deps layer save` or `deps share --snapshot` (provenance
+/// version 1), and the generation that `deps share` currently registers for new
+/// grafts, exist because the user asked for them. Only `deps layer remove`
+/// retires them. A shared generation that a later `deps share` superseded is a
+/// cache. An unreadable layer or registration is an error, so the purge keeps
+/// the layer and reports it as blocked.
+pub(crate) fn purge_keeps_layer(
+    state: &Path,
+    layer: &Path,
+    digest: &str,
+) -> Result<Option<&'static str>> {
+    if layer_provenance(layer, digest)?["version"] != 2 {
+        return Ok(Some("saved_layer"));
+    }
+    if shared::registered_digest(state)?.as_deref() == Some(digest) {
+        return Ok(Some("registered_shared_layer"));
+    }
+    Ok(None)
+}
+
 /// Verify the generation against its original digest, including after quarantine.
 pub(crate) fn verify_layer(layer: &Path, digest: &str) -> Result<Value> {
     if cfg!(windows) {

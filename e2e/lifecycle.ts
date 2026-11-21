@@ -155,26 +155,26 @@ export const cases: Scenario[] = [
       assert.equal(preview.eligible, true);
       assert.equal(preview.purged, false);
       assert.ok(existsSync(verified));
-      // Layer deletion requires metadata verification unavailable on Windows.
-      const canPurgeLayer = process.platform !== 'win32';
+      // An explicitly saved layer is user data: every platform keeps it until `deps layer remove`.
       assert(typeof w.result.base === 'string');
       const base = join(ctx.repo, '.git', 'graft', 'bases', w.result.base);
       const packages = ['npm', 'pnpm', 'bun', 'cargo', 'uv', 'sccache'].map(name => join(cacheDir, name));
-      const removable = [...packages, ...(canPurgeLayer ? [verified] : []), ...(existsSync(base) ? [base] : [])];
-      const blocked = [foreignCache, foreignLayer, changed, ...(canPurgeLayer ? [] : [verified])];
+      const removable = [...packages, ...(existsSync(base) ? [base] : [])];
+      const blocked = [foreignCache, foreignLayer, changed];
       const candidates = array(preview.candidates);
       for (const path of removable) assert(candidates.includes(path), `Expected a purge candidate at ${path}`);
-      for (const path of blocked) assert(!candidates.includes(path), `Unexpected purge candidate at ${path}`);
+      for (const path of [...blocked, verified]) assert(!candidates.includes(path), `Unexpected purge candidate at ${path}`);
       const applied = object(ctx.cli(['prune', '--purge-cache', '--apply']).cache);
       assert.equal(applied.purged, true);
       assert.deepEqual(array(applied.removed).sort(), candidates.sort());
       for (const report of [preview, applied]) {
         const retained = array(report.blocked).map(row => object(row).path);
         for (const path of blocked) assert(retained.includes(path), `Expected blocked cache at ${path}`);
+        assert.deepEqual(array(report.kept).map(object), [{ path: verified, reason: 'saved_layer' }]);
       }
       assert.equal(existsSync(base), false);
       assert.equal(existsSync(npm), false);
-      assert.equal(existsSync(verified), !canPurgeLayer);
+      assert.equal(readFileSync(join(verified, 'node_modules', 'example', 'index.js'), 'utf8'), 'module.exports = 1;\n');
       assert.equal(readFileSync(foreignCache, 'utf8'), 'user cache note');
       assert.equal(readFileSync(foreignLayer, 'utf8'), 'user layer note');
       assert.equal(readFileSync(change, 'utf8'), 'preserve changed layer');
