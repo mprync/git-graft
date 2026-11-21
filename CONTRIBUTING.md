@@ -25,4 +25,5 @@ Each package manager is updated only when its repository secret exists:
 | `SCOOP_BUCKET_DEPLOY_KEY` | Write deploy key on `mprync/scoop-bucket` |
 | `CHOCOLATEY_API_KEY` | Chocolatey community repository API key |
 | `WINGET_TOKEN` | Classic GitHub token with `public_repo` scope, used to open winget-pkgs pull requests |
+| `CARGO_REGISTRY_TOKEN` | crates.io API token with publish rights for `git-graft` |
 | `AUR_SSH_KEY` | SSH key registered on the AUR account that owns `git-graft-bin` |
