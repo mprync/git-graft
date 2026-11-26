@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { objectResult, type Context, type ObjectResult, type Scenario } from './harness.ts';
@@ -253,6 +253,61 @@ export const cases: Scenario[] = [
       assert.deepEqual(turns(ctx), [['stack', null, ['agent-2']]]);
       assert.equal(takeIn(ctx, router, second, 'stack').granted, true);
       assert.deepEqual(release(ctx, second, 'stack'), { resource: 'stack', released: true, next: null });
+    },
+  },
+  {
+    name: 'links follow the holder of a shared resource to its grafts, and back to the primary when a graft is archived',
+    run: async ctx => {
+      if (process.platform === 'win32') ctx.unavailable('creating a link on Windows needs Developer Mode or an elevated prompt');
+      const router = sibling(ctx, 'router');
+      ctx.git(['init', '-q', '-b', 'main'], ctx.root);
+      writeFileSync(join(ctx.root, '.graftconfig.local'), JSON.stringify({
+        turns: ['stack'],
+        links: { stack: { project: '.graft/stack/project', router: '.graft/stack/router' } },
+        repositories: { project: {}, router: {} },
+      }));
+      const [appLink, routerLink] = ['project', 'router'].map(name => join(ctx.root, '.graft', 'stack', name));
+      const [primary, routerPrimary] = [ctx.repo, router].map(path => realpathSync(path));
+      const app = ctx.spawn('fix');
+      const appPath = realpathSync(String(app.path));
+      const agent = holder('agent-1');
+
+      // The holder has a graft of the primary only.
+      assert.equal(takeIn(ctx, router, agent, 'stack', '--graft', appPath).granted, true);
+      assert.deepEqual([readlinkSync(appLink), readlinkSync(routerLink)], [appPath, routerPrimary]);
+      // A queued holder moves no link.
+      const second = holder('agent-2');
+      assert.equal(takeIn(ctx, router, second, 'stack').granted, false);
+      assert.equal(readlinkSync(appLink), appPath);
+
+      // Merging the graft archives it and points its link at the primary.
+      writeFileSync(join(appPath, 'fix.txt'), 'fix\n');
+      ctx.git(['add', 'fix.txt'], appPath);
+      ctx.git(['commit', '-qm', 'fix'], appPath);
+      assert.equal(ctx.cli(['merge', 'fix', '--lease', app.lease]).removed, true);
+      assert.equal(readlinkSync(appLink), primary);
+
+      // Release leaves the links; anything but a link at a link's path
+      // refuses the take and changes nothing.
+      release(ctx, agent, 'stack');
+      renameSync(appLink, join(ctx.root, '.graft', 'stack', 'aside'));
+      mkdirSync(appLink);
+      const refused = ctx.fail(['turn', 'take', 'stack', '--holder', second.name, '--lease', second.lease], router);
+      assert.equal(refused.code, 'invalid_config');
+      assert.equal(objectResult(refused.details).path, appLink);
+      assert.deepEqual(turns(ctx), [['stack', null, ['agent-2']]]);
+      release(ctx, second, 'stack');
+
+      // An MCP host without --allow-exec still points the links.
+      renameSync(appLink, join(ctx.root, '.graft', 'stack', 'emptied'));
+      const work = ctx.spawn('work');
+      const workPath = realpathSync(String(work.path));
+      await withClient(ctx, false, async client => {
+        await initialize(client);
+        const taken = await call(client, 'graft_turn_take', { holder: 'mcp', resource: 'stack', grafts: [workPath] });
+        assert.equal(taken.granted, true);
+      });
+      assert.deepEqual([readlinkSync(appLink), readlinkSync(routerLink)], [workPath, routerPrimary]);
     },
   },
   {

@@ -1,6 +1,7 @@
 //! Graft creation, inspection, integration and recoverable retirement.
 pub(crate) mod hook;
 mod land;
+mod links;
 mod objects;
 mod push;
 mod registry;
@@ -642,6 +643,16 @@ fn receipt(p: &Project, r: &Record) -> Result<Value> {
     with_attempts(p, r, value)
 }
 
+/// After `remove` or `merge` replied `reply` about the graft `name`, point
+/// the links that led to it at its primary again if it was archived.
+fn unlink_archived(p: &Project, name: &str, lease: &str, reply: &Value) {
+    if reply["removed"] == true
+        && let Ok(r) = registry::load_retired(p, name, lease)
+    {
+        links::point_back(&p.repo, &r.path);
+    }
+}
+
 fn retire(p: &Project, name: &str, lease: &str, status: Status) -> Result<Value> {
     receipt(p, &registry::retire(p, name, lease, status, None)?)
 }
@@ -1144,11 +1155,13 @@ pub(crate) fn run_found(
         Command::Drop(a) => {
             let mut hooks = hook::Runner::new(hooks, &lock, builds);
             let dropped = drop_workspace(p, a, &mut hooks)?;
+            unlink_archived(p, &a.name, &a.lease, &dropped);
             return Ok(hooks.report(dropped));
         }
         Command::Land(a) => {
             let mut hooks = hook::Runner::new(hooks, &lock, builds);
             let landed = land_workspace(p, a, &mut hooks)?;
+            unlink_archived(p, &a.name, &a.lease, &landed);
             return Ok(hooks.report(landed));
         }
         Command::Restore(a) => {
@@ -1216,6 +1229,9 @@ pub(crate) fn run_found(
                 .map(|days| registry::archives_to_purge(p, days))
                 .transpose()?;
             let retained = registry::prune_with(p, a.apply, &mut |r| hooks.before_prune(p, r))?;
+            for archived in retained.iter().filter(|r| r.reason == Some("archived")) {
+                links::point_back(&p.repo, &archived.path);
+            }
             let cache = if !a.purge_cache {
                 json!({"requested":false,"purged":false})
             } else {

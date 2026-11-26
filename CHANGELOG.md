@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- `links` in `.graftconfig` keeps a link for each repository that follows a shared resource's turn to the holder's grafts, so a development stack can serve them without a hook that rewrites its configuration.
+
 ## [0.3.0] - 2026-11-26
 
 ### Added

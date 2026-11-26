@@ -1126,6 +1126,14 @@ fn persist(p: &Project, r: &Record) -> Result<()> {
     write_record(&record_directory(p, false)?, r)
 }
 
+/// Let the lease of the graft `name` run out, so `prune` finds it expired.
+#[cfg(test)]
+pub(super) fn expire(p: &Project, name: &str) -> Result<()> {
+    let mut r = load(p, name)?;
+    r.heartbeat = 0;
+    persist(p, &r)
+}
+
 fn write_record(directory: &Path, r: &Record) -> Result<()> {
     store_record(directory, r, atomic)
 }
