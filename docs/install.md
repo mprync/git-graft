@@ -21,7 +21,7 @@ Options:
 ```sh
 # Install a specific version into a specific directory
 curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/mprync/git-graft/main/install.sh \
-  | sh -s -- --version 0.2.0 --to /usr/local/bin
+  | sh -s -- --version 0.3.0 --to /usr/local/bin
 ```
 
 | Setting | Purpose |
@@ -53,7 +53,7 @@ curl.exe -fsSL https://raw.githubusercontent.com/mprync/git-graft/main/install.p
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
-It installs to `%LOCALAPPDATA%\Programs\git-graft\bin` and adds that directory to your user `PATH` if it is missing; open a new terminal afterwards. Pass `-Version 0.2.0`, `-InstallDir <dir>` or `-NoPathUpdate`, or set `GIT_GRAFT_VERSION`, `GIT_GRAFT_INSTALL_DIR` and `GIT_GRAFT_DOWNLOAD_BASE` as described above.
+It installs to `%LOCALAPPDATA%\Programs\git-graft\bin` and adds that directory to your user `PATH` if it is missing; open a new terminal afterwards. Pass `-Version 0.3.0`, `-InstallDir <dir>` or `-NoPathUpdate`, or set `GIT_GRAFT_VERSION`, `GIT_GRAFT_INSTALL_DIR` and `GIT_GRAFT_DOWNLOAD_BASE` as described above.
 
 ## Package managers
 
@@ -89,10 +89,10 @@ winget install mprync.git-graft
 Each release includes `.deb`, `.rpm`, `.apk` and Arch `.pkg.tar.zst` packages for x86_64 and aarch64. Download the file for your system from the [latest release](https://github.com/mprync/git-graft/releases/latest), then:
 
 ```sh
-sudo apt install ./git-graft_0.2.0_amd64.deb          # Debian, Ubuntu
-sudo dnf install ./git-graft-0.2.0-1.x86_64.rpm       # Fedora, RHEL
-sudo apk add --allow-untrusted ./git-graft_0.2.0_x86_64.apk   # Alpine
-sudo pacman -U ./git-graft-0.2.0-1-x86_64.pkg.tar.zst         # Arch
+sudo apt install ./git-graft_0.3.0_amd64.deb          # Debian, Ubuntu
+sudo dnf install ./git-graft-0.3.0-1.x86_64.rpm       # Fedora, RHEL
+sudo apk add --allow-untrusted ./git-graft_0.3.0_x86_64.apk   # Alpine
+sudo pacman -U ./git-graft-0.3.0-1-x86_64.pkg.tar.zst         # Arch
 ```
 
 The packages install `/usr/bin/git-graft` and depend on `git`. Some distributions ship a Git older than 2.46; the package installs regardless, but git-graft needs 2.46 or newer at runtime, so upgrade Git from your distribution's backports or from git-scm.com if `git --version` is older.
@@ -137,14 +137,14 @@ shasum -a 256 --check --ignore-missing SHA256SUMS        # macOS
 ```
 
 ```powershell
-(Get-FileHash .\git-graft-0.2.0-x86_64-pc-windows-msvc.zip -Algorithm SHA256).Hash
+(Get-FileHash .\git-graft-0.3.0-x86_64-pc-windows-msvc.zip -Algorithm SHA256).Hash
 # compare with the matching line in SHA256SUMS
 ```
 
 Checksums prove the file matches the release; build provenance proves which workflow built it. Verify provenance with the [GitHub CLI](https://cli.github.com/):
 
 ```sh
-gh attestation verify git-graft-0.2.0-aarch64-apple-darwin.tar.gz --repo mprync/git-graft
+gh attestation verify git-graft-0.3.0-aarch64-apple-darwin.tar.gz --repo mprync/git-graft
 ```
 
 The release workflow attests every asset, including `SHA256SUMS` and the install scripts. When the GitHub CLI is installed and signed in, `install.sh` and `install.ps1` run this check themselves and refuse to install an archive that fails it.
