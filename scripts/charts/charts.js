@@ -187,9 +187,9 @@ function lifecycle() {
     const x = index * step;
     const middle = x + width / 2;
     skeletons.push(box(`life-${title}`, x, top, width, height, colors));
-    label(`life-${title}-title`, middle, top + 36, title, 30);
-    label(`life-${title}-subtitle`, middle, top + 72, subtitle, 19, MUTED);
-    label(`life-${title}-command`, middle, top + height + 32, command, 16, INK, CODE);
+    label(`life-${title}-title`, middle, top + 34, title, 32);
+    label(`life-${title}-subtitle`, middle, top + 72, subtitle, 22, MUTED);
+    label(`life-${title}-command`, middle, top + height + 34, command, 18, INK, CODE);
     if (index < stages.length - 1) {
       skeletons.push(arrow(`life-arrow-${index}`, x + width + 8, top + height / 2, [[0, 0], [step - width - 16, 0]]));
     }
@@ -198,7 +198,7 @@ function lifecycle() {
   const from = 3 * step + width / 2;
   const to = step + width / 2;
   skeletons.push(arrow('life-restore', from, top - 8, [[0, 0], [0, -48], [to - from, -48], [to - from, 0]], GRAFT.stroke));
-  label('life-restore-label', (from + to) / 2, top - 82, 'git graft restore', 18, GRAFT.stroke, CODE);
+  label('life-restore-label', (from + to) / 2, top - 82, 'git graft restore', 20, GRAFT.stroke, CODE);
   return scene('lifecycle', skeletons, centred);
 }
 
