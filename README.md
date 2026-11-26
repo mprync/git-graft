@@ -36,14 +36,14 @@ git-graft is a faster, lighter alternative to `git worktree`. It gives each task
 
 |                      | `git worktree`                          | `git graft`                                  |
 | -------------------- | --------------------------------------- | -------------------------------------------- |
-| Working files        | A full copy of every file               | Only the files you change[^clone]            |
+| Working files        | A full copy of every file               | Only the files you change\*                  |
 | Installed dependencies | Installed again in every checkout     | Shared, and still writable                   |
 | Branches             | One checkout per branch                 | Any branch, in any number of grafts          |
 | Repository state     | Shares your objects, refs and stash     | Its own objects, refs, stash and index       |
 | Finished work        | Deleted by `git worktree remove`        | Archived, and restorable                     |
 | Coding agents        | Need their own tooling                  | Built-in MCP server                          |
 
-[^clone]: On a filesystem that can clone files: APFS, Btrfs or XFS. See [supported platforms](#supported-platforms).
+<sub>\* On a filesystem that can clone files: APFS, Btrfs or XFS. See [supported platforms](#supported-platforms).</sub>
 
 ## Install
 
