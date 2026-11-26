@@ -33,9 +33,14 @@
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/mprync/git-graft/main/install.sh | sh   # macOS, Linux
-brew install mprync/tap/git-graft                                                  # Homebrew
-irm https://raw.githubusercontent.com/mprync/git-graft/main/install.ps1 | iex      # Windows
+# macOS and Linux
+curl -fsSL https://raw.githubusercontent.com/mprync/git-graft/main/install.sh | sh
+
+# Homebrew
+brew install mprync/tap/git-graft
+
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/mprync/git-graft/main/install.ps1 | iex
 ```
 
 Scoop, Cargo and Linux packages are in the [install guide](docs/install.md). You'll need Git 2.46 or newer.
