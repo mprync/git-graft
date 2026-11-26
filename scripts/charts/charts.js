@@ -9,7 +9,7 @@ import { convertToExcalidrawElements, exportToSvg, serializeAsJSON, FONT_FAMILY 
  * Each chart compares git worktree with git graft for the same work.
  */
 const MEASUREMENTS = {
-  scale: { worktree: 2854.69, graft: 27.76, unit: 'MiB' },
+  scale: { worktree: 2854.69, graft: 27.76, unit: 'MiB', checkouts: 100 },
   disk: { worktree: 28.55, graft: 0.29, unit: 'MiB' },
   dependencies: { worktree: 85.38, graft: 0.16, unit: 'MiB' },
   ready: { worktree: 550, graft: 454, unit: 'ms' },
@@ -96,12 +96,20 @@ function panel(prefix, left, { title, subtitle, values, format, callout }) {
 
 function chart(name, panels) {
   const parts = panels.map(([prefix, left, spec]) => panel(prefix, left, spec));
-  const skeletons = parts.flatMap((part) => part.skeletons);
+  return scene(name, parts.flatMap((part) => part.skeletons), parts.flatMap((part) => part.centred));
+}
+
+/**
+ * Converts skeletons to elements. Each `centred` entry is [id, x] or [id, x, y]: the text
+ * is moved so its middle sits on that point once Excalidraw has measured it.
+ */
+function scene(name, skeletons, centred) {
   const elements = convertToExcalidrawElements(skeletons, { regenerateIds: false });
   const byId = new Map(elements.map((element) => [element.id, element]));
-  for (const [id, middle] of parts.flatMap((part) => part.centred)) {
+  for (const [id, middle, centre] of centred) {
     const element = byId.get(id);
     element.x = middle - element.width / 2;
+    if (centre !== undefined) element.y = centre - element.height / 2;
   }
   // Fixed seeds keep the hand-drawn strokes identical between renders, so regenerating
   // a chart only changes the files when the numbers or layout change.
@@ -111,6 +119,106 @@ function chart(name, panels) {
     element.updated = 1;
   });
   return { name, elements };
+}
+
+const CODE = FONT_FAMILY['Comic Shanns'] ?? font;
+const CHECKOUT = { stroke: INK, fill: '#f1f3f5' };
+const GRAFT_BOX = { stroke: GRAFT.stroke, fill: '#ebfbee' };
+
+function box(id, x, y, width, height, colors) {
+  return {
+    type: 'rectangle', id, x, y, width, height, strokeColor: colors.stroke, backgroundColor: colors.fill,
+    fillStyle: 'solid', strokeWidth: 2, roughness: 1, roundness: { type: 3 },
+  };
+}
+
+function arrow(id, x, y, points, color = INK) {
+  return { type: 'arrow', id, x, y, points, strokeColor: color, strokeWidth: 2, roughness: 1, endArrowhead: 'arrow' };
+}
+
+/** The hero: one checkout, and the grafts agents work in beside it. */
+function hero() {
+  const skeletons = [];
+  const centred = [];
+  const label = (id, x, y, value, size, color = INK, family = font) => {
+    skeletons.push({ ...text(id, x, y, value, size, color, 'center'), fontFamily: family });
+    centred.push([id, x, y]);
+  };
+  // The checkout, on the left.
+  skeletons.push(box('hero-checkout', 0, 130, 240, 140, CHECKOUT));
+  label('hero-checkout-title', 120, 182, 'your checkout', 28);
+  label('hero-checkout-path', 120, 222, 'myrepo/', 20, MUTED, CODE);
+  label('hero-shared', 120, 312, 'files shared, not copied', 20, MUTED);
+  // A column of grafts, each with an agent and its branch.
+  const tasks = ['fix-parser', 'add-login', 'update-docs', 'bump-deps'];
+  const left = 480;
+  const width = 300;
+  tasks.forEach((task, index) => {
+    const y = index * 92;
+    skeletons.push(box(`hero-graft-${index}`, left, y, width, 64, GRAFT_BOX));
+    label(`hero-graft-${index}-agent`, left + 82, y + 32, `agent ${index + 1}`, 22);
+    label(`hero-graft-${index}-task`, left + 200, y + 32, task, 18, GRAFT.stroke, CODE);
+    skeletons.push(arrow(`hero-arrow-${index}`, 248, 200, [[0, 0], [left - 8 - 248, y + 32 - 200]], MUTED));
+  });
+  label('hero-more', left + width / 2, 4 * 92 + 18, `… and ${m.scale.checkouts - tasks.length} more`, 22, MUTED);
+  // Below the diagram, the same 100 checkouts as worktrees and as grafts, drawn to scale.
+  const top = 450;
+  const barLeft = 170;
+  const barMax = 470;
+  const barHeight = 44;
+  const row = (key, y, name, colors) => {
+    const length = Math.max(6, (m.scale[key] / m.scale.worktree) * barMax);
+    skeletons.push(
+      { ...text(`hero-${key}-name`, 0, y + 8, name, 24), fontFamily: font },
+      {
+        type: 'rectangle', id: `hero-${key}-bar`, x: barLeft, y, width: length, height: barHeight,
+        strokeColor: colors.stroke, backgroundColor: colors.fill, fillStyle: 'hachure', strokeWidth: 2, roughness: 1,
+      },
+      text(`hero-${key}-value`, barLeft + length + 16, y + 8, mib(m.scale[key]), 24, colors.stroke),
+    );
+  };
+  skeletons.push(text('hero-bars-title', 0, top, `${m.scale.checkouts} checkouts on disk`, 22, MUTED));
+  row('worktree', top + 44, 'git worktree', WORKTREE);
+  row('graft', top + 108, 'git graft', GRAFT);
+  label('hero-callout', 600, top + 128, `${saving(m.scale)}% less`, 40, GRAFT.stroke);
+  return scene('hero', skeletons, centred);
+}
+
+/** A graft's life: add, work, merge, archive, and restore back to work. */
+function lifecycle() {
+  const skeletons = [];
+  const centred = [];
+  const label = (id, x, y, value, size, color = INK, family = font) => {
+    skeletons.push({ ...text(id, x, y, value, size, color, 'center'), fontFamily: family });
+    centred.push([id, x, y]);
+  };
+  const top = 110;
+  const width = 260;
+  const height = 100;
+  const step = 320;
+  const stages = [
+    ['add', 'a graft per task', GRAFT_BOX, 'git graft add fix-parser'],
+    ['work', 'commit as usual', CHECKOUT, 'git commit -am "…"'],
+    ['merge', 'back into main', GRAFT_BOX, 'git graft merge fix-parser'],
+    ['archive', 'never just deleted', CHECKOUT, 'git graft list'],
+  ];
+  stages.forEach(([title, subtitle, colors, command], index) => {
+    const x = index * step;
+    const middle = x + width / 2;
+    skeletons.push(box(`life-${title}`, x, top, width, height, colors));
+    label(`life-${title}-title`, middle, top + 34, title, 32);
+    label(`life-${title}-subtitle`, middle, top + 72, subtitle, 22, MUTED);
+    label(`life-${title}-command`, middle, top + height + 34, command, 18, INK, CODE);
+    if (index < stages.length - 1) {
+      skeletons.push(arrow(`life-arrow-${index}`, x + width + 8, top + height / 2, [[0, 0], [step - width - 16, 0]]));
+    }
+  });
+  // Restore loops from the archive back to work.
+  const from = 3 * step + width / 2;
+  const to = step + width / 2;
+  skeletons.push(arrow('life-restore', from, top - 8, [[0, 0], [0, -48], [to - from, -48], [to - from, 0]], GRAFT.stroke));
+  label('life-restore-label', (from + to) / 2, top - 82, 'git graft restore', 20, GRAFT.stroke, CODE);
+  return scene('lifecycle', skeletons, centred);
 }
 
 const mib = (value) => (value >= 1024 ? `${(value / 1024).toFixed(1)} GiB` : `${value < 10 ? value.toFixed(2) : value.toFixed(1)} MiB`);
@@ -146,6 +254,8 @@ const CHARTS = [
     values: m.readyWithDependencies, format: (value) => `${value} ms`,
     callout: { text: `${speedup(m.readyWithDependencies)}× faster`, arrow: true },
   }]]),
+  hero(),
+  lifecycle(),
 ];
 
 async function save(file, body) {

@@ -11,7 +11,7 @@ npm test
 
 The end-to-end suite uses disposable repositories and needs the tools listed in [verification](docs/verification.md). Exercise user-facing operations through the CLI and MCP, and cover supported and fallback filesystem paths where relevant. For retirement and recovery changes, verify that refused or interrupted operations preserve the original files and refs.
 
-Benchmarks live in `e2e/*-bench.ts` (see `npm run` for the list) and are written up in [benchmarks](docs/benchmarks.md). [bench/agents/PLAN.md](bench/agents/PLAN.md) describes a many-agent end-to-end run for stress-testing Graft. The README charts are drawn from the numbers in `scripts/charts/charts.js`; run `node scripts/charts/serve.ts` to regenerate them in `docs/assets`.
+Benchmarks live in `e2e/*-bench.ts` (see `npm run` for the list) and are written up in [benchmarks](docs/benchmarks.md). [bench/agents/PLAN.md](bench/agents/PLAN.md) describes a many-agent end-to-end run for stress-testing Graft. The README charts and diagrams are drawn by `scripts/charts/charts.js`; run `node scripts/charts/serve.ts` to regenerate them in `docs/assets`.
 
 Pushes that change only Markdown or `docs/` skip CI.
 

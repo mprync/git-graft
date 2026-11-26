@@ -2,113 +2,89 @@
 
 # git-graft
 
-Run hundreds of coding agents on one repository without filling your disk.
+**Run hundreds of coding agents on one repository without filling your disk.**
 
-[![CI](https://github.com/mprync/git-graft/actions/workflows/ci.yml/badge.svg)](https://github.com/mprync/git-graft/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/mprync/git-graft)](https://github.com/mprync/git-graft/releases)
-[![crates.io](https://img.shields.io/crates/v/git-graft)](https://crates.io/crates/git-graft)
-[![MSRV: Rust 1.89](https://img.shields.io/badge/MSRV-Rust%201.89-orange.svg)](https://www.rust-lang.org)
+[![CI](https://img.shields.io/github/actions/workflow/status/mprync/git-graft/ci.yml?branch=main&label=CI&logo=github)](https://github.com/mprync/git-graft/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/mprync/git-graft?logo=github)](https://github.com/mprync/git-graft/releases)
+[![crates.io](https://img.shields.io/crates/v/git-graft?logo=rust)](https://crates.io/crates/git-graft)
+[![Downloads](https://img.shields.io/github/downloads/mprync/git-graft/total?label=downloads)](https://github.com/mprync/git-graft/releases)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+<br>
+[![macOS | Linux | Windows](https://img.shields.io/badge/runs%20on-macOS%20%7C%20Linux%20%7C%20Windows-555)](#where-it-works)
+[![MCP server](https://img.shields.io/badge/MCP-server-6e40c9)](#hand-it-to-your-agents)
+[![Claude Code](https://img.shields.io/badge/Claude%20Code-ready-d97757?logo=claude&logoColor=white)](#hand-it-to-your-agents)
+[![Codex](https://img.shields.io/badge/Codex-ready-111?logo=openai&logoColor=white)](#hand-it-to-your-agents)
+[![Cursor](https://img.shields.io/badge/Cursor-ready-111?logo=cursor&logoColor=white)](#hand-it-to-your-agents)
+[![Homebrew](https://img.shields.io/badge/brew-mprync%2Ftap-fbb040?logo=homebrew&logoColor=white)](#install)
+
+<br>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/scale.dark.svg">
-  <img alt="100 checkouts of the same repository: git worktree uses 2.8 GiB, git graft uses 27.8 MiB, 99.0% less" src="docs/assets/scale.light.svg" width="520">
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero.dark.svg">
+  <img alt="Your checkout feeds a graft for each agent: fix-parser, add-login, update-docs, bump-deps and 96 more. 100 checkouts on disk: git worktree 2.8 GiB, git graft 27.8 MiB, 99.0% less." src="docs/assets/hero.light.svg" width="720">
 </picture>
 
 </div>
 
-git-graft is a faster, lighter alternative to `git worktree`. It gives each task, or each coding agent, its own complete Git repository next to your checkout. Unchanged files share their disk blocks with your checkout, so a graft stores only what you change, and installed dependencies are shared instead of installed again. Agents such as Claude Code, Codex and Cursor use it through a built-in MCP server.
+<br>
 
-## Installation
+`git worktree` works fine until you have twenty agents going at once, each with a full copy of your files and its own `node_modules`. git-graft gives every agent a real, separate Git repository next to yours, but the files in it are clones that share disk with your checkout. A graft only takes up space for what it changes.
 
-macOS and Linux:
+## Install
 
 ```sh
+# macOS and Linux
 curl -fsSL https://raw.githubusercontent.com/mprync/git-graft/main/install.sh | sh
-```
 
-Homebrew:
-
-```sh
+# Homebrew
 brew install mprync/tap/git-graft
-```
 
-Windows (PowerShell):
-
-```powershell
+# Windows (PowerShell)
 irm https://raw.githubusercontent.com/mprync/git-graft/main/install.ps1 | iex
 ```
 
-Scoop:
+Scoop, Cargo and Linux packages are in the [install guide](docs/install.md). You'll need Git 2.46 or newer.
 
-```powershell
-scoop bucket add mprync https://github.com/mprync/scoop-bucket
-scoop install git-graft
-```
+## How it goes
 
-Cargo:
-
-```sh
-cargo install --locked git-graft
-```
-
-There are also `.deb`, `.rpm`, `.apk` and Arch packages on the [releases page](https://github.com/mprync/git-graft/releases), and winget (`winget install mprync.git-graft`) and Chocolatey (`choco install git-graft`) packages once their reviews finish. git-graft needs Git 2.46 or newer. The install scripts verify every download against the release checksums; see [installation](docs/install.md) for upgrades, uninstalling and verifying provenance.
-
-## Getting started
-
-Create a graft from any Git checkout:
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/lifecycle.dark.svg">
+    <img alt="add a graft per task, work and commit as usual, merge back into main, and the graft is archived; git graft restore brings it back" src="docs/assets/lifecycle.light.svg" width="100%">
+  </picture>
+</p>
 
 ```sh
-git graft add fix-parser
-```
-
-It prints the graft's `path` and a `lease`, a secret that proves the graft is yours. Keep the lease out of logs.
-
-Work in the graft like any other repository:
-
-```sh
+git graft add fix-parser                     # prints the graft's path and a lease
 cd ../myrepo.graft/fix-parser
 git commit -am "Fix the parser"
-```
-
-When you're done, merge it into `main` from your checkout:
-
-```sh
+cd -
 git graft merge fix-parser --lease <lease>
 ```
 
-Merging archives the graft rather than deleting it, and returns a `recovery_lease`; `git graft restore fix-parser --lease <recovery_lease>` brings it back. Use `--into <branch>` to merge somewhere else, and `git graft list` to see every graft.
+The lease is how git-graft knows a graft is yours, so treat it like a password. Merged grafts are archived rather than deleted, and `git graft restore` brings one back if you need it.
 
-### Sharing dependencies
-
-Install your dependencies once in your checkout and share them:
+Install your dependencies once and every new graft gets its own writable `node_modules`, for almost no disk:
 
 ```sh
 npm ci
 git graft deps share --key node24
 ```
 
-Every graft you create afterwards gets a writable `node_modules` that takes almost no extra space, without running `npm ci` again.
+Need your `.env` too? Add `--include .env`. You can keep defaults like that, and setup hooks, in a [`.graftconfig`](docs/operations.md#configure-a-project).
 
-### Bringing local files
+## Hand it to your agents
 
-A graft starts with only the files Git tracks. To bring untracked or ignored files such as `.env`, name them with `.gitignore`-style patterns:
-
-```sh
-git graft add fix-parser --include .env --include 'config/*.local.json'
-```
-
-`--include '*'` brings every one of them, and `git graft local-files` lists what's there. Agents make this choice themselves through the MCP server. For a default, list patterns under `include` in a `.graftconfig` file at the root of your checkout, or in `.graftconfig.local` for your own (a directory holding several repositories can [configure them all](docs/operations.md#configure-several-repositories-from-one-directory)); `--include` replaces them. The same files define [hooks](docs/operations.md#hooks) that run your project's setup and cleanup when a graft is added, archived or restored, once you have read them and run `git graft hook trust`. Copies are clones where the filesystem supports it, never replace a tracked file, and don't count as changes in `merge` or `remove` until you edit them.
-
-## Using it with coding agents
-
-git-graft includes an MCP server. Give your agent the path to your repository.
-
-Claude Code:
+git-graft comes with an MCP server. Point it at your repo:
 
 ```sh
 claude mcp add git-graft -- git-graft --repo /path/to/project mcp
 ```
+
+<details>
+<summary>Codex, Cursor and other clients</summary>
+
+<br>
 
 Codex, in `~/.codex/config.toml`:
 
@@ -131,11 +107,13 @@ Cursor, in `.cursor/mcp.json`:
 }
 ```
 
-Any other MCP client works the same way: a stdio server whose command is `git-graft` with the arguments `--repo <path> mcp`. Add `--allow-exec` after `mcp` to let agents run commands and install packages inside their grafts. Add `--allow-push` to let them push a graft's commits to your checkout's remotes, for example to open a pull request; each option is a separate opt-in.
+Anything else that speaks MCP over stdio works the same way: run `git-graft --repo <path> mcp`.
 
-Each agent creates, works in and merges its own graft, and proves ownership with its lease, so agents can't interfere with each other or with your checkout. The [agent guide](skills/git-graft/SKILL.md) describes the tools.
+</details>
 
-## Benchmarks
+Each agent then makes its own graft, works in it and merges it back, and can't touch anyone else's. If you want them running commands and installing packages, add `--allow-exec` after `mcp`. Add `--allow-push` if they should push branches and open pull requests. The [agent guide](skills/git-graft/SKILL.md) covers the rest.
+
+## Numbers
 
 <p align="center">
   <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/disk.dark.svg"><img alt="Disk per checkout: git worktree 28.6 MiB, git graft 0.29 MiB, 98.9% less" src="docs/assets/disk.light.svg" width="49%"></picture>
@@ -144,50 +122,54 @@ Each agent creates, works in and merges its own graft, and proves ownership with
   <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/speed-dependencies.dark.svg"><img alt="Ready to test with node_modules: git worktree 742 ms, git graft 237 ms, 3.1 times faster" src="docs/assets/speed-dependencies.light.svg" width="49%"></picture>
 </p>
 
-These are medians from the release build on macOS with APFS, comparing `git worktree add` (plus `npm ci` where dependencies are involved) with `git graft add` on the same repositories. In very small repositories, under about two thousand files, a worktree is still quicker to create, but the disk savings hold at every size. The [benchmarks page](docs/benchmarks.md) has the method, the raw data and how to rerun each one.
+Medians on macOS with APFS. In a very small repository, under about two thousand files, a worktree is still a little quicker to create, but you save the disk either way. [How these were measured](docs/benchmarks.md).
 
-## Supported platforms
+## Where it works
 
-git-graft runs on macOS, Linux and Windows. Disk sharing needs a filesystem that can clone files: APFS on macOS, or Btrfs and XFS on Linux. On ext4 and NTFS grafts still work, with private repositories, merging, archives and the MCP server, but their working files are full copies, as with a worktree. On Linux a graft still shares the primary's Git history there, through hard links to its object files. Run `git graft doctor` to see what your filesystem supports.
+Anywhere Git does: macOS, Linux and Windows. The disk savings need a filesystem that can clone files, which means APFS on a Mac, or Btrfs or XFS on Linux. On ext4 and NTFS everything else still works, but each graft gets full copies of the working files, like a worktree would. `git graft doctor` tells you what you've got.
 
-## How it works
+## Questions
 
-`git graft add` creates a standalone Git repository next to your checkout and asks the filesystem to clone its files instead of writing them. The clones share data blocks with your checkout until you edit them. A graft mirrors your checkout: before reusing a file, git-graft proves that Git's own line-ending conversion of it, the one `git status` and `git add` apply, gives exactly the committed content, using Git's own index check or a hash of the converted bytes. The graft keeps your checkout's line endings, and Git in the graft agrees every file is unchanged. Files with a filter, `ident` or a working-tree encoding, and anything git-graft cannot prove, come from Git. It also records each file's metadata in the new index, so the first `git status` reads no file contents.
+<details>
+<summary><b>Why not just use <code>git worktree</code>?</b></summary>
 
-Creating a graft never changes your checkout, and copies untracked or ignored files into the graft only when you or the agent [ask for them](#bringing-local-files). Merging reports conflicts before it changes anything, and `merge`, `remove` and `prune` archive a graft instead of deleting it. See [safety and recovery](docs/safety.md) for the details.
+<br>
 
-## FAQ
+A worktree is a full copy of your files that shares your repository's refs and stash, and you can only check a branch out once. A graft is its own repository, so any branch name works and nothing it does lands in yours until you merge. On a filesystem that can clone, it also costs almost nothing.
 
-**How is this different from `git worktree`?**
-A worktree writes a full copy of every file, shares your repository's object store, refs and stash, and allows one checkout per branch. A graft is a standalone repository with its own objects, branches, reflog, stash and index, so any branch name works and your repository isn't written to while the graft is in use. On a filesystem that can clone files, it stores only the files you change.
+</details>
 
-**Why not `cp -c` or `cp --reflink`?**
-Cloning a directory copies everything in it, including untracked and ignored files, local edits and Git's internal state, and nothing checks the files against a commit. A graft starts from the commit you choose, brings only the untracked and ignored files you ask for, verifies every reused file, and adds merging, archives and the MCP server.
+<details>
+<summary><b>Couldn't I just <code>cp -c</code> the directory?</b></summary>
 
-**Why not `git clone --shared` or `--reference`?**
-Both borrow Git objects from the original repository but still write every working file in full, and the clone breaks if the original's objects move or are garbage-collected. A graft shares file data through the filesystem and keeps its own snapshot of the objects it needs.
+<br>
 
-**What about Jujutsu workspaces?**
-They need `jj` and write a full working copy for each workspace. git-graft works with plain Git and the tools you already use.
+That copies everything, including build output, local edits and `.git` itself, and nothing checks the result against a commit. git-graft starts from the commit you pick, brings only the untracked files you ask for, and checks every file it reuses.
 
-**Is my work safe if something crashes?**
-Every operation can be retried after an interruption, and archived grafts can be restored. Archives are not backups, so keep your own backups for disk failure. See [safety and recovery](docs/safety.md).
+</details>
 
-## Documentation
+<details>
+<summary><b>What about <code>git clone --shared</code> or Jujutsu workspaces?</b></summary>
 
-- [Installation](docs/install.md)
-- [Commands, merging and recovery](docs/operations.md)
-- [Grafts and dependency sharing](docs/workspaces.md)
-- [Safety and recovery](docs/safety.md)
-- [Benchmarks](docs/benchmarks.md)
-- [Agent guide](skills/git-graft/SKILL.md)
+<br>
 
-Every command also has `--help`, and `git graft --help` shows the full manual.
+Both still write every working file in full. A shared clone also breaks if the original's objects move or get garbage-collected, and Jujutsu needs `jj`. git-graft works with plain Git.
 
-## Contributing
+</details>
 
-Bug reports and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) to build git-graft and run its tests, and [SECURITY.md](SECURITY.md) to report a vulnerability privately.
+<details>
+<summary><b>What happens if something crashes?</b></summary>
 
-## License
+<br>
 
-git-graft is released under the [MIT license](LICENSE).
+Every command can be rerun after an interruption, and archived grafts can be restored. Archives aren't backups, though. [Safety and recovery](docs/safety.md) has the details.
+
+</details>
+
+## Learn more
+
+[Install guide](docs/install.md) · [Commands and config](docs/operations.md) · [How grafts work](docs/workspaces.md) · [Safety](docs/safety.md) · [Benchmarks](docs/benchmarks.md) · [Agent guide](skills/git-graft/SKILL.md)
+
+`git graft --help` has the full manual.
+
+Contributions are welcome: [CONTRIBUTING.md](CONTRIBUTING.md) explains how to build and test, and [SECURITY.md](SECURITY.md) how to report a vulnerability. git-graft is [MIT licensed](LICENSE).
