@@ -161,7 +161,26 @@ function hero() {
     skeletons.push(arrow(`hero-arrow-${index}`, 248, 200, [[0, 0], [left - 8 - 248, y + 32 - 200]], MUTED));
   });
   label('hero-more', left + width / 2, 4 * 92 + 18, `… and ${m.scale.checkouts - tasks.length} more`, 22, MUTED);
-  label('hero-callout', 390, 470, `${m.scale.checkouts} grafts, ${mib(m.scale.graft)} on disk`, 40, GRAFT.stroke);
+  // Below the diagram, the same 100 checkouts as worktrees and as grafts, drawn to scale.
+  const top = 450;
+  const barLeft = 170;
+  const barMax = 470;
+  const barHeight = 44;
+  const row = (key, y, name, colors) => {
+    const length = Math.max(6, (m.scale[key] / m.scale.worktree) * barMax);
+    skeletons.push(
+      { ...text(`hero-${key}-name`, 0, y + 8, name, 24), fontFamily: font },
+      {
+        type: 'rectangle', id: `hero-${key}-bar`, x: barLeft, y, width: length, height: barHeight,
+        strokeColor: colors.stroke, backgroundColor: colors.fill, fillStyle: 'hachure', strokeWidth: 2, roughness: 1,
+      },
+      text(`hero-${key}-value`, barLeft + length + 16, y + 8, mib(m.scale[key]), 24, colors.stroke),
+    );
+  };
+  skeletons.push(text('hero-bars-title', 0, top, `${m.scale.checkouts} checkouts on disk`, 22, MUTED));
+  row('worktree', top + 44, 'git worktree', WORKTREE);
+  row('graft', top + 108, 'git graft', GRAFT);
+  label('hero-callout', 600, top + 128, `${saving(m.scale)}% less`, 40, GRAFT.stroke);
   return scene('hero', skeletons, centred);
 }
 

@@ -21,7 +21,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/hero.dark.svg">
-  <img alt="Your checkout feeds a graft for each agent: fix-parser, add-login, update-docs, bump-deps and 96 more. 100 grafts take 27.8 MiB on disk." src="docs/assets/hero.light.svg" width="720">
+  <img alt="Your checkout feeds a graft for each agent: fix-parser, add-login, update-docs, bump-deps and 96 more. 100 checkouts on disk: git worktree 2.8 GiB, git graft 27.8 MiB, 99.0% less." src="docs/assets/hero.light.svg" width="720">
 </picture>
 
 </div>
@@ -116,7 +116,7 @@ Each agent then makes its own graft, works in it and merges it back, and can't t
 ## Numbers
 
 <p align="center">
-  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/scale.dark.svg"><img alt="100 checkouts of the same repository: git worktree uses 2.8 GiB, git graft uses 27.8 MiB, 99.0% less" src="docs/assets/scale.light.svg" width="49%"></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/disk.dark.svg"><img alt="Disk per checkout: git worktree 28.6 MiB, git graft 0.29 MiB, 98.9% less" src="docs/assets/disk.light.svg" width="49%"></picture>
   <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/dependencies.dark.svg"><img alt="node_modules per checkout: git worktree 85.4 MiB, git graft 0.16 MiB, 99.8% less" src="docs/assets/dependencies.light.svg" width="49%"></picture>
   <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/speed.dark.svg"><img alt="Ready to work: git worktree 550 ms, git graft 454 ms, 17% faster" src="docs/assets/speed.light.svg" width="49%"></picture>
   <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/speed-dependencies.dark.svg"><img alt="Ready to test with node_modules: git worktree 742 ms, git graft 237 ms, 3.1 times faster" src="docs/assets/speed-dependencies.light.svg" width="49%"></picture>
