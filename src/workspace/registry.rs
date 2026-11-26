@@ -1127,7 +1127,7 @@ fn persist(p: &Project, r: &Record) -> Result<()> {
 }
 
 /// Let the lease of the graft `name` run out, so `prune` finds it expired.
-#[cfg(test)]
+#[cfg(all(test, unix))]
 pub(super) fn expire(p: &Project, name: &str) -> Result<()> {
     let mut r = load(p, name)?;
     r.heartbeat = 0;

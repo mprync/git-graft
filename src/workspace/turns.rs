@@ -1469,6 +1469,7 @@ mod tests {
     }
 
     /// Give `repo` a first commit, so grafts can be added from it.
+    #[cfg(unix)]
     fn commit(repo: &Path) -> Result<()> {
         for (key, value) in [
             ("user.name", "Turn Fixture"),
@@ -1484,6 +1485,7 @@ mod tests {
     }
 
     /// Add the graft `name` of `repo`, and return its path and lease.
+    #[cfg(unix)]
     fn add(repo: &Path, name: &str) -> Result<(PathBuf, String)> {
         let added = crate::workspace::run(
             repo,
@@ -1494,6 +1496,7 @@ mod tests {
     }
 
     /// Ask for the turn on `stack` from `repo`, naming `grafts`.
+    #[cfg(unix)]
     fn ask_with(repo: &Path, who: &str, grafts: &[&Path]) -> Result<Value> {
         super::take(
             repo,
