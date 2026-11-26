@@ -40,12 +40,13 @@ Examples:
     Exec(api::Exec),
     /// Install and reuse dependencies.
     Deps(Deps),
-    /// Show the hooks .graftconfig and .graftconfig.local define, and trust them.
+    /// Show the hooks and remotes .graftconfig and .graftconfig.local define, and trust them.
     #[command(after_help = "\
 Examples:
   git graft hook list    Show every hook, in the order it runs, its file, and
-                         whether it is trusted
-  git graft hook trust   Let the hooks the repository carries run, as defined now
+                         whether it is trusted, and the remotes a new graft gets
+  git graft hook trust   Let the hooks the repository carries run, and the
+                         remotes it lists be set up, as defined now
 
 Hooks are defined by name in .graftconfig, which a project commits, and
 .graftconfig.local, the person's own, at the root of the primary checkout:
@@ -76,8 +77,13 @@ does every hook from a directory above the checkout on Windows, which does not
 check who owns that directory's files. Trust covers a program named relative
 to a directory above the checkout by its contents too. Until then, and again
 after any change to those hooks, add, remove, merge, prune --apply and restore
-refuse with hooks_untrusted before changing anything. There is no MCP tool
-that trusts hooks.")]
+refuse with hooks_untrusted before changing anything.
+
+The remotes those files list under \"remotes\", which every new graft gets,
+need trust by the same rule, recorded apart from the hooks: until then, and
+after any change to them, add and restore leave them out of the graft and
+report them as skipped with the reason untrusted. There is no MCP tool that
+trusts hooks or remotes.")]
     Hook(HookArgs),
     /// Merge a graft's commits into a local branch, then archive the graft.
     #[command(after_help = "\
@@ -258,9 +264,9 @@ pub struct HookArgs {
 
 #[derive(Debug, Subcommand)]
 enum HookCommand {
-    /// List the configured hooks, in the order they run.
+    /// List the configured hooks, in the order they run, and the remotes a new graft gets.
     List,
-    /// Let the hooks the repository carries run, as they are defined now.
+    /// Let the hooks the repository carries run, and the remotes it lists be set up, as they are defined now.
     Trust,
 }
 

@@ -78,6 +78,17 @@ impl Hook {
     }
 }
 
+/// An entry of a configuration file's `remotes` list, as written: a remote's
+/// name, or `!name`, which removes a shared one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Remote {
+    pub name: String,
+    /// The file that lists it, named as [`Hook::file`] names it.
+    pub file: String,
+    /// Whether it comes from `.graftconfig.local`.
+    pub local: bool,
+}
+
 /// The effective configuration of a project: both files merged.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Config {
@@ -101,6 +112,11 @@ pub(crate) struct Config {
     /// below the directory, with the file that has it, so that a mistyped
     /// path can be reported rather than configure nothing unnoticed.
     pub missing_repositories: Vec<Value>,
+    /// The remotes of the primary every new graft gets.
+    pub remotes: Vec<String>,
+    /// Every entry of the files' `remotes` lists as written: the shared
+    /// file's, then the local file's.
+    pub listed_remotes: Vec<Remote>,
 }
 
 impl Config {
@@ -375,6 +391,7 @@ fn repository_key(primary: &Path, dir: &Path) -> Result<String> {
 struct Part {
     include: Option<Vec<String>>,
     hooks: Option<Named>,
+    remotes: Option<Vec<String>>,
 }
 
 /// A part read straight from the file, so the hooks keep their order: only
@@ -397,10 +414,17 @@ impl<'de> Deserialize<'de> for Part {
                         "hooks" if part.hooks.is_some() => {
                             return Err(de::Error::duplicate_field("hooks"));
                         }
+                        "remotes" if part.remotes.is_some() => {
+                            return Err(de::Error::duplicate_field("remotes"));
+                        }
                         "include" => part.include = Some(map.next_value()?),
                         "hooks" => part.hooks = Some(map.next_value()?),
+                        "remotes" => part.remotes = Some(map.next_value()?),
                         other => {
-                            return Err(de::Error::unknown_field(other, &["include", "hooks"]));
+                            return Err(de::Error::unknown_field(
+                                other,
+                                &["include", "hooks", "remotes"],
+                            ));
                         }
                     }
                 }
@@ -442,12 +466,14 @@ impl<'de> Deserialize<'de> for File {
             repositories: Option<Repositories>,
             #[serde(default)]
             turns: Option<Vec<String>>,
+            remotes: Option<Vec<String>>,
         }
         let written = Written::deserialize(deserializer)?;
         Ok(File {
             own: Part {
                 include: written.include,
                 hooks: written.hooks,
+                remotes: written.remotes,
             },
             repositories: written.repositories.map(|r| r.0).unwrap_or_default(),
             turns: written.turns.unwrap_or_default(),
@@ -661,6 +687,23 @@ fn check_part(part: &Part, name: &'static str, below: Option<(&str, &Path)>) -> 
     if let Some(patterns) = &part.include {
         crate::include::validate(patterns)?;
     }
+    for remote in part.remotes.iter().flatten() {
+        let bare = remote.strip_prefix('!').unwrap_or(remote);
+        anyhow::ensure!(
+            name == LOCAL || bare == remote,
+            "remote {remote:?} starts with '!', which removes a shared remote and belongs in {LOCAL}"
+        );
+        anyhow::ensure!(
+            !bare.is_empty()
+                && bare.len() <= MAX_NAME_BYTES
+                && !bare.starts_with(['-', '.'])
+                && bare
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b)),
+            "remote {remote:?} must be the name of a remote: 1 to {MAX_NAME_BYTES} letters, digits, '-', '_' or '.', \
+             not starting with '-' or '.'"
+        );
+    }
     for (hook, spec) in part.hooks.iter().flat_map(|named| &named.0) {
         anyhow::ensure!(
             !hook.is_empty()
@@ -870,6 +913,31 @@ fn merge(shared: Option<Part>, local: Option<Part>, names: &Names<'_>) -> Result
     let mut config = Config::default();
     let shared = shared.unwrap_or_default();
     let local = local.unwrap_or_default();
+    // Remotes are joined like include patterns; a local `!name` removes one.
+    for (remotes, file, local) in [
+        (&shared.remotes, &names.shared, false),
+        (&local.remotes, &names.local, true),
+    ] {
+        for name in remotes.iter().flatten() {
+            config.listed_remotes.push(Remote {
+                name: name.clone(),
+                file: file.clone(),
+                local,
+            });
+        }
+    }
+    for remote in shared.remotes.iter().flatten() {
+        if !config.remotes.contains(remote) {
+            config.remotes.push(remote.clone());
+        }
+    }
+    for remote in local.remotes.iter().flatten() {
+        match remote.strip_prefix('!') {
+            Some(removed) => config.remotes.retain(|known| known != removed),
+            None if !config.remotes.contains(remote) => config.remotes.push(remote.clone()),
+            None => {}
+        }
+    }
     let blank = |pattern: &String| pattern.trim().is_empty();
 
     let shared_patterns: Vec<String> = shared.include.unwrap_or_default();
@@ -1723,6 +1791,56 @@ mod tests {
                 crate::api::error_json(&error)["code"],
                 "invalid_config",
                 "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn remotes_are_joined_and_a_local_bang_removes_one() {
+        let (_tmp, root, app, _api) = enclosing();
+        write(
+            &root,
+            SHARED,
+            r#"{"repositories": {"app": {"remotes": ["origin", "upstream"]}}}"#,
+        );
+        write(
+            &root,
+            LOCAL,
+            r#"{"repositories": {"app": {"remotes": ["!upstream", "fork", "origin"]}}}"#,
+        );
+        assert_eq!(Config::read(&app).unwrap().remotes, ["origin", "fork"]);
+        for bad in [
+            r#"{"remotes": [""]}"#,
+            r#"{"remotes": ["-x"]}"#,
+            r#"{"remotes": ["a b"]}"#,
+            r#"{"remotes": "origin"}"#,
+        ] {
+            write(&root, LOCAL, bad);
+            let error = Config::read(&app).unwrap_err();
+            assert_eq!(
+                crate::api::error_json(&error)["code"],
+                "invalid_config",
+                "{bad}"
+            );
+        }
+        // `!name` removes a shared remote, so only the local file may say it.
+        write(&root, LOCAL, "{}");
+        for (file, bad) in [
+            (
+                SHARED,
+                r#"{"repositories": {"app": {"remotes": ["!origin"]}}}"#,
+            ),
+            (
+                SHARED,
+                r#"{"repositories": {"app": {"remotes": ["origin", "!origin"]}}}"#,
+            ),
+        ] {
+            write(&root, file, bad);
+            let error = Config::read(&app).unwrap_err();
+            assert_eq!(
+                crate::api::error_json(&error)["code"],
+                "invalid_config",
+                "{bad}"
             );
         }
     }

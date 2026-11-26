@@ -114,6 +114,17 @@ pub(crate) fn list(primary: &Path, state: &Path) -> Result<Value> {
     if !config.missing_repositories.is_empty() {
         listed["missing_repositories"] = json!(config.missing_repositories);
     }
+    // The remotes a new graft gets need trust as hooks do, recorded apart.
+    if !config.remotes.is_empty() {
+        let trusted = trust::remotes_trusted(state, &gate.remotes(&config))?;
+        listed["remotes"] = config
+            .remotes
+            .iter()
+            .map(|name| {
+                json!({"name": name, "trusted": trusted || !gate.remote_needs_trust(&config, name)})
+            })
+            .collect();
+    }
     Ok(listed)
 }
 

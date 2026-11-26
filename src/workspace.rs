@@ -4,6 +4,7 @@ mod land;
 mod objects;
 mod push;
 mod registry;
+mod remotes;
 mod turns;
 
 use std::{
@@ -22,6 +23,7 @@ pub(crate) use objects::{
 };
 pub(crate) use registry::has_live;
 use registry::{Record, Status};
+pub use remotes::Pushing;
 pub(crate) use turns::validate_resource;
 
 pub(crate) use api::Spawn;
@@ -139,6 +141,7 @@ fn spawn(
     lock: &std::fs::File,
     mut builds: crate::registry::Held,
     hooks: hook::Policy,
+    pushing: Pushing,
 ) -> Result<Value> {
     if let Some(id) = &mut args.request_id {
         *id = uuid::Uuid::parse_str(id)
@@ -159,6 +162,8 @@ fn spawn(
     // hooks never ran or that copied the wrong files.
     let config = Config::read(&p.repo)?;
     hook::trust::require(p, &config, hook::Event::PostAdd, hooks)?;
+    // Remotes that need trust they lack are left out, not refused.
+    let untrusted = hook::trust::untrusted_remotes(p, &config)?;
     let include = if populated {
         include::select(args.include.as_deref(), &config)?
     } else {
@@ -336,7 +341,8 @@ fn spawn(
             json!({"name":r.name,"lease":r.lease,"path":r.path,"recovery":format!("Retry the same request: Graft archives this attempt whole and builds the graft again. {guard}")}),
         ));
     }
-    let reply = with_leftovers(p, &r)?;
+    let mut reply = with_leftovers(p, &r)?;
+    with_remotes(p, &r, &config, &untrusted, history, pushing, &mut reply);
     if post_add.is_empty() {
         return Ok(reply);
     }
@@ -345,6 +351,43 @@ fn spawn(
     let mut hooks = hook::Runner::new(hooks, lock, None);
     hooks.after(p, &post_add, &r)?;
     Ok(hooks.report(reply))
+}
+
+/// Give the graft `r` the remotes `config` names, and report them in `reply`
+/// as `remotes`. The graft is usable either way, so a remote that fails is
+/// reported by name, not returned. Remote-tracking refs are copied only with
+/// local history, which already holds their objects. The remotes in
+/// `untrusted` need trust they lack and are left out. `pushing` says whether
+/// the caller may push through them.
+fn with_remotes(
+    p: &Project,
+    r: &Record,
+    config: &Config,
+    untrusted: &[String],
+    history: api::History,
+    pushing: Pushing,
+    reply: &mut Value,
+) {
+    if config.remotes.is_empty() {
+        return;
+    }
+    let copy = history == api::History::Local;
+    reply["remotes"] = json!(remotes::configure(
+        &p.repo,
+        &r.path,
+        &config.remotes,
+        untrusted,
+        copy,
+        pushing
+    ));
+}
+
+/// The history a recorded request built its graft with.
+fn history_of(request: &Value) -> api::History {
+    serde_json::from_value::<Option<api::History>>(request["history"].clone())
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| recorded_history(request))
 }
 
 /// The reply for a finished graft, with its lease.
@@ -890,7 +933,13 @@ fn wait_for_turn(repo: &Path, mut args: api::TurnTake, hooks: hook::Policy) -> R
     args.wait = 0;
     let found = find(repo, &Command::TurnTake(args.clone()))?;
     loop {
-        let reply = run_found(repo, found.clone(), Command::TurnTake(args.clone()), hooks)?;
+        let reply = run_found(
+            repo,
+            found.clone(),
+            Command::TurnTake(args.clone()),
+            hooks,
+            Pushing::Disabled,
+        )?;
         match turn_pause(&reply, deadline) {
             Some(pause) => std::thread::sleep(pause),
             None => return Ok(reply),
@@ -899,15 +948,22 @@ fn wait_for_turn(repo: &Path, mut args: api::TurnTake, hooks: hook::Policy) -> R
 }
 
 pub fn run(repo: &Path, command: Command) -> Result<Value> {
-    // The command line is the person's own, so it always runs their hooks.
-    run_with(repo, command, hook::Policy::Run)
+    // The command line is the person's own, so it always runs their hooks
+    // and may push.
+    run_with(repo, command, hook::Policy::Run, Pushing::Allowed)
 }
 
-/// [`run`] for a caller that says whether it may run the project's hooks.
-pub fn run_with(repo: &Path, command: Command, hooks: hook::Policy) -> Result<Value> {
+/// [`run`] for a caller that says whether it may run the project's hooks,
+/// and whether it may push through the remotes a graft gets.
+pub fn run_with(
+    repo: &Path,
+    command: Command,
+    hooks: hook::Policy,
+    pushing: Pushing,
+) -> Result<Value> {
     match command {
         Command::TurnTake(args) if args.wait > 0 => wait_for_turn(repo, args, hooks),
-        command => run_once(repo, command, hooks),
+        command => run_once(repo, command, hooks, pushing),
     }
 }
 
@@ -959,18 +1015,20 @@ pub(crate) fn find(repo: &Path, command: &Command) -> Result<Found> {
     })
 }
 
-fn run_once(repo: &Path, command: Command, hooks: hook::Policy) -> Result<Value> {
+fn run_once(repo: &Path, command: Command, hooks: hook::Policy, pushing: Pushing) -> Result<Value> {
     let found = find(repo, &command)?;
-    run_found(repo, found, command, hooks)
+    run_found(repo, found, command, hooks, pushing)
 }
 
 /// Run `command` with what [`find`] found for it.
-/// `hooks` says whether the caller may run the project's hooks.
+/// `hooks` says whether the caller may run the project's hooks, and
+/// `pushing` whether it may push through the remotes a graft gets.
 pub(crate) fn run_found(
     repo: &Path,
     found: Found,
     command: Command,
     hooks: hook::Policy,
+    pushing: Pushing,
 ) -> Result<Value> {
     let Found {
         version,
@@ -1080,7 +1138,7 @@ pub(crate) fn run_found(
             };
             let origin = invoking(p, location, repo)?;
             let builds = builds.context("adding a graft requires the build lock")?;
-            return spawn(p, &origin, args, &lock, builds, hooks);
+            return spawn(p, &origin, args, &lock, builds, hooks, pushing);
         }
         Command::SeedLayer(a) => return engine::seed_layer(p, a),
         Command::Drop(a) => {
@@ -1098,8 +1156,15 @@ pub(crate) fn run_found(
             // restore instead of reopening a graft whose hooks never ran.
             let mut hooks = hook::Runner::new(hooks, &lock, builds);
             let post_restore = hooks.hooks(p, hook::Event::PostRestore)?;
+            let config = Config::read(&p.repo)?;
+            let untrusted = hook::trust::untrusted_remotes(p, &config)?;
             let (r, reopened) = registry::restore_locked(p, &a.name, &a.lease)?;
-            let reply = with_leftovers(p, &r)?;
+            let mut reply = with_leftovers(p, &r)?;
+            // An archive made before the configuration named remotes gets them now.
+            if reopened.is_some() && r.status == Status::Active {
+                let history = history_of(&r.request);
+                with_remotes(p, &r, &config, &untrusted, history, pushing, &mut reply);
+            }
             // A repeated restore returns the graft without running the hooks
             // again. One this call reopened keeps the graft's lock for them.
             let (false, Some(_graft_lock), Status::Active) =

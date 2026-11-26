@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - `push` sends a graft's commits to a branch on the primary's remote, for pull request work. It never forces and won't update the default branch unless you name it.
 - `turn take`, `turn release` and `turn list` let your work take turns on something there is only one of, such as a development server, across repositories, and a `post-take` hook can prepare it for each holder.
 - `prune --purge-archives DAYS` deletes archives older than DAYS days.
+- `remotes` in `.graftconfig` gives each new graft remotes of the primary, such as `origin`, so `git fetch` and `git push` work inside it. Credentials are never copied, and grafts added over MCP push only with `--allow-push`.
 - MCP tools for the above: `graft_local_files`, `graft_turn_take`, `graft_turn_release`, `graft_turn_list`, and `graft_push` for hosts started with `--allow-push`.
 
 ### Changed
@@ -24,7 +25,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Safety
 
-- Hooks that come with a repository run only after you approve them with `git graft hook trust`, and again after any change to them. No MCP tool can approve them.
+- Hooks and remotes that come with a repository are used only after you approve them with `git graft hook trust`, and again after any change to them. No MCP tool can approve them.
 - MCP hosts run hooks only when started with `--allow-exec`.
 
 ## [0.2.0] - 2026-11-22

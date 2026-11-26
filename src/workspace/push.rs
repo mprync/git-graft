@@ -1,8 +1,12 @@
 //! Publish a graft's commits to a remote of the primary repository.
 //!
-//! A graft has no remotes. Its commits are copied into the primary's object
-//! store under a private ref, and the primary's own Git pushes them, so the
-//! remote's URL, credentials and hooks are the ones the user already set up.
+//! This needs no remote in the graft, which has none unless the project's
+//! configuration names some (see `remotes`). The graft's commits are copied
+//! into the primary's object store under a private ref, and the primary's own
+//! Git pushes them, so the remote's URL, credentials and hooks are the ones
+//! the user already set up. A plain `git push` through a remote the graft
+//! got from the configuration does not come here, so the check against the
+//! remote's default branch below does not cover it.
 use std::{path::Path, process::Stdio};
 
 use anyhow::{Result, ensure};

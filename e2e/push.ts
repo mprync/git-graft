@@ -60,6 +60,179 @@ function output(ctx: Context, args: string[]) {
 
 export const cases: Scenario[] = [
   {
+    name: 'remotes in the configuration give a new graft the primary remote, its refs and plain fetch and push',
+    run: async ctx => {
+      const bare = remote(ctx);
+      ctx.git(['push', '-q', 'origin', 'HEAD:refs/heads/main']);
+      ctx.git(['fetch', '-q', 'origin']);
+      ctx.git(['remote', 'set-head', 'origin', 'main']);
+      ctx.git(['remote', 'add', 'secret', 'https://user:token@example.invalid/repo.git']);
+      // A remote-tracking ref of upstream whose object the primary lacks
+      // fails the copy of its refs after its keys are written.
+      remote(ctx, 'upstream');
+      const broken = join(ctx.repo, '.git', 'refs', 'remotes', 'upstream', 'broken');
+      mkdirSync(join(broken, '..'), { recursive: true });
+      writeFileSync(broken, '1'.repeat(40) + '\n');
+      writeFileSync(join(ctx.repo, '.graftconfig.local'), JSON.stringify({ remotes: ['origin', 'upstream', 'secret', 'missing'] }));
+      const added = ctx.spawn('remoted', ['--history', 'local']);
+      const path = String(added.path);
+      const entries = (added.result.remotes as unknown[]).map(object);
+      assert.deepEqual(entries.map(entry => [entry.name, entry.status, entry.reason ?? entry.refs]).filter(([name]) => name !== 'upstream'),
+        [['origin', 'configured', 2], ['secret', 'skipped', 'url_has_credentials'], ['missing', 'skipped', 'not_configured']]);
+      assert.equal(entries[0].push, true);
+      // The remote that failed is reported by name and leaves nothing behind.
+      assert.equal(entries[1].name, 'upstream');
+      assert.equal(entries[1].status, 'failed');
+      assert.equal(typeof entries[1].reason, 'string');
+      assert.equal(ctx.git(['remote'], path), 'origin');
+      assert.equal(refs(ctx, path, 'refs/remotes/upstream'), '');
+      assert.equal(ctx.git(['remote', 'get-url', 'origin'], path), bare);
+      assert.equal(ctx.git(['rev-parse', 'origin/main'], path), ctx.git(['rev-parse', 'origin/main']));
+      assert.equal(ctx.git(['symbolic-ref', 'refs/remotes/origin/HEAD'], path), 'refs/remotes/origin/main');
+      // Plain Git works in the graft at once.
+      const tip = commit(ctx, path, 'remoted.txt', 'remoted\n');
+      ctx.git(['push', '-q', 'origin', 'HEAD:refs/heads/remoted'], path);
+      assert.equal(ctx.git(['rev-parse', 'refs/heads/remoted'], bare), tip);
+      ctx.git(['fetch', '-q', 'origin'], path);
+      assert.equal(ctx.git(['rev-parse', 'origin/remoted'], path), tip);
+      // When the upstream moves on, a fetch moves origin, not only origin/main.
+      const other = join(ctx.root, 'other');
+      ctx.git(['clone', '-q', '-b', 'main', bare, other], ctx.root);
+      const moved = commit(ctx, other, 'moved.txt', 'moved\n');
+      ctx.git(['push', '-q', 'origin', 'HEAD:refs/heads/main'], other);
+      ctx.git(['fetch', '-q', 'origin'], path);
+      assert.equal(ctx.git(['rev-parse', 'origin/main'], path), moved);
+      assert.equal(ctx.git(['rev-parse', 'origin'], path), moved);
+
+      // Restored, the graft keeps the remote it has and gets the one that failed.
+      rmSync(broken);
+      const archived = ctx.cli(['remove', 'remoted', '--lease', added.lease, '--discard']);
+      const restored = ctx.cli(['restore', 'remoted', '--lease', String(archived.recovery_lease)]);
+      assert.deepEqual((restored.remotes as unknown[]).slice(0, 2).map(object),
+        [{ name: 'origin', status: 'kept', push: true }, { name: 'upstream', status: 'configured', refs: 0, push: true }]);
+      writeFileSync(join(ctx.repo, '.graftconfig.local'), JSON.stringify({ remotes: ['origin'] }));
+
+      // Isolated history gets the remote but no remote-tracking refs.
+      const isolated = ctx.spawn('isolated', ['--history', 'isolated']);
+      assert.deepEqual(object((isolated.result.remotes as unknown[])[0]), { name: 'origin', status: 'configured', refs: 0, push: true });
+      assert.equal(ctx.git(['remote', 'get-url', 'origin'], String(isolated.path)), bare);
+
+      // MCP adds get them too, without --allow-exec. Without --allow-push the
+      // graft can fetch through them, but Git refuses to push.
+      await withClient(ctx, false, async client => {
+        await initialize(client);
+        const viaMcp = await call(client, 'graft_add', { name: 'via-mcp' });
+        const entry = object((viaMcp.remotes as unknown[])[0]);
+        assert.equal(entry.status, 'configured');
+        assert.equal(entry.push, false);
+        const graft = String(viaMcp.path);
+        assert.equal(ctx.git(['remote', 'get-url', 'origin'], graft), bare);
+        ctx.git(['fetch', '-q', 'origin'], graft);
+        assert.equal(ctx.git(['rev-parse', 'origin/main'], graft), moved);
+        commit(ctx, graft, 'mcp.txt', 'mcp\n');
+        for (const target of ['HEAD:refs/heads/via-mcp', 'HEAD:main']) {
+          const pushed = ctx.command('git', ['push', 'origin', target], graft);
+          assert.notEqual(pushed.status, 0, target);
+          assert.match(pushed.stderr, /transport 'graft-push-disabled' not allowed/);
+        }
+        assert.equal(ctx.git(['for-each-ref', '--format=%(refname)', 'refs/heads'], bare), 'refs/heads/main\nrefs/heads/remoted');
+        assert.equal(ctx.git(['rev-parse', 'refs/heads/main'], bare), moved);
+      });
+      // A host with --allow-push gives the graft a remote it can push through.
+      await withClient(ctx, false, async client => {
+        await initialize(client);
+        const viaPush = await call(client, 'graft_add', { name: 'via-push' });
+        assert.equal(object((viaPush.remotes as unknown[])[0]).push, true);
+        const pushedTip = commit(ctx, String(viaPush.path), 'push.txt', 'push\n');
+        ctx.git(['push', '-q', 'origin', 'HEAD:refs/heads/via-push'], String(viaPush.path));
+        assert.equal(ctx.git(['rev-parse', 'refs/heads/via-push'], bare), pushedTip);
+      }, true);
+      // Without the setting, a graft has no remote, as before.
+      writeFileSync(join(ctx.repo, '.graftconfig.local'), '{}');
+      const plain = ctx.spawn('plain');
+      assert(!('remotes' in plain.result));
+      assert.equal(ctx.git(['remote'], String(plain.path)), '');
+    },
+  },
+  {
+    name: 'remotes a .graftconfig lists are skipped until trusted, apart from its hooks, and the person\'s own untracked file needs no trust',
+    run: async ctx => {
+      const bare = remote(ctx);
+      ctx.git(['push', '-q', 'origin', 'HEAD:refs/heads/main']);
+      remote(ctx, 'fork');
+      const shared = (config: Record<string, unknown>) => writeFileSync(join(ctx.repo, '.graftconfig'), JSON.stringify(config));
+      shared({ remotes: ['origin'] });
+      ctx.git(['add', '.graftconfig']);
+      ctx.git(['commit', '-qm', 'Name origin for grafts']);
+      const skipped = (result: Record<string, unknown>) => (result.remotes as unknown[]).map(object)
+        .filter(entry => entry.status === 'skipped').map(entry => {
+          assert.equal(entry.reason, 'untrusted');
+          assert.match(String(entry.hint), /git graft hook trust/);
+          return entry.name;
+        });
+      // Untrusted, a remote is left out and the graft is made without it.
+      const early = ctx.spawn('early');
+      assert.deepEqual(skipped(early.result), ['origin']);
+      assert.equal(ctx.git(['remote'], String(early.path)), '');
+      await withClient(ctx, false, async client => {
+        await initialize(client);
+        const viaMcp = await call(client, 'graft_add', { name: 'agent' });
+        assert.deepEqual(skipped(viaMcp), ['origin']);
+      });
+      assert.deepEqual(ctx.cli(['hook', 'list']).remotes, [{ name: 'origin', trusted: false }]);
+
+      const trusted = ctx.cli(['hook', 'trust']);
+      assert.deepEqual(trusted.trusted, []);
+      assert.deepEqual(trusted.trusted_remotes, ['origin']);
+      assert.match(String(trusted.remotes_sha256), /^[0-9a-f]{64}$/);
+      assert.deepEqual(ctx.cli(['hook', 'list']).remotes, [{ name: 'origin', trusted: true }]);
+      const one = ctx.spawn('one');
+      assert.deepEqual(object((one.result.remotes as unknown[])[0]), { name: 'origin', status: 'configured', refs: 1, push: true });
+      assert.equal(ctx.git(['remote', 'get-url', 'origin'], String(one.path)), bare);
+
+      // A trusted hook and a changed remotes list: the hook still runs, and
+      // every remote the list names is skipped until trusted again.
+      const hooks = { check: { event: 'post-add', argv: ['git', '--version'] } };
+      shared({ hooks, remotes: ['origin'] });
+      const both = ctx.cli(['hook', 'trust']);
+      assert.equal(object(both).remotes_sha256, trusted.remotes_sha256);
+      const archived = ctx.cli(['remove', 'one', '--lease', one.lease, '--discard']);
+      shared({ hooks, remotes: ['origin', 'fork'] });
+      const two = ctx.spawn('two');
+      assert.deepEqual((two.result.hooks as unknown[]).map(object).map(entry => entry.status), ['ok']);
+      assert.deepEqual(skipped(two.result), ['origin', 'fork']);
+      // A restore keeps the remote the graft has and leaves out the rest, and
+      // a restore of the graft once active again changes nothing.
+      const restored = ctx.cli(['restore', 'one', '--lease', String(archived.recovery_lease)]);
+      assert.deepEqual(object((restored.remotes as unknown[])[0]), { name: 'origin', status: 'kept', push: true });
+      assert.deepEqual(skipped(restored), ['fork']);
+      const again = ctx.cli(['restore', 'one', '--lease', String(archived.recovery_lease)]);
+      assert(!('remotes' in again));
+
+      // Restored over MCP without --allow-push, a graft made on the command
+      // line keeps its remote, but Git no longer pushes through it.
+      shared({ hooks, remotes: ['origin'] });
+      ctx.git(['push', '-q', 'origin', 'HEAD:refs/heads/from-cli'], String(one.path));
+      const archivedAgain = ctx.cli(['remove', 'one', '--lease', String(restored.lease), '--discard']);
+      await withClient(ctx, false, async client => {
+        await initialize(client);
+        const viaMcp = await call(client, 'graft_restore', { name: 'one', lease: String(archivedAgain.recovery_lease) });
+        assert.deepEqual(object((viaMcp.remotes as unknown[])[0]), { name: 'origin', status: 'kept', push: false });
+        const pushed = ctx.command('git', ['push', 'origin', 'HEAD:refs/heads/from-mcp'], String(viaMcp.path));
+        assert.notEqual(pushed.status, 0);
+        assert.match(pushed.stderr, /transport 'graft-push-disabled' not allowed/);
+        ctx.git(['fetch', '-q', 'origin'], String(viaMcp.path));
+      });
+      assert.equal(ctx.git(['for-each-ref', '--format=%(refname)', 'refs/heads'], bare), 'refs/heads/from-cli\nrefs/heads/main');
+
+      // What the person's own untracked .graftconfig.local lists needs no trust.
+      writeFileSync(join(ctx.repo, '.graftconfig.local'), JSON.stringify({ remotes: ['fork'] }));
+      const mine = ctx.spawn('mine');
+      assert.deepEqual((mine.result.remotes as unknown[]).map(object).map(entry => [entry.name, entry.status]),
+        [['origin', 'configured'], ['fork', 'configured']]);
+    },
+  },
+  {
     name: 'a commit made in a graft is pushed and the primary keeps its branches, HEAD and files',
     run(ctx) {
       const bare = remote(ctx);

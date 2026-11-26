@@ -23,7 +23,7 @@ use crate::api::{
     self, AddDep, DropWorkspace, Exec, Land, Name, Owned, Push, TurnRelease, TurnTake,
 };
 use crate::registry;
-use crate::workspace::{self, Command, Spawn, hook};
+use crate::workspace::{self, Command, Pushing, Spawn, hook};
 
 const MAX_REQUEST_BYTES: usize = 256 * 1024;
 
@@ -91,8 +91,18 @@ impl Server {
     /// Run one operation off the async thread.
     async fn run(&self, op: Command) -> Result<anyhow::Result<Value>, ErrorData> {
         let repo = self.repo.clone();
-        let hooks = self.hooks();
-        blocking(move || workspace::run_with(&repo, op, hooks)).await
+        let (hooks, pushing) = (self.hooks(), self.pushing());
+        blocking(move || workspace::run_with(&repo, op, hooks, pushing)).await
+    }
+
+    /// Like graft_push, pushing through a remote a graft gets from the
+    /// project's configuration needs the host to allow it.
+    fn pushing(&self) -> Pushing {
+        if self.allow_push {
+            Pushing::Allowed
+        } else {
+            Pushing::Disabled
+        }
     }
 
     /// A hook is a command the project's configuration runs. Like graft_exec,
@@ -123,17 +133,18 @@ impl ServerHandler for Server {
             "Running commands and installing dependencies in grafts is disabled; the host must start with --allow-exec to enable it. Hooks the project's .graftconfig and .graftconfig.local define are not run either; the hooks array of a result reports them as skipped."
         };
         let publishing = if self.allow_push {
-            "Pushing a graft's commits to a remote with graft_push is enabled by the host; use it only when the task asks for the work to be published."
+            "Pushing a graft's commits to a remote with graft_push is enabled by the host; use it only when the task asks for the work to be published. A remote the remotes array of a graft_add or graft_restore result reports also takes a plain git push from the graft, which graft_push's check against the remote's default branch does not cover: push to that branch only when the task says so."
         } else {
-            "Pushing a graft's commits to a remote is disabled; the host must start with --allow-push to enable it."
+            "Pushing a graft's commits to a remote is disabled; the host must start with --allow-push to enable it. A remote the remotes array of a graft_add or graft_restore result reports can fetch, but Git refuses to push through it."
         };
+        let remotes = "The project's .graftconfig and .graftconfig.local can name remotes of the primary that every new graft gets; the remotes array of a graft_add or graft_restore result reports each. Remotes that come with the repository are set up only once the user has trusted them in a terminal; until then graft_add and graft_restore leave them out and report them as skipped with reason untrusted, which you report to the user if the task needs them and must not try to get past.";
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new(
                 env!("CARGO_PKG_NAME"),
                 env!("CARGO_PKG_VERSION"),
             ))
             .with_instructions(format!(
-                "{instructions} {publishing} A graft is an independent copy of the repository for one task. Call graft_add, work inside the returned path, then graft_merge to merge it into a branch. Before using something every graft shares, such as a development server on a fixed port, call graft_turn_take under one holder name for all of your work, and graft_turn_release when done. A graft holds only tracked files: untracked and ignored files such as .env, local config or build output stay behind unless you copy them. Decide what the task needs: call graft_local_files to see them, then pass include to graft_add with .gitignore-style patterns for just the ones to bring. Prefer naming them: [\"*\"] copies all of them, including build output and directories such as target/ and .venv/, which can be large. Omitting include uses the include patterns of the project's .graftconfig and .graftconfig.local, and copies nothing if they set none. For ordinary work in a trusted clone, omit history from graft_add to honor the project setting (default: local). Choose isolated when the graft should only receive the selected commit's reachable history. Each newline-delimited message may contain up to {MAX_REQUEST_BYTES} bytes. Larger messages are discarded."
+                "{instructions} {publishing} {remotes} A graft is an independent copy of the repository for one task. Call graft_add, work inside the returned path, then graft_merge to merge it into a branch. Before using something every graft shares, such as a development server on a fixed port, call graft_turn_take under one holder name for all of your work, and graft_turn_release when done. A graft holds only tracked files: untracked and ignored files such as .env, local config or build output stay behind unless you copy them. Decide what the task needs: call graft_local_files to see them, then pass include to graft_add with .gitignore-style patterns for just the ones to bring. Prefer naming them: [\"*\"] copies all of them, including build output and directories such as target/ and .venv/, which can be large. Omitting include uses the include patterns of the project's .graftconfig and .graftconfig.local, and copies nothing if they set none. For ordinary work in a trusted clone, omit history from graft_add to honor the project setting (default: local). Choose isolated when the graft should only receive the selected commit's reachable history. Each newline-delimited message may contain up to {MAX_REQUEST_BYTES} bytes. Larger messages are discarded."
             ))
     }
 
@@ -319,7 +330,13 @@ impl ServerHandler for Server {
                         let ask = |take| {
                             let (repo, found) = (self.repo.clone(), found.clone());
                             blocking(move || {
-                                workspace::run_found(&repo, found, Command::TurnTake(take), policy)
+                                workspace::run_found(
+                                    &repo,
+                                    found,
+                                    Command::TurnTake(take),
+                                    policy,
+                                    Pushing::Disabled,
+                                )
                             })
                         };
                         take_turn(
