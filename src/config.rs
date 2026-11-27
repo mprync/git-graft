@@ -89,19 +89,32 @@ pub(crate) struct Remote {
     pub local: bool,
 }
 
-/// A link Graft keeps for a shared resource: a path in the configuration's
-/// directory that leads to the turn holder's graft of a repository, or to
-/// the repository itself when the holder has no graft of it.
+/// A link Graft keeps for a shared resource, in the directory Graft owns
+/// beside the configuration: `.graft/links/<resource>/<repository>`. It leads
+/// to the turn holder's graft of the repository, or to the repository itself
+/// when the holder has no graft of it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Link {
     /// The resource whose turn decides where the link leads.
     pub resource: String,
+    /// The repository's key under `repositories`.
+    pub key: String,
     /// The repository's primary checkout.
     pub repository: PathBuf,
+    /// The configuration's directory, below which Graft keeps the link.
+    pub dir: PathBuf,
     /// Where the link is.
     pub path: PathBuf,
-    /// The file that defines the link.
-    pub file: PathBuf,
+}
+
+/// An entry of a configuration file's `links` list: a resource, with the
+/// file that lists it, named as [`Hook::file`] names it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Listed {
+    pub resource: String,
+    pub file: String,
+    /// Whether it comes from `.graftconfig.local`.
+    pub local: bool,
 }
 
 /// The effective configuration of a project: both files merged.
@@ -132,10 +145,13 @@ pub(crate) struct Config {
     /// Every entry of the files' `remotes` lists as written: the shared
     /// file's, then the local file's.
     pub listed_remotes: Vec<Remote>,
-    /// The links the top level of the files in that directory define, for
-    /// the repositories they name: the shared file's, with each one the
-    /// local file defines for the same resource and repository replaced.
+    /// The links Graft keeps for the resources the top level of the files
+    /// in that directory lists under `links`: one for each repository they
+    /// name under `repositories` that exists, resource by resource.
     pub links: Vec<Link>,
+    /// Every entry of the files' `links` lists as written: the shared
+    /// file's, then the local file's.
+    pub listed_links: Vec<Listed>,
 }
 
 impl Config {
@@ -169,7 +185,7 @@ impl Config {
                 below: false,
             };
             let missing = missing(primary, &shared, &local, &names);
-            let links = links(primary, &shared, &local)?;
+            let (links, listed_links) = links(primary, &shared, &local, &names)?;
             let mut config = merge(
                 shared.map(|file| file.own),
                 local.map(|file| file.own),
@@ -177,6 +193,7 @@ impl Config {
             )?;
             config.missing_repositories = missing;
             config.links = links;
+            config.listed_links = listed_links;
             return Ok(config.placed(primary, false));
         }
         for (depth, dir) in searched(primary, home) {
@@ -194,7 +211,7 @@ impl Config {
                 below: true,
             };
             let missing = missing(dir, &shared, &local, &names);
-            let links = links(dir, &shared, &local)?;
+            let (links, listed_links) = links(dir, &shared, &local, &names)?;
             let mut config = merge(
                 shared.and_then(|file| file.section(&key)),
                 local.and_then(|file| file.section(&key)),
@@ -202,6 +219,7 @@ impl Config {
             )?;
             config.missing_repositories = missing;
             config.links = links;
+            config.listed_links = listed_links;
             return Ok(config.placed(dir, true));
         }
         Ok(Self::default())
@@ -464,8 +482,8 @@ struct File {
     own: Part,
     repositories: Vec<(String, Part)>,
     turns: Vec<String>,
-    /// For each resource, the link path of each repository, as written.
-    links: Vec<(String, Vec<(String, String)>)>,
+    /// The resources whose links Graft keeps, as written.
+    links: Vec<String>,
 }
 
 impl File {
@@ -493,7 +511,7 @@ impl<'de> Deserialize<'de> for File {
             turns: Option<Vec<String>>,
             remotes: Option<Vec<String>>,
             #[serde(default)]
-            links: Option<Links>,
+            links: Option<Vec<String>>,
         }
         let written = Written::deserialize(deserializer)?;
         Ok(File {
@@ -504,7 +522,7 @@ impl<'de> Deserialize<'de> for File {
             },
             repositories: written.repositories.map(|r| r.0).unwrap_or_default(),
             turns: written.turns.unwrap_or_default(),
-            links: written.links.map(|links| links.0).unwrap_or_default(),
+            links: written.links.unwrap_or_default(),
         })
     }
 }
@@ -601,66 +619,6 @@ impl<'de> Deserialize<'de> for Repositories {
     }
 }
 
-/// The `links` object: for each resource, in the order written, the link
-/// path of each repository.
-#[derive(Debug, Default)]
-struct Links(Vec<(String, Vec<(String, String)>)>);
-
-impl<'de> Deserialize<'de> for Links {
-    fn deserialize<D: de::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct Ordered;
-        impl<'de> Visitor<'de> for Ordered {
-            type Value = Links;
-            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str("an object of links keyed by resource")
-            }
-            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Links, A::Error> {
-                let mut links: Vec<(String, Vec<(String, String)>)> = Vec::new();
-                while let Some(resource) = map.next_key::<String>()? {
-                    if links.iter().any(|(known, _)| *known == resource) {
-                        return Err(de::Error::custom(format!(
-                            "links of resource {resource:?} are defined twice"
-                        )));
-                    }
-                    let paths: LinkPaths = map.next_value()?;
-                    links.push((resource, paths.0));
-                }
-                Ok(Links(links))
-            }
-        }
-        deserializer.deserialize_map(Ordered)
-    }
-}
-
-/// The links of one resource: each repository's link path, in the order
-/// written.
-struct LinkPaths(Vec<(String, String)>);
-
-impl<'de> Deserialize<'de> for LinkPaths {
-    fn deserialize<D: de::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        struct Ordered;
-        impl<'de> Visitor<'de> for Ordered {
-            type Value = LinkPaths;
-            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str("an object of link paths keyed by repository")
-            }
-            fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<LinkPaths, A::Error> {
-                let mut paths: Vec<(String, String)> = Vec::new();
-                while let Some(key) = map.next_key::<String>()? {
-                    if paths.iter().any(|(known, _)| *known == key) {
-                        return Err(de::Error::custom(format!(
-                            "the link of repository {key:?} is defined twice"
-                        )));
-                    }
-                    paths.push((key, map.next_value()?));
-                }
-                Ok(LinkPaths(paths))
-            }
-        }
-        deserializer.deserialize_map(Ordered)
-    }
-}
-
 fn invalid(path: &Path, cause: impl fmt::Display) -> anyhow::Error {
     crate::api::fault(
         "invalid_config",
@@ -745,14 +703,9 @@ fn check(file: &File, name: &'static str, dir: &Path) -> Result<()> {
         check_part(part, name, Some((key, dir)))
             .map_err(|error| anyhow::anyhow!("repository {key:?}: {error:#}"))?;
     }
-    for (resource, paths) in &file.links {
+    for resource in &file.links {
         crate::workspace::validate_resource(resource)
             .map_err(|_| anyhow::anyhow!("links: {resource:?} is not a resource name: use 1 to 64 lowercase letters, numbers or hyphens, starting with a letter or number"))?;
-        for (key, path) in paths {
-            check_key(key)
-                .and_then(|()| check_link_path(path))
-                .map_err(|error| anyhow::anyhow!("links of {resource:?}: {error:#}"))?;
-        }
     }
     Ok(())
 }
@@ -777,170 +730,101 @@ fn check_key(key: &str) -> Result<()> {
     Ok(())
 }
 
-/// A link is written as a plain relative path inside the configuration's
-/// directory, with `/` between components, and is never inside a `.git`
-/// directory.
-fn check_link_path(path: &str) -> Result<()> {
-    anyhow::ensure!(
-        !path.is_empty()
-            && path.len() <= 4096
-            && !path.contains(['\\', '\0', ':'])
-            && path
-                .split('/')
-                .all(|part| !part.is_empty() && part != "." && part != "..")
-            && !Path::new(path).is_absolute()
-            && Path::new(path)
-                .components()
-                .all(|component| matches!(component, Component::Normal(_))),
-        "the link {path:?} must be a relative path inside the configuration's directory, \
-         such as \".graft/stack/app\", with '/' between its parts and no '.' or '..'"
-    );
-    anyhow::ensure!(
-        !path.split('/').any(|part| git_directory(OsStr::new(part))),
-        "the link {path:?} is inside a .git directory, which belongs to Git"
-    );
-    Ok(())
-}
+/// Where Graft keeps the links of a configuration's directory, relative to it.
+pub(crate) const LINKS: [&str; 2] = [".graft", "links"];
 
-/// Whether the path component `part` names a Git directory, in any case
-/// where the filesystem ignores it.
-fn git_directory(part: &OsStr) -> bool {
-    part == ".git" || FOLD_CASE && part.to_string_lossy().to_lowercase() == ".git"
-}
-
-/// Whether the path component `part` names a directory of grafts a link may
-/// not be in. A directory named just `.graft` is not one: Graft names a
-/// repository's grafts after the repository, so none are ever kept there.
-fn link_grafts(part: &OsStr) -> bool {
-    grafts(part) && part.to_string_lossy().to_lowercase() != ".graft"
-}
-
-/// The links the files `shared` and `local` in `dir` define, checked against
-/// both files together: each resource must be listed under `turns` and each
-/// repository under `repositories` of either file, and no link may be at
-/// another's path or inside it. A link the local file defines replaces the
-/// shared file's for the same resource and repository.
-fn links(dir: &Path, shared: &Option<File>, local: &Option<File>) -> Result<Vec<Link>> {
+/// The links Graft keeps for the resources the files `shared` and `local`
+/// in `dir` list under `links`, with every entry as written. Each resource
+/// must be listed under `turns` in either file. Each repository either file
+/// names under `repositories` and that exists gets a link at
+/// `.graft/links/<resource>/<key>`, so no key may be inside another, or one
+/// link would be inside another. Only the files are read: where the links
+/// lead is looked at when a `take` points them.
+fn links(
+    dir: &Path,
+    shared: &Option<File>,
+    local: &Option<File>,
+    names: &Names<'_>,
+) -> Result<(Vec<Link>, Vec<Listed>)> {
     let turns = turns(shared, local);
-    let keys: Vec<&str> = [shared, local]
-        .into_iter()
-        .flatten()
-        .flat_map(|file| &file.repositories)
-        .map(|(key, _)| key.as_str())
-        .collect();
-    let mut links: Vec<Link> = Vec::new();
-    for (file, name) in [(shared, SHARED), (local, LOCAL)] {
-        let Some(file) = file else {
-            continue;
-        };
-        let path = dir.join(name);
-        for (resource, paths) in &file.links {
+    let mut listed: Vec<Listed> = Vec::new();
+    let mut resources: Vec<&str> = Vec::new();
+    for (file, name, label, is_local) in [
+        (shared, SHARED, &names.shared, false),
+        (local, LOCAL, &names.local, true),
+    ] {
+        for resource in file.iter().flat_map(|file| &file.links) {
             if !turns.contains(resource) {
                 return Err(invalid(
-                    &path,
+                    &dir.join(name),
                     format!(
                         "links: {resource:?} is not listed under turns. A link follows the turn \
                          on a resource the directory shares, so list it under turns too"
                     ),
                 ));
             }
-            for (key, written) in paths {
-                if !keys.contains(&key.as_str()) {
-                    return Err(invalid(
-                        &path,
-                        format!(
-                            "links of {resource:?}: repository {key:?} is not a key under repositories"
-                        ),
-                    ));
-                }
-                let normal: PathBuf = written.split('/').collect();
-                check_link_place(dir, &normal, written, &keys)
-                    .map_err(|error| invalid(&path, format!("links of {resource:?}: {error:#}")))?;
-                let link = Link {
-                    resource: resource.clone(),
-                    repository: key
-                        .split('/')
-                        .fold(dir.to_owned(), |at, part| at.join(part)),
-                    path: dir.join(&normal),
-                    file: path.clone(),
-                };
-                match links.iter().position(|known| {
-                    known.resource == link.resource && known.repository == link.repository
-                }) {
-                    Some(at) => links[at] = link,
-                    None => links.push(link),
-                }
+            listed.push(Listed {
+                resource: resource.clone(),
+                file: label.clone(),
+                local: is_local,
+            });
+            if !resources.contains(&resource.as_str()) {
+                resources.push(resource);
             }
         }
     }
-    // Two links at one path would fight over it, and a link inside another
-    // would be written through it, into wherever that one leads.
-    for (at, link) in links.iter().enumerate() {
-        if let Some(other) = links[..at].iter().find(|other| {
-            inside(&link.path, &other.path, FOLD_CASE) || inside(&other.path, &link.path, FOLD_CASE)
+    if resources.is_empty() {
+        return Ok((Vec::new(), listed));
+    }
+    let mut keys: Vec<(&str, &'static str)> = Vec::new();
+    for (file, name) in [(shared, SHARED), (local, LOCAL)] {
+        for (key, _) in file.iter().flat_map(|file| &file.repositories) {
+            if !keys.iter().any(|(known, _)| known == key) {
+                keys.push((key, name));
+            }
+        }
+    }
+    // A key inside another would put one repository's link inside the
+    // other's, which leads into that repository or its graft.
+    for (key, name) in &keys {
+        if let Some((outer, _)) = keys.iter().find(|(other, _)| {
+            key.strip_prefix(other)
+                .is_some_and(|rest| rest.starts_with('/'))
         }) {
             return Err(invalid(
-                &link.file,
+                &dir.join(name),
                 format!(
-                    "links: the link at {} and the link at {} would overlap; give each link a path of its own",
-                    link.path.display(),
-                    other.path.display()
+                    "links: repository {key:?} is inside repository {outer:?}, so its link would be \
+                     inside the link of {outer:?}; Graft can keep links only for repositories side by side"
                 ),
             ));
         }
     }
-    Ok(links)
-}
-
-/// A link at `normal` in `dir`, written as `written`, must be outside every
-/// repository `keys` names and every directory of grafts, which Graft or a
-/// graft's work writes. The directories on its way are resolved first, but
-/// not the link itself, which leads to a graft or repository by design.
-fn check_link_place(dir: &Path, normal: &Path, written: &str, keys: &[&str]) -> Result<()> {
-    let inside_repository = |key: &str| {
-        anyhow::anyhow!(
-            "the link {written:?} is inside the repository {key:?}; keep it outside every repository"
-        )
-    };
-    let in_grafts = |part: &OsStr| {
-        anyhow::anyhow!(
-            "the link {written:?} is inside {:?}, a directory of grafts; keep it outside it",
-            part.to_string_lossy()
-        )
-    };
-    if let Some(key) = keys
-        .iter()
-        .find(|key| inside(normal, Path::new(key), FOLD_CASE))
-    {
-        return Err(inside_repository(key));
-    }
-    if let Some(part) = normal.iter().find(|part| link_grafts(part)) {
-        return Err(in_grafts(part));
-    }
-    let name = normal.file_name().context("a link needs a name")?;
-    let root = resolve(dir)?;
-    let parent = resolve(&dir.join(normal.parent().unwrap_or(Path::new(""))))?;
-    anyhow::ensure!(
-        inside(&parent, &root, FOLD_CASE),
-        "the link {written:?} leads outside the configuration's directory, to {}, \
-         through a link; keep it inside the directory",
-        parent.display()
-    );
-    let resolved = parent.join(name);
-    for key in keys {
-        if inside(&resolved, &resolve(&dir.join(key))?, FOLD_CASE) {
-            return Err(inside_repository(key));
+    let mut links = Vec::new();
+    for resource in resources {
+        for (key, _) in &keys {
+            let repository = key
+                .split('/')
+                .fold(dir.to_owned(), |at, part| at.join(part));
+            if !present(&repository, ".git") {
+                continue;
+            }
+            let path = LINKS
+                .iter()
+                .copied()
+                .chain([resource])
+                .chain(key.split('/'))
+                .fold(dir.to_owned(), |at, part| at.join(part));
+            links.push(Link {
+                resource: resource.to_owned(),
+                key: (*key).to_owned(),
+                repository,
+                dir: dir.to_owned(),
+                path,
+            });
         }
     }
-    let below = || resolved.iter().skip(root.iter().count());
-    if let Some(part) = below().find(|part| link_grafts(part)) {
-        return Err(in_grafts(part));
-    }
-    anyhow::ensure!(
-        !below().any(git_directory),
-        "the link {written:?} leads into a .git directory through a link, which belongs to Git"
-    );
-    Ok(())
+    Ok((links, listed))
 }
 
 /// Refuse a pattern on more than one line, a hook name Graft could not
@@ -2109,199 +1993,139 @@ mod tests {
     }
 
     #[test]
-    fn links_name_a_path_for_each_repository_a_shared_resource_serves() {
+    fn links_are_kept_under_the_directory_for_each_repository_of_a_listed_resource() {
         let (_tmp, root, app, api) = enclosing();
         write(
             &root,
             SHARED,
-            r#"{"turns": ["stack"],
-                "links": {"stack": {"app": ".graft/stack/app", "services/api": ".graft/stack/api"}},
-                "repositories": {"app": {}, "services/api": {}}}"#,
+            r#"{"turns": ["stack", "database"], "links": ["stack"],
+                "repositories": {"app": {}, "services/api": {}, "gone": {}}}"#,
         );
-        let link = |repository: &Path, path: &str, file: &str| Link {
+        let link = |key: &str, repository: &Path| Link {
             resource: "stack".into(),
+            key: key.into(),
             repository: repository.to_owned(),
-            path: path.split('/').fold(root.clone(), |at, part| at.join(part)),
-            file: root.join(file),
+            dir: root.clone(),
+            path: [".graft", "links", "stack"]
+                .into_iter()
+                .chain(key.split('/'))
+                .fold(root.clone(), |at, part| at.join(part)),
         };
-        let expected = vec![
-            link(&app, ".graft/stack/app", SHARED),
-            link(&api, ".graft/stack/api", SHARED),
-        ];
-        // Every repository below the directory reads them, as does the
-        // directory's own checkout.
+        // A key that names no repository gets no link.
+        let expected = vec![link("app", &app), link("services/api", &api)];
         assert_eq!(Config::read(&app).unwrap().links, expected);
         assert_eq!(Config::read(&api).unwrap().links, expected);
         crate::git::bytes(&root, &["init", "-q", "--template="]).unwrap();
-        assert_eq!(Config::read(&root).unwrap().links, expected);
+        let config = Config::read(&root).unwrap();
+        assert_eq!(config.links, expected);
+        assert_eq!(
+            config.listed_links,
+            [Listed {
+                resource: "stack".into(),
+                file: SHARED.into(),
+                local: false
+            }]
+        );
 
-        // The local file replaces a link by resource and repository, and adds
-        // the others; its repositories and turns count as well.
+        // Lists are joined, each resource once, and the local file's
+        // repositories and turns count as well.
         write(
             &root,
             LOCAL,
-            r#"{"turns": ["database"],
-                "links": {"stack": {"app": "serve/app"}, "database": {"tools": "serve/db"}},
-                "repositories": {"tools": {}}}"#,
+            r#"{"turns": ["web"], "links": ["stack", "web", "database"], "repositories": {"tools": {}}}"#,
         );
+        fs::create_dir(root.join("tools")).unwrap();
+        crate::git::bytes(&root.join("tools"), &["init", "-q", "--template="]).unwrap();
         let config = Config::read(&app).unwrap();
-        let paths: Vec<_> = config
+        let links: Vec<_> = config
             .links
             .iter()
-            .map(|link| {
-                (
-                    link.resource.as_str(),
-                    link.path.strip_prefix(&root).unwrap().to_owned(),
-                    link.file.file_name().unwrap().to_owned(),
-                )
-            })
+            .map(|link| (link.resource.as_str(), link.key.as_str()))
             .collect();
         assert_eq!(
-            paths,
+            links,
             [
-                ("stack", Path::new("serve").join("app"), LOCAL.into()),
-                (
-                    "stack",
-                    Path::new(".graft").join("stack").join("api"),
-                    SHARED.into()
-                ),
-                ("database", Path::new("serve").join("db"), LOCAL.into()),
+                ("stack", "app"),
+                ("stack", "services/api"),
+                ("stack", "tools"),
+                ("web", "app"),
+                ("web", "services/api"),
+                ("web", "tools"),
+                ("database", "app"),
+                ("database", "services/api"),
+                ("database", "tools"),
             ]
         );
-        assert_eq!(config.links[2].repository, root.join("tools"));
+        assert_eq!(config.listed_links.len(), 4);
+        assert!(config.listed_links[1..].iter().all(|listed| listed.local));
     }
 
     #[test]
-    fn links_out_of_place_are_refused_with_the_file_named() {
+    fn links_are_refused_for_an_unshared_resource_or_nested_repositories() {
         let (_tmp, root, app, _api) = enclosing();
-        fs::create_dir_all(root.join("app.graft").join("x")).unwrap();
-        let body = |links: &str| {
-            format!(
-                r#"{{"turns": ["stack"], "links": {links}, "repositories": {{"app": {{}}, "services/api": {{}}}}}}"#
-            )
-        };
-        let mut refused = vec![
-            (r#"{"Stack": {"app": "x"}}"#, "not a resource name"),
-            (r#"{"web": {"app": "x"}}"#, "not listed under turns"),
+        for (body, cause) in [
+            (r#"{"links": "stack"}"#, "invalid type"),
             (
-                r#"{"stack": {"other": "x"}}"#,
-                "not a key under repositories",
-            ),
-            (r#"{"stack": {"../app": "x"}}"#, "relative path below"),
-            (r#"{"stack": {"app": ""}}"#, "relative path inside"),
-            (r#"{"stack": {"app": "/tmp/x"}}"#, "relative path inside"),
-            (r#"{"stack": {"app": "../x"}}"#, "relative path inside"),
-            (r#"{"stack": {"app": "./x"}}"#, "relative path inside"),
-            (r#"{"stack": {"app": "a//x"}}"#, "relative path inside"),
-            (r#"{"stack": {"app": "a\\x"}}"#, "relative path inside"),
-            (r#"{"stack": {"app": "a/x/"}}"#, "relative path inside"),
-            (r#"{"stack": {"app": ".git"}}"#, ".git directory"),
-            (r#"{"stack": {"app": "tools/.git/x"}}"#, ".git directory"),
-            (r#"{"stack": {"app": "app"}}"#, "inside the repository"),
-            (
-                r#"{"stack": {"app": "app/serve"}}"#,
-                "inside the repository",
+                r#"{"turns": ["stack"], "links": ["Stack"]}"#,
+                "not a resource name",
             ),
             (
-                r#"{"stack": {"app": "services/api/x"}}"#,
-                "inside the repository",
+                r#"{"turns": ["web"], "links": ["stack"]}"#,
+                "not listed under turns",
             ),
             (
-                r#"{"stack": {"app": "app.graft/x"}}"#,
-                "a directory of grafts",
+                r#"{"turns": ["stack"], "links": ["stack"], "repositories": {"services": {}, "services/api": {}}}"#,
+                "inside repository \"services\"",
             ),
             (
-                r#"{"stack": {"app": "a/b.GRAFT/x"}}"#,
-                "a directory of grafts",
+                r#"{"turns": ["stack"], "repositories": {"app": {"links": ["stack"]}}}"#,
+                "unknown field",
             ),
-            (r#"{"stack": {"app": "x", "services/api": "x"}}"#, "overlap"),
-            (
-                r#"{"stack": {"app": "x", "services/api": "x/y"}}"#,
-                "overlap",
-            ),
-            (r#"{"stack": []}"#, "link paths keyed by repository"),
-            (r#"{"stack": {"app": 1}}"#, "invalid type"),
-            (r#"{"stack": {"app": "x", "app": "y"}}"#, "defined twice"),
-            (r#"{"stack": {}, "stack": {}}"#, "defined twice"),
-        ];
-        if FOLD_CASE {
-            refused.push((r#"{"stack": {"app": "x/.GIT/y"}}"#, ".git directory"));
-            refused.push((r#"{"stack": {"app": "App/x"}}"#, "inside the repository"));
-        }
-        for (links, cause) in refused {
-            write(&root, SHARED, &body(links));
-            let error = Config::read(&app).expect_err(links);
+        ] {
+            write(&root, SHARED, body);
+            let error = Config::read(&app).expect_err(body);
             let json = crate::api::error_json(&error);
-            assert_eq!(json["code"], "invalid_config", "{links}");
+            assert_eq!(json["code"], "invalid_config", "{body}");
             let message = json["message"].as_str().unwrap();
-            assert!(message.contains(cause), "{links}: {message}");
-            assert_eq!(json["details"]["file"], json!(root.join(SHARED)), "{links}");
+            assert!(message.contains(cause), "{body}: {message}");
+            assert_eq!(json["details"]["file"], json!(root.join(SHARED)), "{body}");
         }
-        // A link that overlaps one in the other file is refused naming the
-        // file of the later one.
-        write(&root, SHARED, &body(r#"{"stack": {"app": "serve"}}"#));
+        // Nested repositories are fine without links, and a name that only
+        // starts like another is not inside it.
         write(
             &root,
-            LOCAL,
-            r#"{"links": {"stack": {"services/api": "serve/api"}}}"#,
+            SHARED,
+            r#"{"turns": ["stack"], "repositories": {"services": {}, "services/api": {}}}"#,
         );
+        assert!(Config::read(&app).unwrap().links.is_empty());
+        write(
+            &root,
+            SHARED,
+            r#"{"turns": ["stack"], "links": ["stack"], "repositories": {"app": {}, "app-two": {}}}"#,
+        );
+        assert_eq!(Config::read(&app).unwrap().links.len(), 1);
+        // A resource the local file lists must be shared by either file.
+        write(&root, LOCAL, r#"{"links": ["web"]}"#);
         let error = Config::read(&app).unwrap_err();
         assert_eq!(
             crate::api::error_json(&error)["details"]["file"],
             json!(root.join(LOCAL))
         );
-        fs::remove_file(root.join(LOCAL)).unwrap();
-        // Only the top level defines links, and `.graft` itself holds no grafts.
-        write(
-            &root,
-            SHARED,
-            r#"{"turns": ["stack"], "repositories": {"app": {"links": {}}}}"#,
-        );
-        let error = Config::read(&app).unwrap_err();
-        assert!(format!("{error:#}").contains("unknown field"), "{error:#}");
-        write(
-            &root,
-            SHARED,
-            &body(r#"{"stack": {"app": ".graft/stack/app"}}"#),
-        );
-        assert_eq!(Config::read(&app).unwrap().links.len(), 1);
     }
 
     #[cfg(unix)]
     #[test]
-    fn a_link_is_checked_where_the_directories_on_its_way_lead() {
+    fn reading_links_looks_only_at_the_files() {
         use std::os::unix::fs::symlink;
         let (_tmp, root, app, _api) = enclosing();
-        let outside = tempfile::tempdir().unwrap();
-        fs::create_dir_all(root.join("app.graft").join("x")).unwrap();
-        fs::create_dir(root.join("tools")).unwrap();
-        symlink(&app, root.join("linked")).unwrap();
-        symlink("app.graft", root.join("grafted")).unwrap();
-        symlink(outside.path(), root.join("out")).unwrap();
-        symlink("nowhere", root.join("dangling")).unwrap();
-        symlink("tools", root.join("kept")).unwrap();
-        let read = |path: &str| {
-            write(
-                &root,
-                SHARED,
-                &json!({"turns": ["stack"], "links": {"stack": {"app": path}}, "repositories": {"app": {}}})
-                    .to_string(),
-            );
-            Config::read(&app)
-        };
-        for (path, cause) in [
-            ("linked/serve", "inside the repository"),
-            ("grafted/x/serve", "a directory of grafts"),
-            ("out/serve", "leads outside the configuration's directory"),
-            ("dangling/serve", "leads nowhere"),
-        ] {
-            let message = format!("{:#}", read(path).expect_err(path));
-            assert!(message.contains(cause), "{path}: {message}");
-        }
-        // A link that already leads into the repository is the link itself,
-        // which is not followed; one on the way that stays outside is.
-        assert!(read("linked").is_ok());
-        let config = read("kept/serve").unwrap();
-        assert_eq!(config.links[0].path, root.join("kept").join("serve"));
+        // Whatever is where the links go, reading the configuration does
+        // not look at it: only a take does.
+        symlink("nowhere", root.join(".graft")).unwrap();
+        write(
+            &root,
+            SHARED,
+            r#"{"turns": ["stack"], "links": ["stack"], "repositories": {"app": {}}}"#,
+        );
+        assert_eq!(Config::read(&app).unwrap().links.len(), 1);
     }
 }

@@ -194,8 +194,9 @@ configuration lists under \"turns\" in a directory above the primary is shared
 by every repository that directory configures. A post-take hook in the
 configuration runs when a turn is newly granted or its grafts change; if it
 fails, the turn is given up and the take refused. Before it runs, a granted
-take points the links the configuration lists for the resource at the
-holder's grafts. Graft does nothing else to the resource.")]
+take points the trusted links the configuration lists for the resource at the
+holder's grafts, and puts them back if the take fails. Graft does nothing else
+to the resource.")]
     Take(api::TurnTake),
     /// Give up the turn on a shared resource, or leave its queue.
     Release(api::TurnRelease),

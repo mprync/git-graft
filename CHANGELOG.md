@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Added
 
-- `links` in `.graftconfig` keeps a link for each repository that follows a shared resource's turn to the holder's grafts, so a development stack can serve them without a hook that rewrites its configuration.
+- `links` in `.graftconfig` keeps a link per repository under `.graft/links/` that follows a shared resource's turn to the holder's grafts, so a development stack can serve them without rewriting its configuration.
 
 ## [0.3.0] - 2026-11-26
 

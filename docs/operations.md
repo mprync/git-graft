@@ -16,7 +16,7 @@ Two JSON files at the root of the primary checkout configure Graft for a project
 - `hooks`: the [commands](#hooks) Graft runs when a graft is added, about to be archived or restored, keyed by a name of up to 64 letters, digits, `-`, `_` or `.`.
 - `turns`, at the top level only: the [shared resources](#share-a-resource-between-repositories) whose turns every repository the file configures shares.
 - `remotes`: names of the primary's remotes that every new graft gets, such as `["origin"]`. See [remotes in a graft](#remotes-in-a-graft).
-- `links`, at the top level only: for a shared resource, a path for each repository that Graft keeps as a link to the turn holder's graft of it. See [links to the holder's grafts](#links-to-the-holders-grafts).
+- `links`, at the top level only: shared resources for which Graft keeps a link per repository to the turn holder's graft of it. See [links to the holder's grafts](#links-to-the-holders-grafts).
 
 ```json
 {
@@ -244,31 +244,32 @@ If a turn state file cannot be read, commands for that resource fail, name the f
 
 ### Links to the holder's grafts
 
-A tool that serves a shared resource, such as a development stack that runs the code of several repositories, has to know which checkout of each repository to serve. Graft can keep a link for each repository at a fixed path, leading to the turn holder's graft of that repository, or to the repository's primary checkout when the holder has no graft of it. The tool names the fixed path and follows the turn without being reconfigured. List the links under `links` at the top level of the directory's configuration, by resource and then by repository, each with a path relative to the directory:
+A tool that serves a shared resource, such as a development stack that runs the code of several repositories, has to know which checkout of each repository to serve. List the resource under `links` at the top level of the directory's configuration, and Graft keeps a link for each repository the configuration names under `repositories` at `.graft/links/<resource>/<repository>` in that directory. A link leads to the turn holder's graft of that repository, or to the repository's primary checkout when the holder has no graft of it. The tool names the fixed path and follows the turn without being reconfigured.
 
 ```json
 {
   "turns": ["stack"],
-  "links": {"stack": {"app": ".graft/stack/app", "services/router": ".graft/stack/router"}},
+  "links": ["stack"],
   "repositories": {"app": {}, "services/router": {}}
 }
 ```
 
-- When `turn take` grants a turn, a renewal included, Graft points each link of the resource at the first of the holder's grafts whose primary is that repository, or else at the repository. It rewrites only a link that leads elsewhere, and creates the directories a link is in. It does this before it records the turn and before the [`post-take` hooks](#hooks-for-turns) run, so the hooks find the links in place. A queued ask changes no link, and neither does a release: the links lead to the last holder's grafts until the next holder is granted the turn.
-- When `remove`, `merge` or `prune --apply` archives a graft that a link leads to, Graft points the link at the graft's primary, so it never leads nowhere.
-- A link is a symbolic link to an absolute path. On Unix Graft replaces it in one step. On Windows it removes the old link and creates a directory link, which needs Developer Mode or a prompt run as administrator.
-- A link exists only after the first granted take. If a tool needs it sooner, create it yourself, for example with `ln -s "$PWD/app" .graft/stack/app`.
-- Graft replaces only links. If anything else is at a link's path, `turn take` refuses with `invalid_config`, naming the path in `details.path`, and changes nothing. Move it aside and take the turn again.
+Here the links are `.graft/links/stack/app` and `.graft/links/stack/services/router`. If the directory is itself a checkout, add `.graft/` to its `.gitignore`.
+
+- Each resource must be listed under `turns` in either file of the directory. `links` lists from `.graftconfig` and `.graftconfig.local` are joined. A repository that does not exist gets no link. While `links` lists any resource, no repository may be inside another, such as `services` and `services/router`, as one link would then be inside the other; the file is refused with `invalid_config`.
+- Links come with the repository's configuration, so they need [trust](#hooks) as remotes do: those `.graftconfig` lists, and those of a `.graftconfig.local` that Git tracks. `git graft hook trust` records them by resource, and `git graft hook list` reports each link with `trusted`. Until then, and after any change to what is listed, a granted take leaves the links as they are and still grants the turn.
+- When `turn take` grants a turn, a renewal included, Graft points each link of the resource at the first of the holder's grafts whose primary is that repository, or else at the repository. It does this before it records the turn and before the [`post-take` hooks](#hooks-for-turns) run, so the hooks find the links in place. A queued ask neither looks at nor changes any link, and neither does a release: the links lead to the last holder's grafts until the next holder is granted the turn.
+- Before it changes any link, a granted take checks them all: every directory on the way from the configuration's directory must be a directory or missing, and the link a link or missing. Anything else, such as a file, a directory where the link goes or a link on the way, refuses the take with `invalid_config`, naming the path in `details.path`, and changes nothing. Move it aside and take the turn again. If a link then cannot be written, the turn state cannot be recorded or a `post-take` hook fails, every link goes back to where it led before the take, and one that did not exist is removed.
+- When `remove`, `merge` or `prune --apply` archives a graft that a link leads to, Graft points the link at the graft's primary, so it never leads nowhere. It does this after the command's own locks are released, holding the lock of the project that keeps the turn, as `take` does.
+- A link is a symbolic link to an absolute path. Graft makes the new link at a temporary name and then replaces the old one with it, so on Unix the link is never missing. On Windows it is a directory link, which needs Developer Mode or a prompt run as administrator; without them the old link stays as it was.
+- A link exists only after the first granted, trusted take.
 - A tool reads where a link leads when it opens the path. One that opened it before the turn changed hands, such as a container whose bind mount was resolved when it was created, keeps serving the old checkout until it opens the path again, for example when the container is recreated.
 
-Links come from the configuration of the project that keeps the turn, as `post-take` hooks do. `.graftconfig.local` replaces the link that `.graftconfig` gives a resource and repository, and adds the others. `links` is read only at the top level of a file; inside an entry of `repositories` it is an unknown key. A file is refused with `invalid_config`, naming it, when:
+The reply of a granted take on a resource with links has `links`, an entry for each link in the order of `repositories`. `status` is `pointed` when the take changed it, `kept` when it already led there, both with `target`, or `skipped` with `reason` `untrusted` and a `hint`:
 
-- a resource is not listed under `turns`, or a repository not under `repositories`, in either file of the directory;
-- a path is not relative, has a part that is empty, `.` or `..`, or has a part named `.git`;
-- a path is a repository named under `repositories` or inside one, or is inside a directory whose name ends in `.graft`. A directory named just `.graft` is allowed: Graft names a repository's grafts after the repository, so it never keeps grafts there. Graft follows the links on the way to the path before it checks, though not the link itself, and on macOS and Windows it ignores case;
-- two links have the same path, or one is inside another.
-
-Links run nothing, so they need no [trust](#hooks), and an MCP host writes them whether or not it was started with `--allow-exec`.
+```json
+{"repository": "app", "path": "/work/.graft/links/stack/app", "status": "pointed", "target": "/work/app.graft/fix-parser"}
+```
 
 With Docker Compose, mount each link and recreate the containers when the turn changes hands:
 
@@ -276,7 +277,7 @@ With Docker Compose, mount each link and recreate the containers when the turn c
 services:
   app:
     volumes:
-      - ./.graft/stack/app:/app
+      - ./.graft/links/stack/app:/app
 ```
 
 ```json
@@ -295,7 +296,7 @@ A hook is a command that Graft runs at a point in a graft's life, defined in the
 
 `argv` is the program and its arguments. An event can have any number of hooks, which run in the order the configuration gives; once one fails, the rest for that command are skipped. `git graft hook list` shows them. There is no command or MCP tool that defines a hook: edit the files.
 
-A hook that comes with the repository runs only once you have trusted it: every hook in `.graftconfig`, and every hook in `.graftconfig.local` once Git tracks that file. `git graft hook list` shows such a hook with `"trusted": false` until then. Read the hooks, then run `git graft hook trust`. It records a SHA-256 digest of those hooks, each by event, name and `argv`, in `.git/graft/trusted-hooks.json`, and replies with the hooks it trusted and the digest. For a hook whose program is a path relative to a [directory above the checkout](#configure-several-repositories-from-one-directory), the digest also covers the resolved path and the program's contents, so an edit to the program needs trust again. Until you trust them, and again after any change to a hook in those files, such as one merged from a graft or pulled from a remote, `add`, `remove`, `merge`, `restore`, `prune --apply` and `turn take` refuse with `hooks_untrusted` before they run or change anything, when they would run a hook for their event. A `prune` preview runs no hook, so it needs no trust. What an untracked `.graftconfig.local` adds, replaces or turns off is your own and needs no trust, except on Windows in a [directory above the checkout](#configure-several-repositories-from-one-directory); `include` patterns run nothing and need none either. The [remotes](#remotes-in-a-graft) those files list need trust by the same rule, recorded as a digest of their own beside the hooks' digest, which is the same as before Graft read remotes: an untrusted remote is left out of a new graft rather than refused, and a change to the remotes does not stop the hooks. There is no MCP tool that trusts hooks or remotes. See [safety](safety.md).
+A hook that comes with the repository runs only once you have trusted it: every hook in `.graftconfig`, and every hook in `.graftconfig.local` once Git tracks that file. `git graft hook list` shows such a hook with `"trusted": false` until then. Read the hooks, then run `git graft hook trust`. It records a SHA-256 digest of those hooks, each by event, name and `argv`, in `.git/graft/trusted-hooks.json`, and replies with the hooks it trusted and the digest. For a hook whose program is a path relative to a [directory above the checkout](#configure-several-repositories-from-one-directory), the digest also covers the resolved path and the program's contents, so an edit to the program needs trust again. Until you trust them, and again after any change to a hook in those files, such as one merged from a graft or pulled from a remote, `add`, `remove`, `merge`, `restore`, `prune --apply` and `turn take` refuse with `hooks_untrusted` before they run or change anything, when they would run a hook for their event. A `prune` preview runs no hook, so it needs no trust. What an untracked `.graftconfig.local` adds, replaces or turns off is your own and needs no trust, except on Windows in a [directory above the checkout](#configure-several-repositories-from-one-directory); `include` patterns run nothing and need none either. The [remotes](#remotes-in-a-graft) those files list need trust by the same rule, recorded as a digest of their own beside the hooks' digest, which is the same as before Graft read remotes: an untrusted remote is left out of a new graft rather than refused, and a change to the remotes does not stop the hooks. The resources they list under [`links`](#links-to-the-holders-grafts) need trust the same way, with a third digest: an untrusted link is left unwritten. There is no MCP tool that trusts hooks or remotes. See [safety](safety.md).
 
 | Event | When the hook runs |
 | --- | --- |
@@ -379,7 +380,7 @@ A `post-take` hook acts on the resource for the holder that has just been grante
 printf '%s\n' "$GIT_GRAFT_TURN_GRAFTS" > stack-grafts.txt
 ```
 
-The reply carries the `hooks` array. If a `post-take` hook fails, the turn is given up again, the rest are skipped, and `turn take` refuses with `hook_failed`, with `details.resource`, `details.holder` and `details.hooks`. Trust applies as for other hooks, but only to a `take` that would run one: after a trusted `post-take` hook is edited, a renewal and a queued ask still succeed, and the `take` that would run the hook refuses with `hooks_untrusted`, changing nothing, until you trust it again. An MCP host runs them only with `--allow-exec`, reporting them as skipped otherwise while the turn is still taken. A waiting `take` runs them once, when it is granted.
+The reply carries the `hooks` array. If a `post-take` hook fails, the turn is given up again, the [links](#links-to-the-holders-grafts) go back to where they led, the rest are skipped, and `turn take` refuses with `hook_failed`, with `details.resource`, `details.holder` and `details.hooks`. Trust applies as for other hooks, but only to a `take` that would run one: after a trusted `post-take` hook is edited, a renewal and a queued ask still succeed, and the `take` that would run the hook refuses with `hooks_untrusted`, changing nothing, until you trust it again. An MCP host runs them only with `--allow-exec`, reporting them as skipped otherwise while the turn is still taken. A waiting `take` runs them once, when it is granted.
 
 ## Merge and recover
 

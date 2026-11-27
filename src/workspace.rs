@@ -643,14 +643,13 @@ fn receipt(p: &Project, r: &Record) -> Result<Value> {
     with_attempts(p, r, value)
 }
 
-/// After `remove` or `merge` replied `reply` about the graft `name`, point
-/// the links that led to it at its primary again if it was archived.
-fn unlink_archived(p: &Project, name: &str, lease: &str, reply: &Value) {
-    if reply["removed"] == true
-        && let Ok(r) = registry::load_retired(p, name, lease)
-    {
-        links::point_back(&p.repo, &r.path);
-    }
+/// The path the graft `name` had, when `remove` or `merge` replied `reply`
+/// about archiving it.
+fn archived_path(p: &Project, name: &str, lease: &str, reply: &Value) -> Option<PathBuf> {
+    (reply["removed"] == true)
+        .then(|| registry::load_retired(p, name, lease).ok())
+        .flatten()
+        .map(|r| r.path)
 }
 
 fn retire(p: &Project, name: &str, lease: &str, status: Status) -> Result<Value> {
@@ -1155,14 +1154,22 @@ pub(crate) fn run_found(
         Command::Drop(a) => {
             let mut hooks = hook::Runner::new(hooks, &lock, builds);
             let dropped = drop_workspace(p, a, &mut hooks)?;
-            unlink_archived(p, &a.name, &a.lease, &dropped);
-            return Ok(hooks.report(dropped));
+            let archived = archived_path(p, &a.name, &a.lease, &dropped);
+            let reply = hooks.report(dropped);
+            // Links are pointed back under the lock of the project that
+            // keeps the turn, so this one's locks are released first.
+            drop(lock);
+            links::point_back(&p.repo, archived.iter());
+            return Ok(reply);
         }
         Command::Land(a) => {
             let mut hooks = hook::Runner::new(hooks, &lock, builds);
             let landed = land_workspace(p, a, &mut hooks)?;
-            unlink_archived(p, &a.name, &a.lease, &landed);
-            return Ok(hooks.report(landed));
+            let archived = archived_path(p, &a.name, &a.lease, &landed);
+            let reply = hooks.report(landed);
+            drop(lock);
+            links::point_back(&p.repo, archived.iter());
+            return Ok(reply);
         }
         Command::Restore(a) => {
             // Read first, so a configuration Graft cannot read refuses the
@@ -1229,9 +1236,11 @@ pub(crate) fn run_found(
                 .map(|days| registry::archives_to_purge(p, days))
                 .transpose()?;
             let retained = registry::prune_with(p, a.apply, &mut |r| hooks.before_prune(p, r))?;
-            for archived in retained.iter().filter(|r| r.reason == Some("archived")) {
-                links::point_back(&p.repo, &archived.path);
-            }
+            let archived: Vec<PathBuf> = retained
+                .iter()
+                .filter(|r| r.reason == Some("archived"))
+                .map(|r| r.path.clone())
+                .collect();
             let cache = if !a.purge_cache {
                 json!({"requested":false,"purged":false})
             } else {
@@ -1257,6 +1266,11 @@ pub(crate) fn run_found(
             let mut pruned =
                 json!({"applied":a.apply,"retained":retained,"cache":cache,"archives":archives});
             with_damaged(p, &mut pruned)?;
+            // Links are pointed back under the lock of the project that
+            // keeps the turn, so this one's locks are released first.
+            drop(hooks);
+            drop(lock);
+            links::point_back(&p.repo, archived.iter());
             // Prune has archived grafts by now, so a purge that fails carries
             // the whole reply, with the archives it did delete.
             if let Some(error) = failed {
