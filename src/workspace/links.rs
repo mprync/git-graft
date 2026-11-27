@@ -49,32 +49,43 @@ fn occupied(link: &Link, path: &Path, what: &str) -> anyhow::Error {
     )
 }
 
+/// What is in the way of a link at `path` below `dir`, if anything: the
+/// first entry on the way that is not a directory, such as a file or a link,
+/// or an entry at `path` that is not a link, with what it should have been.
+/// A missing entry is in nobody's way.
+fn blocked(dir: &Path, path: &Path) -> Result<Option<(PathBuf, &'static str)>> {
+    let below = path.strip_prefix(dir)?;
+    let parts: Vec<_> = below.iter().collect();
+    let mut at = dir.to_owned();
+    for (index, part) in parts.iter().enumerate() {
+        at.push(part);
+        let last = index + 1 == parts.len();
+        let meta = match fs::symlink_metadata(&at) {
+            Ok(meta) => meta,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(anyhow::Error::from(error))
+                    .with_context(|| format!("inspect {}", at.display()));
+            }
+        };
+        match (last, meta) {
+            (true, meta) if is_link(&meta) => {}
+            (false, meta) if meta.file_type().is_dir() => {}
+            (true, _) => return Ok(Some((at, "a link"))),
+            (false, _) => return Ok(Some((at, "a directory"))),
+        }
+    }
+    Ok(None)
+}
+
 /// Refuse, before any link changes, when something Graft did not make is in
 /// the way of one of `links`: every directory from the configuration's
 /// directory down to the link must be a directory or missing, not a link or
 /// a file, and the link itself must be a link or missing.
 fn require_links(links: &[&Link]) -> Result<()> {
-    let inspect = |path: &Path| match fs::symlink_metadata(path) {
-        Ok(meta) => Ok(Some(meta)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => {
-            Err(anyhow::Error::from(error)).with_context(|| format!("inspect {}", path.display()))
-        }
-    };
     for link in links {
-        let below = link.path.strip_prefix(&link.dir)?;
-        let mut at = link.dir.clone();
-        let parts: Vec<_> = below.iter().collect();
-        for (index, part) in parts.iter().enumerate() {
-            at.push(part);
-            let last = index + 1 == parts.len();
-            match inspect(&at)? {
-                None => break,
-                Some(meta) if last && is_link(&meta) => {}
-                Some(meta) if !last && meta.file_type().is_dir() => {}
-                Some(_) if last => return Err(occupied(link, &at, "a link")),
-                Some(_) => return Err(occupied(link, &at, "a directory")),
-            }
+        if let Some((at, what)) = blocked(&link.dir, &link.path)? {
+            return Err(occupied(link, &at, what));
         }
     }
     Ok(())
@@ -88,16 +99,19 @@ fn repository(link: &Link) -> PathBuf {
 /// Where each link led before a `take` pointed it, so that a take that
 /// fails, or whose `post-take` hook fails, can put every link back.
 #[derive(Default)]
-pub(super) struct Undo(Vec<(PathBuf, Option<PathBuf>)>);
+pub(super) struct Undo(Vec<(PathBuf, PathBuf, Option<PathBuf>)>);
 
 impl Undo {
     /// Point each link back where it led, and remove one that did not
     /// exist. Best effort: the take is already failing.
     pub(super) fn undo(self) {
-        for (path, previous) in self.0.into_iter().rev() {
+        for (dir, path, previous) in self.0.into_iter().rev() {
             let _ = match previous {
-                Some(target) => point(&path, &target),
-                None => remove_link(&path).map_err(anyhow::Error::from),
+                Some(target) => point(&dir, &path, &target),
+                None => match blocked(&dir, &path) {
+                    Ok(None) => remove_link(&path).map_err(anyhow::Error::from),
+                    _ => Ok(()),
+                },
             };
         }
     }
@@ -144,8 +158,8 @@ pub(super) fn point_all<'a>(
         let status = if previous.as_ref() == Some(&target) {
             "kept"
         } else {
-            undo.0.push((link.path.clone(), previous));
-            if let Err(error) = point(&link.path, &target) {
+            undo.0.push((link.dir.clone(), link.path.clone(), previous));
+            if let Err(error) = point(&link.dir, &link.path, &target) {
                 undo.undo();
                 return Err(error);
             }
@@ -192,16 +206,36 @@ pub(super) fn point_back<'a>(primary: &Path, archived: impl Iterator<Item = &'a 
     for link in &config.links {
         let led = fs::read_link(&link.path)
             .is_ok_and(|target| archived.clone().any(|path| *path == target));
-        if led && require_links(&[link]).is_ok() {
-            let _ = point(&link.path, &repository(link));
+        if led {
+            let _ = point(&link.dir, &link.path, &repository(link));
         }
     }
 }
 
-/// Point the link at `path` at `target`, creating the directories it is in.
-fn point(path: &Path, target: &Path) -> Result<()> {
+/// Point the link at `path` below `dir` at `target`, creating the
+/// directories it is in. The way is checked again just before the
+/// directories are made and again before the link is written, so a link
+/// put on the way since an earlier check is never followed.
+fn point(dir: &Path, path: &Path, target: &Path) -> Result<()> {
+    let clear = || -> Result<()> {
+        match blocked(dir, path)? {
+            None => Ok(()),
+            Some((at, what)) => Err(api::fault(
+                "invalid_config",
+                format!(
+                    "{} is not {what}, so Graft did not point the link {}. \
+                     Graft keeps only its own links under .graft/links; move it aside, then take the turn again",
+                    at.display(),
+                    path.display()
+                ),
+                json!({"path": at}),
+            )),
+        }
+    };
+    clear()?;
     let parent = path.parent().context("a link needs a directory")?;
     fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+    clear()?;
     replace(path, target)
         .with_context(|| format!("point the link {} at {}", path.display(), target.display()))
 }
@@ -267,4 +301,46 @@ fn replace(path: &Path, target: &Path) -> Result<()> {
 #[cfg(not(any(unix, windows)))]
 fn replace(_: &Path, _: &Path) -> Result<()> {
     anyhow::bail!("links are unsupported on this platform")
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::symlink;
+
+    #[test]
+    fn a_link_on_the_way_is_never_followed_when_a_link_is_written() -> Result<()> {
+        let tmp = tempfile::tempdir()?;
+        let dir = dunce::canonicalize(tmp.path())?;
+        let repository = dir.join("app");
+        fs::create_dir_all(repository.join("x"))?;
+        let path = dir.join(".graft/links/stack/app/x");
+        let target = dir.join("elsewhere");
+        // Clear, the link and its directories are made.
+        point(&dir, &path, &target)?;
+        assert_eq!(fs::read_link(&path)?, target);
+        // A link put on the way since is refused, and nothing is written
+        // where it leads.
+        fs::remove_file(&path)?;
+        fs::remove_dir(path.parent().context("parent")?)?;
+        symlink(&repository, path.parent().context("parent")?)?;
+        let error = point(&dir, &path, &target).unwrap_err();
+        let json = api::error_json(&error);
+        assert_eq!(json["code"], "invalid_config");
+        assert_eq!(
+            json["details"]["path"],
+            json!(dir.join(".graft/links/stack/app"))
+        );
+        assert!(repository.join("x").is_dir());
+        assert!(fs::read_link(repository.join("x")).is_err());
+        // Undoing a link through it removes nothing there either.
+        Undo(vec![(dir.clone(), path.clone(), None)]).undo();
+        assert!(repository.join("x").is_dir());
+        // Nor is a link that is not Graft's own replaced by a file.
+        fs::remove_file(path.parent().context("parent")?)?;
+        fs::create_dir_all(&path)?;
+        assert!(point(&dir, &path, &target).is_err());
+        assert!(path.is_dir());
+        Ok(())
+    }
 }

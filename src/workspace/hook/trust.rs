@@ -125,11 +125,13 @@ impl Gate {
                 .any(|remote| remote.local && remote.name == name)
     }
 
-    /// The resources whose links need trust, each as a pair of a file that
-    /// needs trust and lists it and the resource: one pair for each such
-    /// file that lists it. The paths are Graft's own, so the names cover
-    /// what is written.
-    pub(crate) fn links<'a>(&self, config: &'a Config) -> Vec<(&'a str, &'a str)> {
+    /// The links that need trust, each as a triple of a file that needs
+    /// trust and lists the resource, the resource, and a repository key it
+    /// is kept for: one for each such file and each key under
+    /// `repositories`, whether or not that repository exists yet. The paths
+    /// follow from these, so a new resource, file or repository needs trust
+    /// again.
+    pub(crate) fn links<'a>(&self, config: &'a Config) -> Vec<(&'a str, &'a str, &'a str)> {
         let mut resources: Vec<&str> = Vec::new();
         for listed in &config.listed_links {
             if !resources.contains(&listed.resource.as_str()) {
@@ -140,13 +142,15 @@ impl Gate {
             .into_iter()
             .filter(|resource| self.link_needs_trust(config, resource))
             .flat_map(|resource| {
+                config.listed_links.iter().filter(move |listed| {
+                    listed.resource == resource && (!listed.local || self.local)
+                })
+            })
+            .flat_map(|listed| {
                 config
-                    .listed_links
+                    .link_keys
                     .iter()
-                    .filter(move |listed| {
-                        listed.resource == resource && (!listed.local || self.local)
-                    })
-                    .map(|listed| (listed.file.as_str(), listed.resource.as_str()))
+                    .map(move |key| (listed.file.as_str(), listed.resource.as_str(), key.as_str()))
             })
             .collect()
     }
@@ -301,16 +305,16 @@ pub(crate) fn remotes_trusted(state: &Path, remotes: &[(&str, &str)]) -> Result<
 }
 
 /// The digest of the links that need trust, `links`, as [`Gate::links`]
-/// gives them: (file, resource) pairs, in order, recorded apart from the
-/// other digests.
-fn links_digest(links: &[(&str, &str)]) -> String {
+/// gives them: (file, resource, repository key) triples, in order, recorded
+/// apart from the other digests.
+fn links_digest(links: &[(&str, &str, &str)]) -> String {
     let bytes = serde_json::to_vec(&json!({"links": links})).expect("link names serialize");
     hex(&Sha256::digest(&bytes))
 }
 
 /// Whether the links that need trust, `links`, are the ones the record in
 /// `state` trusts. With none, there is nothing to trust.
-pub(crate) fn links_trusted(state: &Path, links: &[(&str, &str)]) -> Result<bool> {
+pub(crate) fn links_trusted(state: &Path, links: &[(&str, &str, &str)]) -> Result<bool> {
     if links.is_empty() {
         return Ok(true);
     }
@@ -400,7 +404,12 @@ pub(crate) fn trust(p: &Project) -> Result<Value> {
     let due = gate.remotes(&config);
     let names = remote_names(&due);
     let links = gate.links(&config);
-    let resources = remote_names(&links);
+    let mut resources: Vec<&str> = Vec::new();
+    for (_, resource, _) in &links {
+        if !resources.contains(resource) {
+            resources.push(resource);
+        }
+    }
     let hooks: Vec<Value> = gated.iter().map(|hook| hook.describe()).collect();
     let record = Record {
         sha256: digest(&gated),
@@ -799,18 +808,30 @@ mod tests {
         crate::git::bytes(primary, &["init", "-q", "--template="])?;
         fs::write(
             primary.join(SHARED),
-            r#"{"turns": ["stack", "web"], "links": ["stack"]}"#,
+            r#"{"turns": ["stack", "web"], "links": ["stack"], "repositories": {"app": {}, "gone": {}}}"#,
         )?;
         fs::write(primary.join(LOCAL), r#"{"links": ["web"]}"#)?;
         let config = Config::read(primary)?;
-        // The untracked local file's resource is the person's own.
+        // The untracked local file's resource is the person's own. Every
+        // key counts, even one that names no repository yet.
         let untracked = Gate::of(&config)?;
-        assert_eq!(untracked.links(&config), [(SHARED, "stack")]);
+        assert_eq!(
+            untracked.links(&config),
+            [(SHARED, "stack", "app"), (SHARED, "stack", "gone")]
+        );
         assert!(untracked.link_needs_trust(&config, "stack"));
         assert!(!untracked.link_needs_trust(&config, "web"));
         crate::git::bytes(primary, &["add", "--", LOCAL])?;
         let tracked = Gate::of(&config)?;
-        assert_eq!(tracked.links(&config), [(SHARED, "stack"), (LOCAL, "web")]);
+        assert_eq!(
+            tracked.links(&config),
+            [
+                (SHARED, "stack", "app"),
+                (SHARED, "stack", "gone"),
+                (LOCAL, "web", "app"),
+                (LOCAL, "web", "gone"),
+            ]
+        );
 
         let state = primary.join("state");
         fs::create_dir(&state)?;
@@ -820,7 +841,7 @@ mod tests {
         let record = Record {
             sha256: digest(&[]),
             hooks: Vec::new(),
-            remotes_sha256: Some(remotes_digest(&[(SHARED, "stack")])),
+            remotes_sha256: None,
             remotes: Vec::new(),
             links_sha256: Some(links_digest(&links)),
             links: Vec::new(),
@@ -828,8 +849,22 @@ mod tests {
         fs::write(state.join(FILE), serde_json::to_vec(&record)?)?;
         assert!(links_trusted(&state, &links)?);
         assert!(!links_trusted(&state, &links[..1])?);
-        // The same names as remotes are not the same digest.
-        assert_ne!(links_digest(&links[..1]), remotes_digest(&links[..1]));
+
+        // A repository added under `repositories` needs trust again.
+        fs::write(
+            primary.join(SHARED),
+            r#"{"turns": ["stack", "web"], "links": ["stack"], "repositories": {"app": {}, "gone": {}, "other": {}}}"#,
+        )?;
+        let grown = Config::read(primary)?;
+        assert!(!links_trusted(&state, &Gate::of(&grown)?.links(&grown))?);
+        // So does the same key under another resource, or from another file.
+        for changed in [
+            links_digest(&[(SHARED, "web", "app")]),
+            links_digest(&[(LOCAL, "stack", "app")]),
+            links_digest(&[(SHARED, "stack", "api")]),
+        ] {
+            assert_ne!(changed, links_digest(&[(SHARED, "stack", "app")]));
+        }
         Ok(())
     }
 }
