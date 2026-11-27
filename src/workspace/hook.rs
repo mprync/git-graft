@@ -125,6 +125,18 @@ pub(crate) fn list(primary: &Path, state: &Path) -> Result<Value> {
             })
             .collect();
     }
+    // So do the links a granted take points.
+    if !config.links.is_empty() {
+        let trusted = trust::links_trusted(state, &gate.links(&config))?;
+        listed["links"] = config
+            .links
+            .iter()
+            .map(|link| {
+                json!({"resource": link.resource, "repository": link.key, "path": link.path,
+                       "trusted": trusted || !gate.link_needs_trust(&config, &link.resource)})
+            })
+            .collect();
+    }
     Ok(listed)
 }
 

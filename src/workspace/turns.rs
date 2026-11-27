@@ -29,7 +29,7 @@ use uuid::Uuid;
 
 use super::{
     hook::{self, Event, Policy},
-    registry,
+    links, registry,
 };
 use crate::{
     api, cache,
@@ -525,11 +525,14 @@ fn grafts_at(paths: &[PathBuf], liveness: &Liveness<'_>) -> Result<Vec<Graft>> {
 }
 
 /// `turn take`, asked once, for the primary at `primary` whose own project
-/// is at `own`. When it grants a turn the holder did not hold, or changes
-/// the grafts of one it holds, the `post-take` hooks of the project that
-/// keeps the turn run, with no lock held; if one fails, the turn is given up
-/// again and the take refused. `hooks` says whether the caller may run them.
-/// Only a take that would run them requires the hooks to be trusted.
+/// is at `own`. A granted take points the links the configuration of the
+/// project that keeps the turn lists for the resource at the holder's
+/// grafts, once trusted, and puts them back if the take or its hooks fail.
+/// When it grants a turn the holder did not hold, or changes the
+/// grafts of one it holds, that project's `post-take` hooks run, with no
+/// lock held; if one fails, the turn is given up again and the take refused.
+/// `hooks` says whether the caller may run them. Only a take that would run
+/// them requires the hooks to be trusted.
 pub(super) fn take(
     primary: &Path,
     own: Paths,
@@ -552,6 +555,12 @@ pub(super) fn take(
     // The project that keeps the turn defines what runs when it is taken.
     let config = Config::read(&p.repo)?;
     let post_take = config.hooks_for(Event::PostTake);
+    // Its links follow the turn: those of this resource.
+    let linked: Vec<_> = config
+        .links
+        .iter()
+        .filter(|link| link.resource == args.resource)
+        .collect();
     let liveness = Liveness::new(&p);
     let who = Party {
         name: args.holder.clone(),
@@ -581,13 +590,41 @@ pub(super) fn take(
     if changed {
         hook::trust::require(&p, &config, Event::PostTake, hooks)?;
     }
-    if turn != stored {
-        write(&p, &args.resource, &turn)?;
+    // A granted take, a renewal too, points the links at the holder's
+    // grafts before the turn is recorded and its hooks run, so the hooks
+    // find them in place. A queued ask leaves them alone. Untrusted links
+    // stay as they are, and the take goes on without them.
+    let mut undo = links::Undo::default();
+    let mut pointed = None;
+    if granted
+        && !linked.is_empty()
+        && let Some(holder) = &turn.holder
+    {
+        if hook::trust::links_untrusted(&p, &config, &args.resource)? {
+            pointed = Some(links::skipped(&linked));
+        } else {
+            let grafts = holder.who.grafts.iter();
+            let (entries, done) = links::point_all(
+                &linked,
+                grafts.map(|graft| (graft.project.as_path(), graft.path.as_path())),
+            )?;
+            pointed = Some(entries);
+            undo = done;
+        }
+    }
+    if turn != stored
+        && let Err(error) = write(&p, &args.resource, &turn)
+    {
+        undo.undo();
+        return Err(error);
     }
     let mut reply = turn.describe(&args.resource);
     reply["granted"] = json!(granted);
     if !granted {
         reply["position"] = json!(turn.position(&args.holder));
+    }
+    if let Some(entries) = pointed {
+        reply["links"] = json!(entries);
     }
     let grafts: Vec<PathBuf> = turn
         .holder
@@ -615,6 +652,8 @@ pub(super) fn take(
     let entries = hook::after_take(hooks, &post_take, &taken);
     if entries.iter().any(|entry| entry["status"] == "failed") {
         let (p, _lock) = Project::open_at(place, false)?;
+        // The links lead where they did before the take.
+        undo.undo();
         let liveness = Liveness::new(&p);
         let mut turn = read(&p, &args.resource)?;
         if turn.release(crate::registry::now(), &args.holder, &who.lease, &|party| {
@@ -1445,6 +1484,362 @@ mod tests {
         trust()?;
         assert_eq!(f.ask(&f.api, "stack", "agent-2", None)?["granted"], true);
         assert_eq!(ran(), "agent-1\nagent-2\n");
+        Ok(())
+    }
+
+    /// Give `repo` a first commit, so grafts can be added from it.
+    #[cfg(unix)]
+    fn commit(repo: &Path) -> Result<()> {
+        for (key, value) in [
+            ("user.name", "Turn Fixture"),
+            ("user.email", "turns@example.invalid"),
+            ("commit.gpgsign", "false"),
+        ] {
+            crate::git::bytes(repo, &["config", key, value])?;
+        }
+        fs::write(repo.join("README.md"), "readme\n")?;
+        crate::git::bytes(repo, &["add", "-A"])?;
+        crate::git::bytes(repo, &["commit", "-qm", "base"])?;
+        Ok(())
+    }
+
+    /// Add the graft `name` of `repo`, and return its path and lease.
+    #[cfg(unix)]
+    fn add(repo: &Path, name: &str) -> Result<(PathBuf, String)> {
+        let added = crate::workspace::run(
+            repo,
+            crate::workspace::Command::Spawn(serde_json::from_value(json!({"name": name}))?),
+        )?;
+        let path = dunce::canonicalize(added["path"].as_str().context("path")?)?;
+        Ok((path, added["lease"].as_str().context("lease")?.to_owned()))
+    }
+
+    /// Ask for the turn on `stack` from `repo`, naming `grafts`.
+    #[cfg(unix)]
+    fn ask_with(repo: &Path, who: &str, grafts: &[&Path]) -> Result<Value> {
+        super::take(
+            repo,
+            Project::paths(repo)?,
+            &api::TurnTake {
+                resource: "stack".into(),
+                holder: who.into(),
+                lease: lease(who),
+                pid: None,
+                grafts: grafts.iter().map(|path| path.to_path_buf()).collect(),
+                wait: 0,
+                ttl: None,
+            },
+            Policy::Run,
+        )
+    }
+
+    /// Where Graft keeps the link of repository `key` for `stack` in `root`.
+    #[cfg(unix)]
+    fn link_of(root: &Path, key: &str) -> PathBuf {
+        key.split('/')
+            .fold(root.join(".graft/links/stack"), |at, part| at.join(part))
+    }
+
+    /// Write the configuration `body` with `stack` shared and linked for
+    /// `repositories`, as the root's untracked local file, which needs no trust.
+    #[cfg(unix)]
+    fn configure_links(root: &Path, repositories: &[&str], extra: Value) -> Result<()> {
+        let mut body = json!({
+            "turns": ["stack"],
+            "links": ["stack"],
+            "repositories": repositories.iter().map(|key| (key.to_string(), json!({}))).collect::<serde_json::Map<_, _>>(),
+        });
+        for (key, value) in extra.as_object().into_iter().flatten() {
+            body[key] = value.clone();
+        }
+        fs::write(root.join(crate::config::LOCAL), body.to_string())?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn links_lead_to_the_holder_s_graft_of_each_repository_or_to_the_repository() -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let f = Fixture::new()?;
+        commit(&f.app)?;
+        commit(&f.api)?;
+        let (app_link, api_link) = (link_of(&f.root, "app"), link_of(&f.root, "api"));
+        // The hook records where both links lead when it runs.
+        let log = f.root.join("hook.log");
+        let script = f.root.join("switch");
+        fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\nprintf '%s %s\\n' \"$(readlink '{}')\" \"$(readlink '{}')\" >> '{}'\n",
+                app_link.display(),
+                api_link.display(),
+                log.display()
+            ),
+        )?;
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755))?;
+        configure_links(
+            &f.root,
+            &["app", "api"],
+            json!({"hooks": {"switch": {"event": "post-take", "argv": [script]}}}),
+        )?;
+        let (app_graft, _) = add(&f.app, "fix")?;
+        let (api_graft, _) = add(&f.api, "fix")?;
+        let leads = |link: &Path| fs::read_link(link).ok();
+        let ran = || fs::read_to_string(&log).unwrap_or_default();
+
+        // A holder with a graft of app only: app's link leads to it, api's to api.
+        let granted = ask_with(&f.app, "agent-1", &[&app_graft])?;
+        assert_eq!(granted["granted"], true);
+        assert_eq!(
+            granted["links"],
+            // In the order the configuration names them; JSON objects here
+            // are written in key order.
+            json!([
+                {"repository": "api", "path": api_link, "status": "pointed", "target": f.api},
+                {"repository": "app", "path": app_link, "status": "pointed", "target": app_graft},
+            ])
+        );
+        assert_eq!(leads(&app_link), Some(app_graft.clone()));
+        assert_eq!(leads(&api_link), Some(f.api.clone()));
+        // The hook found them in place.
+        assert_eq!(
+            ran(),
+            format!("{} {}\n", app_graft.display(), f.api.display())
+        );
+
+        // A queued ask points no link and looks at none, even with
+        // something else where one goes.
+        fs::remove_file(&api_link)?;
+        fs::create_dir(&api_link)?;
+        let queued = ask_with(&f.api, "agent-2", &[&api_graft])?;
+        assert_eq!(queued["granted"], false);
+        assert!(queued.get("links").is_none());
+        assert_eq!(leads(&app_link), Some(app_graft.clone()));
+        fs::remove_dir(&api_link)?;
+
+        // Naming other grafts points the links again, before the hook runs.
+        ask_with(&f.api, "agent-1", &[&api_graft])?;
+        assert_eq!(leads(&app_link), Some(f.app.clone()));
+        assert_eq!(leads(&api_link), Some(api_graft.clone()));
+        assert!(ran().ends_with(&format!("{} {}\n", f.app.display(), api_graft.display())));
+
+        // A renewal puts back a link that is missing and keeps the others.
+        fs::remove_file(&app_link)?;
+        let renewed = ask_with(&f.api, "agent-1", &[])?;
+        assert!(renewed.get("hooks").is_none());
+        assert_eq!(renewed["links"][0]["status"], "kept");
+        assert_eq!(renewed["links"][1]["status"], "pointed");
+        assert_eq!(leads(&app_link), Some(f.app.clone()));
+
+        // Release leaves the links; the next holder gets them.
+        f.give_up(&f.app, "stack", "agent-1")?;
+        assert_eq!(leads(&api_link), Some(api_graft.clone()));
+        assert_eq!(ask_with(&f.app, "agent-2", &[&app_graft])?["granted"], true);
+        assert_eq!(leads(&app_link), Some(app_graft.clone()));
+        assert_eq!(leads(&api_link), Some(f.api.clone()));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn links_the_repository_carries_are_written_only_once_trusted() -> Result<()> {
+        let f = Fixture::new()?;
+        fs::write(
+            f.root.join(crate::config::SHARED),
+            r#"{"turns": ["stack"], "links": ["stack"], "repositories": {"app": {}}}"#,
+        )?;
+        let link = link_of(&f.root, "app");
+        let granted = ask_with(&f.app, "agent-1", &[])?;
+        assert_eq!(granted["granted"], true);
+        assert_eq!(granted["links"][0]["status"], "skipped");
+        assert_eq!(granted["links"][0]["reason"], "untrusted");
+        assert!(
+            granted["links"][0]["hint"]
+                .as_str()
+                .is_some_and(|hint| hint.contains("git graft hook trust"))
+        );
+        assert!(link.symlink_metadata().is_err());
+        let listed = hook::list(&f.root, &f.root.join(".git/graft"))?;
+        assert_eq!(listed["links"][0]["trusted"], false, "{listed}");
+
+        let trusted = {
+            let (p, _lock) = Project::open_at(Project::paths(&f.root)?, false)?;
+            hook::trust::trust(&p)?
+        };
+        assert_eq!(trusted["trusted_links"], json!(["stack"]));
+        assert_eq!(
+            hook::list(&f.root, &f.root.join(".git/graft"))?["links"][0]["trusted"],
+            true
+        );
+        assert_eq!(
+            ask_with(&f.app, "agent-1", &[])?["links"][0]["status"],
+            "pointed"
+        );
+        assert_eq!(fs::read_link(&link)?, f.app);
+
+        // A change to what is linked needs trust again.
+        fs::write(
+            f.root.join(crate::config::SHARED),
+            r#"{"turns": ["stack", "web"], "links": ["stack", "web"], "repositories": {"app": {}}}"#,
+        )?;
+        assert_eq!(
+            ask_with(&f.app, "agent-1", &[])?["links"][0]["status"],
+            "skipped"
+        );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn something_other_than_a_link_on_the_way_refuses_a_granted_take() -> Result<()> {
+        use std::os::unix::fs::symlink;
+        let f = Fixture::new()?;
+        configure_links(&f.root, &["app"], json!({}))?;
+        let link = link_of(&f.root, "app");
+        fs::create_dir_all(&link)?;
+        fs::write(link.join("kept"), "kept\n")?;
+        let refused = |path: &Path| -> Result<()> {
+            let error = ask_with(&f.app, "agent-1", &[]).unwrap_err();
+            let json = api::error_json(&error);
+            assert_eq!(json["code"], "invalid_config");
+            assert_eq!(json["details"]["path"], json!(path));
+            assert!(
+                json["message"]
+                    .as_str()
+                    .is_some_and(|message| message.contains("move it aside")),
+                "{json}"
+            );
+            // Nothing changed: no turn.
+            assert_eq!(f.list(&f.app)?, []);
+            assert!(!f.root.join(".git/graft/turns/turn-stack.json").exists());
+            Ok(())
+        };
+        refused(&link)?;
+        assert_eq!(fs::read_to_string(link.join("kept"))?, "kept\n");
+        // A link on the way is not followed.
+        fs::rename(f.root.join(".graft"), f.root.join("aside"))?;
+        symlink(f.root.join("aside"), f.root.join(".graft"))?;
+        refused(&f.root.join(".graft"))?;
+        fs::remove_file(f.root.join(".graft"))?;
+        // With the way clear, the take makes the link and its directories.
+        assert_eq!(ask_with(&f.app, "agent-1", &[])?["granted"], true);
+        assert_eq!(fs::read_link(&link)?, f.app);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_take_that_fails_puts_every_link_back() -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let f = Fixture::new()?;
+        let nested = f.root.join("services").join("api");
+        fs::create_dir_all(&nested)?;
+        crate::git::bytes(&nested, &["init", "-q", "--template=", "-b", "main"])?;
+        commit(&f.app)?;
+        commit(&nested)?;
+        // The hook fails for the holder named broken.
+        let script = f.root.join("switch");
+        fs::write(
+            &script,
+            "#!/bin/sh\n[ \"$GIT_GRAFT_TURN_HOLDER\" != broken ]\n",
+        )?;
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755))?;
+        configure_links(
+            &f.root,
+            &["app", "services/api"],
+            json!({"hooks": {"switch": {"event": "post-take", "argv": [script]}}}),
+        )?;
+        let (app_link, api_link) = (link_of(&f.root, "app"), link_of(&f.root, "services/api"));
+        let (first, _) = add(&f.app, "first")?;
+        let (second, _) = add(&f.app, "second")?;
+        let (api_graft, _) = add(&nested, "fix")?;
+        let leads = |link: &Path| fs::read_link(link).ok();
+        assert_eq!(ask_with(&f.app, "agent-1", &[&first])?["granted"], true);
+        f.give_up(&f.app, "stack", "agent-1")?;
+        let before = (leads(&app_link), leads(&api_link));
+        assert_eq!(before, (Some(first.clone()), Some(nested.clone())));
+
+        // A failing hook gives the turn up and puts the links back.
+        let error = ask_with(&f.app, "broken", &[&second, &api_graft]).unwrap_err();
+        assert_eq!(api::error_json(&error)["code"], "hook_failed");
+        assert_eq!((leads(&app_link), leads(&api_link)), before);
+        assert_eq!(f.list(&f.app)?, []);
+
+        // So does a link that cannot be written: app's is pointed first,
+        // then services/api's directory refuses it.
+        let unwritable = api_link.parent().context("parent")?.to_owned();
+        fs::set_permissions(&unwritable, fs::Permissions::from_mode(0o555))?;
+        // The superuser writes anyway, so there is nothing to see.
+        if fs::write(unwritable.join("probe"), "").is_err() {
+            let error = ask_with(&f.app, "agent-2", &[&second, &api_graft]).unwrap_err();
+            assert!(format!("{error:#}").contains("point the link"), "{error:#}");
+            assert_eq!((leads(&app_link), leads(&api_link)), before);
+            assert_eq!(f.list(&f.app)?, []);
+            // A link that did not exist before is removed again.
+            fs::set_permissions(&unwritable, fs::Permissions::from_mode(0o755))?;
+            fs::remove_file(&app_link)?;
+            fs::set_permissions(&unwritable, fs::Permissions::from_mode(0o555))?;
+            ask_with(&f.app, "agent-2", &[&second, &api_graft]).unwrap_err();
+            assert!(app_link.symlink_metadata().is_err());
+        }
+        fs::set_permissions(&unwritable, fs::Permissions::from_mode(0o755))?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn archiving_the_graft_a_link_leads_to_points_it_at_the_repository() -> Result<()> {
+        let f = Fixture::new()?;
+        commit(&f.app)?;
+        configure_links(&f.root, &["app"], json!({}))?;
+        let link = link_of(&f.root, "app");
+        let (graft, lease) = add(&f.app, "fix")?;
+        let (other, other_lease) = add(&f.app, "other")?;
+        assert_eq!(
+            ask_with(&f.app, "agent-1", &[&graft, &other])?["granted"],
+            true
+        );
+        assert_eq!(fs::read_link(&link)?, graft);
+        // Archiving a graft the link does not lead to leaves it.
+        crate::workspace::run(
+            &f.app,
+            crate::workspace::Command::Drop(api::DropWorkspace {
+                name: "other".into(),
+                lease: other_lease,
+                discard: false,
+            }),
+        )?;
+        assert_eq!(fs::read_link(&link)?, graft);
+        let removed = crate::workspace::run(
+            &f.app,
+            crate::workspace::Command::Drop(api::DropWorkspace {
+                name: "fix".into(),
+                lease,
+                discard: false,
+            }),
+        )?;
+        assert_eq!(removed["removed"], true);
+        assert!(!graft.exists());
+        assert_eq!(fs::read_link(&link)?, f.app);
+
+        // So does prune, when it archives an expired graft.
+        let (expired, _) = add(&f.app, "expired")?;
+        assert_eq!(ask_with(&f.app, "agent-2", &[&expired])?["granted"], true);
+        assert_eq!(fs::read_link(&link)?, expired);
+        {
+            let (p, _lock) = Project::open_at(Project::paths(&f.app)?, false)?;
+            registry::expire(&p, "expired")?;
+        }
+        let pruned = crate::workspace::run(
+            &f.app,
+            crate::workspace::Command::Gc(api::Gc {
+                apply: true,
+                purge_cache: false,
+                purge_archives: None,
+            }),
+        )?;
+        assert_eq!(pruned["retained"][0]["reason"], "archived", "{pruned}");
+        assert_eq!(fs::read_link(&link)?, f.app);
         Ok(())
     }
 }

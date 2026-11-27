@@ -89,6 +89,34 @@ pub(crate) struct Remote {
     pub local: bool,
 }
 
+/// A link Graft keeps for a shared resource, in the directory Graft owns
+/// beside the configuration: `.graft/links/<resource>/<repository>`. It leads
+/// to the turn holder's graft of the repository, or to the repository itself
+/// when the holder has no graft of it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Link {
+    /// The resource whose turn decides where the link leads.
+    pub resource: String,
+    /// The repository's key under `repositories`.
+    pub key: String,
+    /// The repository's primary checkout.
+    pub repository: PathBuf,
+    /// The configuration's directory, below which Graft keeps the link.
+    pub dir: PathBuf,
+    /// Where the link is.
+    pub path: PathBuf,
+}
+
+/// An entry of a configuration file's `links` list: a resource, with the
+/// file that lists it, named as [`Hook::file`] names it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Listed {
+    pub resource: String,
+    pub file: String,
+    /// Whether it comes from `.graftconfig.local`.
+    pub local: bool,
+}
+
 /// The effective configuration of a project: both files merged.
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct Config {
@@ -117,6 +145,17 @@ pub(crate) struct Config {
     /// Every entry of the files' `remotes` lists as written: the shared
     /// file's, then the local file's.
     pub listed_remotes: Vec<Remote>,
+    /// The links Graft keeps for the resources the top level of the files
+    /// in that directory lists under `links`: one for each repository they
+    /// name under `repositories` that exists, resource by resource.
+    pub links: Vec<Link>,
+    /// Every entry of the files' `links` lists as written: the shared
+    /// file's, then the local file's.
+    pub listed_links: Vec<Listed>,
+    /// While the files list any links, every key under `repositories`, each
+    /// once, whether or not it names a repository yet: a link is kept for
+    /// each one that does.
+    pub link_keys: Vec<String>,
 }
 
 impl Config {
@@ -150,12 +189,16 @@ impl Config {
                 below: false,
             };
             let missing = missing(primary, &shared, &local, &names);
+            let (links, listed_links, link_keys) = links(primary, &shared, &local, &names)?;
             let mut config = merge(
                 shared.map(|file| file.own),
                 local.map(|file| file.own),
                 &names,
             )?;
             config.missing_repositories = missing;
+            config.links = links;
+            config.listed_links = listed_links;
+            config.link_keys = link_keys;
             return Ok(config.placed(primary, false));
         }
         for (depth, dir) in searched(primary, home) {
@@ -173,12 +216,16 @@ impl Config {
                 below: true,
             };
             let missing = missing(dir, &shared, &local, &names);
+            let (links, listed_links, link_keys) = links(dir, &shared, &local, &names)?;
             let mut config = merge(
                 shared.and_then(|file| file.section(&key)),
                 local.and_then(|file| file.section(&key)),
                 &names,
             )?;
             config.missing_repositories = missing;
+            config.links = links;
+            config.listed_links = listed_links;
+            config.link_keys = link_keys;
             return Ok(config.placed(dir, true));
         }
         Ok(Self::default())
@@ -441,6 +488,8 @@ struct File {
     own: Part,
     repositories: Vec<(String, Part)>,
     turns: Vec<String>,
+    /// The resources whose links Graft keeps, as written.
+    links: Vec<String>,
 }
 
 impl File {
@@ -467,6 +516,8 @@ impl<'de> Deserialize<'de> for File {
             #[serde(default)]
             turns: Option<Vec<String>>,
             remotes: Option<Vec<String>>,
+            #[serde(default)]
+            links: Option<Vec<String>>,
         }
         let written = Written::deserialize(deserializer)?;
         Ok(File {
@@ -477,6 +528,7 @@ impl<'de> Deserialize<'de> for File {
             },
             repositories: written.repositories.map(|r| r.0).unwrap_or_default(),
             turns: written.turns.unwrap_or_default(),
+            links: written.links.unwrap_or_default(),
         })
     }
 }
@@ -657,6 +709,10 @@ fn check(file: &File, name: &'static str, dir: &Path) -> Result<()> {
         check_part(part, name, Some((key, dir)))
             .map_err(|error| anyhow::anyhow!("repository {key:?}: {error:#}"))?;
     }
+    for resource in &file.links {
+        crate::workspace::validate_resource(resource)
+            .map_err(|_| anyhow::anyhow!("links: {resource:?} is not a resource name: use 1 to 64 lowercase letters, numbers or hyphens, starting with a letter or number"))?;
+    }
     Ok(())
 }
 
@@ -678,6 +734,141 @@ fn check_key(key: &str) -> Result<()> {
          such as \"app\" or \"services/api\", with '/' between its parts"
     );
     Ok(())
+}
+
+/// Where Graft keeps the links of a configuration's directory, relative to it.
+pub(crate) const LINKS: [&str; 2] = [".graft", "links"];
+
+/// The links Graft keeps for the resources the files `shared` and `local`
+/// in `dir` list under `links`, with every entry as written and every
+/// repository key a link may be kept for. Each resource must be listed
+/// under `turns` in either file. Each repository either file names under
+/// `repositories` and that exists gets a link at
+/// `.graft/links/<resource>/<key>`, so no key may be the same as another or
+/// inside it, ignoring case where the filesystem does, or one link would be
+/// inside another. Only the files are read: where the links
+/// lead is looked at when a `take` points them.
+fn links(
+    dir: &Path,
+    shared: &Option<File>,
+    local: &Option<File>,
+    names: &Names<'_>,
+) -> Result<(Vec<Link>, Vec<Listed>, Vec<String>)> {
+    let turns = turns(shared, local);
+    let mut linked_keys: Vec<String> = Vec::new();
+    let mut listed: Vec<Listed> = Vec::new();
+    let mut resources: Vec<&str> = Vec::new();
+    for (file, name, label, is_local) in [
+        (shared, SHARED, &names.shared, false),
+        (local, LOCAL, &names.local, true),
+    ] {
+        for resource in file.iter().flat_map(|file| &file.links) {
+            if !turns.contains(resource) {
+                return Err(invalid(
+                    &dir.join(name),
+                    format!(
+                        "links: {resource:?} is not listed under turns. A link follows the turn \
+                         on a resource the directory shares, so list it under turns too"
+                    ),
+                ));
+            }
+            listed.push(Listed {
+                resource: resource.clone(),
+                file: label.clone(),
+                local: is_local,
+            });
+            if !resources.contains(&resource.as_str()) {
+                resources.push(resource);
+            }
+        }
+    }
+    if resources.is_empty() {
+        return Ok((Vec::new(), listed, linked_keys));
+    }
+    let mut keys: Vec<(&str, &'static str)> = Vec::new();
+    for (file, name) in [(shared, SHARED), (local, LOCAL)] {
+        for (key, _) in file.iter().flat_map(|file| &file.repositories) {
+            if !keys.iter().any(|(known, _)| known == key) {
+                keys.push((key, name));
+            }
+        }
+    }
+    // A key inside another would put one repository's link inside the
+    // other's, which leads into that repository or its graft. Where the
+    // filesystem ignores case, `app` and `APP/x` are one inside the other,
+    // and `app` and `APP` are the same.
+    let plain: Vec<&str> = keys.iter().map(|(key, _)| *key).collect();
+    if let Some((inner, outer)) = nested_key(&plain, FOLD_CASE) {
+        let (key, name) = keys[inner];
+        let other = keys[outer].0;
+        let how = if inner == outer || folded(key, FOLD_CASE) == folded(other, FOLD_CASE) {
+            "names the same directory as"
+        } else {
+            "is inside"
+        };
+        return Err(invalid(
+            &dir.join(name),
+            format!(
+                "links: repository {key:?} {how} repository {other:?}, so its link would be \
+                 inside the link of {other:?}; Graft can keep links only for repositories side by side"
+            ),
+        ));
+    }
+    linked_keys.extend(plain.iter().map(|key| (*key).to_owned()));
+    let mut links = Vec::new();
+    for resource in resources {
+        for (key, _) in &keys {
+            let repository = key
+                .split('/')
+                .fold(dir.to_owned(), |at, part| at.join(part));
+            if !present(&repository, ".git") {
+                continue;
+            }
+            let path = LINKS
+                .iter()
+                .copied()
+                .chain([resource])
+                .chain(key.split('/'))
+                .fold(dir.to_owned(), |at, part| at.join(part));
+            links.push(Link {
+                resource: resource.to_owned(),
+                key: (*key).to_owned(),
+                repository,
+                dir: dir.to_owned(),
+                path,
+            });
+        }
+    }
+    Ok((links, listed, linked_keys))
+}
+
+/// `key` as compared: in lowercase where `fold` says the filesystem
+/// ignores case.
+fn folded(key: &str, fold: bool) -> String {
+    if fold {
+        key.to_lowercase()
+    } else {
+        key.to_owned()
+    }
+}
+
+/// The first key of `keys` that is the same as an earlier one, or inside
+/// another, compared ignoring case when `fold` says the filesystem does:
+/// its index, and the other's.
+fn nested_key(keys: &[&str], fold: bool) -> Option<(usize, usize)> {
+    let keys: Vec<String> = keys.iter().map(|key| folded(key, fold)).collect();
+    for (at, key) in keys.iter().enumerate() {
+        for (other_at, other) in keys.iter().enumerate() {
+            let same = other_at < at && key == other;
+            let inside = key
+                .strip_prefix(other.as_str())
+                .is_some_and(|rest| rest.starts_with('/'));
+            if same || inside {
+                return Some((at, other_at));
+            }
+        }
+    }
+    None
 }
 
 /// Refuse a pattern on more than one line, a hook name Graft could not
@@ -1843,5 +2034,174 @@ mod tests {
                 "{bad}"
             );
         }
+    }
+
+    #[test]
+    fn links_are_kept_under_the_directory_for_each_repository_of_a_listed_resource() {
+        let (_tmp, root, app, api) = enclosing();
+        write(
+            &root,
+            SHARED,
+            r#"{"turns": ["stack", "database"], "links": ["stack"],
+                "repositories": {"app": {}, "services/api": {}, "gone": {}}}"#,
+        );
+        let link = |key: &str, repository: &Path| Link {
+            resource: "stack".into(),
+            key: key.into(),
+            repository: repository.to_owned(),
+            dir: root.clone(),
+            path: [".graft", "links", "stack"]
+                .into_iter()
+                .chain(key.split('/'))
+                .fold(root.clone(), |at, part| at.join(part)),
+        };
+        // A key that names no repository gets no link.
+        let expected = vec![link("app", &app), link("services/api", &api)];
+        assert_eq!(Config::read(&app).unwrap().links, expected);
+        assert_eq!(Config::read(&api).unwrap().links, expected);
+        crate::git::bytes(&root, &["init", "-q", "--template="]).unwrap();
+        let config = Config::read(&root).unwrap();
+        assert_eq!(config.links, expected);
+        assert_eq!(
+            config.listed_links,
+            [Listed {
+                resource: "stack".into(),
+                file: SHARED.into(),
+                local: false
+            }]
+        );
+
+        // Lists are joined, each resource once, and the local file's
+        // repositories and turns count as well.
+        write(
+            &root,
+            LOCAL,
+            r#"{"turns": ["web"], "links": ["stack", "web", "database"], "repositories": {"tools": {}}}"#,
+        );
+        fs::create_dir(root.join("tools")).unwrap();
+        crate::git::bytes(&root.join("tools"), &["init", "-q", "--template="]).unwrap();
+        let config = Config::read(&app).unwrap();
+        let links: Vec<_> = config
+            .links
+            .iter()
+            .map(|link| (link.resource.as_str(), link.key.as_str()))
+            .collect();
+        assert_eq!(
+            links,
+            [
+                ("stack", "app"),
+                ("stack", "services/api"),
+                ("stack", "tools"),
+                ("web", "app"),
+                ("web", "services/api"),
+                ("web", "tools"),
+                ("database", "app"),
+                ("database", "services/api"),
+                ("database", "tools"),
+            ]
+        );
+        assert_eq!(config.listed_links.len(), 4);
+        assert!(config.listed_links[1..].iter().all(|listed| listed.local));
+    }
+
+    #[test]
+    fn links_are_refused_for_an_unshared_resource_or_nested_repositories() {
+        let (_tmp, root, app, _api) = enclosing();
+        for (body, cause) in [
+            (r#"{"links": "stack"}"#, "invalid type"),
+            (
+                r#"{"turns": ["stack"], "links": ["Stack"]}"#,
+                "not a resource name",
+            ),
+            (
+                r#"{"turns": ["web"], "links": ["stack"]}"#,
+                "not listed under turns",
+            ),
+            (
+                r#"{"turns": ["stack"], "links": ["stack"], "repositories": {"services": {}, "services/api": {}}}"#,
+                "inside repository \"services\"",
+            ),
+            (
+                r#"{"turns": ["stack"], "repositories": {"app": {"links": ["stack"]}}}"#,
+                "unknown field",
+            ),
+        ] {
+            write(&root, SHARED, body);
+            let error = Config::read(&app).expect_err(body);
+            let json = crate::api::error_json(&error);
+            assert_eq!(json["code"], "invalid_config", "{body}");
+            let message = json["message"].as_str().unwrap();
+            assert!(message.contains(cause), "{body}: {message}");
+            assert_eq!(json["details"]["file"], json!(root.join(SHARED)), "{body}");
+        }
+        // Nested repositories are fine without links, and a name that only
+        // starts like another is not inside it.
+        write(
+            &root,
+            SHARED,
+            r#"{"turns": ["stack"], "repositories": {"services": {}, "services/api": {}}}"#,
+        );
+        assert!(Config::read(&app).unwrap().links.is_empty());
+        write(
+            &root,
+            SHARED,
+            r#"{"turns": ["stack"], "links": ["stack"], "repositories": {"app": {}, "app-two": {}}}"#,
+        );
+        assert_eq!(Config::read(&app).unwrap().links.len(), 1);
+        // A resource the local file lists must be shared by either file.
+        write(&root, LOCAL, r#"{"links": ["web"]}"#);
+        let error = Config::read(&app).unwrap_err();
+        assert_eq!(
+            crate::api::error_json(&error)["details"]["file"],
+            json!(root.join(LOCAL))
+        );
+    }
+
+    #[test]
+    fn repository_keys_for_links_may_not_be_the_same_or_nested_ignoring_case_where_it_is_ignored() {
+        assert_eq!(nested_key(&["app", "api"], false), None);
+        assert_eq!(nested_key(&["app", "app-two", "apps/x"], true), None);
+        assert_eq!(nested_key(&["app", "app/x"], false), Some((1, 0)));
+        assert_eq!(nested_key(&["app/x", "app"], false), Some((0, 1)));
+        assert_eq!(nested_key(&["app", "APP/x"], false), None);
+        assert_eq!(nested_key(&["app", "APP/x"], true), Some((1, 0)));
+        assert_eq!(nested_key(&["app", "APP"], false), None);
+        assert_eq!(nested_key(&["app", "APP"], true), Some((1, 0)));
+
+        // Read from the files, as this filesystem compares names.
+        let (_tmp, root, app, _api) = enclosing();
+        for (keys, cause) in [
+            (r#"{"app": {}, "APP/x": {}}"#, "is inside"),
+            (r#"{"app": {}, "APP": {}}"#, "names the same directory as"),
+        ] {
+            write(
+                &root,
+                SHARED,
+                &format!(r#"{{"turns": ["stack"], "links": ["stack"], "repositories": {keys}}}"#),
+            );
+            let read = Config::read(&app);
+            assert_eq!(read.is_err(), FOLD_CASE, "{keys}: {read:?}");
+            if let Err(error) = read {
+                let json = crate::api::error_json(&error);
+                assert_eq!(json["code"], "invalid_config");
+                assert!(json["message"].as_str().unwrap().contains(cause), "{json}");
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reading_links_looks_only_at_the_files() {
+        use std::os::unix::fs::symlink;
+        let (_tmp, root, app, _api) = enclosing();
+        // Whatever is where the links go, reading the configuration does
+        // not look at it: only a take does.
+        symlink("nowhere", root.join(".graft")).unwrap();
+        write(
+            &root,
+            SHARED,
+            r#"{"turns": ["stack"], "links": ["stack"], "repositories": {"app": {}}}"#,
+        );
+        assert_eq!(Config::read(&app).unwrap().links.len(), 1);
     }
 }

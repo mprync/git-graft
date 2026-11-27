@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { objectResult, type Context, type ObjectResult, type Scenario } from './harness.ts';
@@ -253,6 +253,75 @@ export const cases: Scenario[] = [
       assert.deepEqual(turns(ctx), [['stack', null, ['agent-2']]]);
       assert.equal(takeIn(ctx, router, second, 'stack').granted, true);
       assert.deepEqual(release(ctx, second, 'stack'), { resource: 'stack', released: true, next: null });
+    },
+  },
+  {
+    name: 'trusted links follow the holder of a shared resource to its grafts, and back to the primary when a graft is archived',
+    run: async ctx => {
+      if (process.platform === 'win32') ctx.unavailable('creating a link on Windows needs Developer Mode or an elevated prompt');
+      const router = sibling(ctx, 'router');
+      ctx.git(['init', '-q', '-b', 'main'], ctx.root);
+      writeFileSync(join(ctx.root, '.graftconfig'), JSON.stringify({
+        turns: ['stack'], links: ['stack'], repositories: { project: {}, router: {} },
+      }));
+      const [appLink, routerLink] = ['project', 'router'].map(name => join(ctx.root, '.graft', 'links', 'stack', name));
+      const [primary, routerPrimary] = [ctx.repo, router].map(path => realpathSync(path));
+      const app = ctx.spawn('fix');
+      const appPath = realpathSync(String(app.path));
+      const agent = holder('agent-1');
+
+      // Until the links are trusted, a granted take leaves them unwritten.
+      const untrusted = takeIn(ctx, router, agent, 'stack', '--graft', appPath);
+      assert.equal(untrusted.granted, true);
+      const skipped = (untrusted.links as unknown[]).map(objectResult);
+      assert.deepEqual(skipped.map(entry => [entry.repository, entry.status, entry.reason]),
+        [['project', 'skipped', 'untrusted'], ['router', 'skipped', 'untrusted']]);
+      assert(!existsSync(join(ctx.root, '.graft')));
+      const listed = (ctx.cli(['hook', 'list'], ctx.root).links as unknown[]).map(objectResult);
+      assert.deepEqual(listed.map(entry => [entry.resource, entry.repository, entry.trusted]),
+        [['stack', 'project', false], ['stack', 'router', false]]);
+      assert.deepEqual(ctx.cli(['hook', 'trust'], ctx.root).trusted_links, ['stack']);
+
+      // Trusted, the holder's graft of the primary and the router itself.
+      const taken = takeIn(ctx, router, agent, 'stack');
+      assert.deepEqual((taken.links as unknown[]).map(objectResult).map(entry => [entry.repository, entry.status, entry.target]),
+        [['project', 'pointed', appPath], ['router', 'pointed', routerPrimary]]);
+      assert.deepEqual([readlinkSync(appLink), readlinkSync(routerLink)], [appPath, routerPrimary]);
+      // A queued holder moves no link, and is not stopped by what is in the way.
+      const second = holder('agent-2');
+      renameSync(routerLink, join(ctx.root, 'router-link'));
+      mkdirSync(routerLink);
+      const queued = takeIn(ctx, router, second, 'stack');
+      assert.equal(queued.granted, false);
+      assert(!('links' in queued));
+      assert.equal(readlinkSync(appLink), appPath);
+
+      // Merging the graft archives it and points its link at the primary.
+      writeFileSync(join(appPath, 'fix.txt'), 'fix\n');
+      ctx.git(['add', 'fix.txt'], appPath);
+      ctx.git(['commit', '-qm', 'fix'], appPath);
+      assert.equal(ctx.cli(['merge', 'fix', '--lease', app.lease]).removed, true);
+      assert.equal(readlinkSync(appLink), primary);
+
+      // A granted take with something other than a link in the way refuses
+      // and changes nothing.
+      release(ctx, agent, 'stack');
+      const refused = ctx.fail(['turn', 'take', 'stack', '--holder', second.name, '--lease', second.lease], router);
+      assert.equal(refused.code, 'invalid_config');
+      assert.equal(objectResult(refused.details).path, routerLink);
+      assert.deepEqual(turns(ctx), [['stack', null, ['agent-2']]]);
+      release(ctx, second, 'stack');
+
+      // An MCP host without --allow-exec points the links too.
+      renameSync(routerLink, join(ctx.root, 'router-dir'));
+      const work = ctx.spawn('work');
+      const workPath = realpathSync(String(work.path));
+      await withClient(ctx, false, async client => {
+        await initialize(client);
+        const mcp = await call(client, 'graft_turn_take', { holder: 'mcp', resource: 'stack', grafts: [workPath] });
+        assert.equal(mcp.granted, true);
+      });
+      assert.deepEqual([readlinkSync(appLink), readlinkSync(routerLink)], [workPath, routerPrimary]);
     },
   },
   {
